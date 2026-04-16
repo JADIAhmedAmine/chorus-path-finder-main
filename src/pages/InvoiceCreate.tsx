@@ -15,6 +15,7 @@ import { createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import { extractInvoiceData, type LocalInvoiceExtractionResult } from '@/lib/chorus/extraction';
+import { prepareInvoiceSubmission } from '@/lib/chorus/preparation';
 
 function formatAmountForInput(value?: number): string {
   if (value === undefined || Number.isNaN(value)) {
@@ -72,6 +73,19 @@ export default function InvoiceCreate() {
   const detectedSupplierSiret = selectedSupplier?.siret || extractionResult?.fields.supplierSiret;
   const detectedCustomerSiret = selectedPublicCustomer?.siret || extractionResult?.fields.publicCustomerSiret;
   const detectedServiceCode = selectedPublicService?.codeServiceExecutant || extractionResult?.fields.publicServiceCode;
+  const submissionPreparation = prepareInvoiceSubmission({
+    formData: {
+      ...formData,
+      publicCustomerId: selectedCustomer,
+    },
+    supplier: selectedSupplier,
+    publicCustomer: selectedPublicCustomer,
+    publicService: selectedPublicService,
+    availableServices: services,
+    extraction: extractionResult,
+  });
+  const isDirectMode = chorusConfig.mode === 'direct' && chorusConfig.enabled;
+  const isSubmissionBlocked = extracting || submitting || (isDirectMode && !submissionPreparation.validation.valid);
 
   useEffect(() => {
     if (!mainFile) {
@@ -153,6 +167,15 @@ export default function InvoiceCreate() {
   const handleSubmit = async () => {
     if (!mainFile) {
       toast({ title: 'Erreur', description: 'Veuillez déposer une facture principale.', variant: 'destructive' });
+      return;
+    }
+
+    if (isDirectMode && !submissionPreparation.validation.valid) {
+      toast({
+        title: 'Soumission bloquée',
+        description: submissionPreparation.validation.errors[0]?.message || 'Complétez les métadonnées obligatoires avant l’envoi.',
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -420,9 +443,96 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader><CardTitle className="text-base">Préparation de la soumission Chorus</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-medium">
+                {submissionPreparation.readiness === 'ready'
+                  ? 'Le dossier est prêt pour la soumission API.'
+                  : submissionPreparation.readiness === 'review'
+                    ? 'Le dossier est quasi prêt, avec contrôle humain recommandé.'
+                    : 'Des informations bloquantes manquent encore avant l’envoi Chorus.'}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Flux prévu: extraction locale, contrôle métier, dépôt PDF, puis soumission API sans repasser par l’interprétation du portail.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge
+                variant={
+                  submissionPreparation.readiness === 'blocked'
+                    ? 'destructive'
+                    : submissionPreparation.readiness === 'review'
+                      ? 'secondary'
+                      : 'default'
+                }
+              >
+                {submissionPreparation.readiness === 'ready'
+                  ? 'Prêt'
+                  : submissionPreparation.readiness === 'review'
+                    ? 'Revue'
+                    : 'Bloqué'}
+              </Badge>
+              <Badge variant="outline">{submissionPreparation.suggestedStatus}</Badge>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+            <ExtractionInfoRow label="Erreurs bloquantes" value={String(submissionPreparation.validation.errors.length)} />
+            <ExtractionInfoRow label="Avertissements" value={String(submissionPreparation.validation.warnings.length)} />
+            <ExtractionInfoRow label="Devise normalisée" value={submissionPreparation.normalized.currencyCode} />
+            <ExtractionInfoRow
+              label="Montant TTC normalisé"
+              value={submissionPreparation.normalized.totalAmountTtc !== undefined ? String(submissionPreparation.normalized.totalAmountTtc) : undefined}
+            />
+          </div>
+
+          {submissionPreparation.validation.errors.length > 0 && (
+            <Alert variant="destructive">
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Blocages à corriger</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-4">
+                  {submissionPreparation.validation.errors.map((error) => (
+                    <li key={`${error.code}-${error.field}`}>{error.message}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {submissionPreparation.validation.warnings.length > 0 && (
+            <Alert>
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Contrôles recommandés</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-4">
+                  {submissionPreparation.validation.warnings.map((warning) => (
+                    <li key={`${warning.code}-${warning.field}`}>{warning.message}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {submissionPreparation.recommendations.length > 0 && (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <p className="text-sm font-medium">Actions suggérées</p>
+              <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+                {submissionPreparation.recommendations.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={() => navigate('/invoices')}>Annuler</Button>
-        <Button onClick={handleSubmit} disabled={submitting}>
+        <Button onClick={handleSubmit} disabled={isSubmissionBlocked}>
           {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
           {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Envoyer à Chorus' : 'Déposer la facture'}
         </Button>

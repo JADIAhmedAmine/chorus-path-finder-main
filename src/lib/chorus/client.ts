@@ -126,6 +126,7 @@ export class DirectChorusConnector implements ChorusConnector {
   async testConnection(): Promise<ChorusConnectionResult> {
     const token = await this.getAccessToken();
     const tokenPreview = `${token.slice(0, 8)}…`;
+    const method = this.config.connectionTestMethod || 'GET';
 
     if (!this.config.connectionTestPath) {
       return {
@@ -135,9 +136,14 @@ export class DirectChorusConnector implements ChorusConnector {
       };
     }
 
+    const isJsonBodyMethod = method === 'POST';
     const response = await this.fetchImpl(joinUrl(this.config.apiBaseUrl, this.config.connectionTestPath), {
-      method: 'GET',
-      headers: this.buildApiHeadersFromToken(token),
+      method,
+      headers: this.buildApiHeadersFromToken(
+        token,
+        isJsonBodyMethod ? { 'content-type': 'application/json' } : undefined,
+      ),
+      body: isJsonBodyMethod ? JSON.stringify({}) : undefined,
     });
 
     const body = await parseResponseBody(response);
@@ -147,7 +153,7 @@ export class DirectChorusConnector implements ChorusConnector {
 
     return {
       ok: true,
-      message: 'Connexion Chorus testée avec succès.',
+      message: `Connexion Chorus testée avec succès via ${method}.`,
       tokenPreview,
       response: body,
     };

@@ -1,4 +1,5 @@
 export type ChorusConnectorMode = 'mock' | 'direct';
+export type ChorusConnectionTestMethod = 'GET' | 'POST';
 
 export interface ChorusConfig {
   enabled: boolean;
@@ -11,6 +12,7 @@ export interface ChorusConfig {
   technicalLogin: string;
   technicalPassword: string;
   connectionTestPath: string;
+  connectionTestMethod: ChorusConnectionTestMethod;
   uploadFilePath: string;
   submitInvoicePath: string;
 }

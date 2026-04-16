@@ -1,4 +1,4 @@
-import type { ChorusConfig, ChorusConnectorMode } from '@/types/chorus';
+import type { ChorusConfig, ChorusConnectionTestMethod, ChorusConnectorMode } from '@/types/chorus';
 
 export const CHORUS_CONFIG_STORAGE_KEY = 'chorus.connector.config';
 
@@ -14,6 +14,9 @@ function envBool(key: string, fallback: boolean): boolean {
 
 export function getDefaultChorusConfig(): ChorusConfig {
   const mode = (envValue('VITE_CHORUS_MODE', 'mock') as ChorusConnectorMode) === 'direct' ? 'direct' : 'mock';
+  const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
+    ? 'POST'
+    : 'GET';
 
   return {
     enabled: envBool('VITE_CHORUS_ENABLED', mode === 'direct'),
@@ -26,6 +29,7 @@ export function getDefaultChorusConfig(): ChorusConfig {
     technicalLogin: envValue('VITE_CHORUS_TECHNICAL_LOGIN', ''),
     technicalPassword: envValue('VITE_CHORUS_TECHNICAL_PASSWORD', ''),
     connectionTestPath: envValue('VITE_CHORUS_CONNECTION_TEST_PATH', ''),
+    connectionTestMethod,
     uploadFilePath: envValue('VITE_CHORUS_UPLOAD_FILE_PATH', ''),
     submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', ''),
   };

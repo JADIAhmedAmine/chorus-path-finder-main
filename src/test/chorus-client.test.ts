@@ -28,6 +28,7 @@ describe('chorus connector', () => {
       technicalLogin: 'tech-user',
       technicalPassword: 'tech-pass',
       connectionTestPath: '/health',
+      connectionTestMethod: 'GET',
     }, fetchMock);
 
     const result = await connector.testConnection();
@@ -44,8 +45,38 @@ describe('chorus connector', () => {
     const apiCall = fetchMock.mock.calls[1];
     expect(apiCall?.[0]).toBe('https://sandbox-api.example.test/health');
     const headers = (apiCall?.[1] as RequestInit).headers as Record<string, string>;
+    expect((apiCall?.[1] as RequestInit).method).toBe('GET');
     expect(headers.Authorization).toBe('Bearer token-123456789');
     expect(headers['cpro-account']).toBe(window.btoa('tech-user:tech-pass'));
+  });
+
+  it('uses POST for the connection test when configured', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-post-123456789' }))
+      .mockResolvedValueOnce(jsonResponse({ status: 'ok' }));
+
+    const connector = new DirectChorusConnector({
+      ...getDefaultChorusConfig(),
+      mode: 'direct',
+      enabled: true,
+      tokenUrl: 'https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token',
+      apiBaseUrl: 'https://sandbox-api.example.test',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      technicalLogin: 'tech-user',
+      technicalPassword: 'tech-pass',
+      connectionTestPath: '/v1/rechercher/fournisseur',
+      connectionTestMethod: 'POST',
+    }, fetchMock);
+
+    const result = await connector.testConnection();
+
+    expect(result.ok).toBe(true);
+    const apiCall = fetchMock.mock.calls[1];
+    expect((apiCall?.[1] as RequestInit).method).toBe('POST');
+    expect((apiCall?.[1] as RequestInit).body).toBe('{}');
+    const headers = (apiCall?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers['content-type']).toBe('application/json');
   });
 
   it('uploads files then submits an invoice payload', async () => {
@@ -95,7 +126,11 @@ describe('chorus connector', () => {
   });
 
   it('uses mock mode when direct mode is not requested', async () => {
-    const connector = createChorusConnector(getDefaultChorusConfig());
+    const connector = createChorusConnector({
+      ...getDefaultChorusConfig(),
+      mode: 'mock',
+      enabled: false,
+    });
     const result = await connector.testConnection();
 
     expect(result.ok).toBe(true);

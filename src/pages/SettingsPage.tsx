@@ -19,6 +19,11 @@ const connectorModeLabels = {
   direct: 'Connexion directe (dev uniquement)',
 } as const;
 
+const connectionMethodLabels = {
+  GET: 'GET',
+  POST: 'POST',
+} as const;
+
 export default function SettingsPage() {
   const { toast } = useToast();
   const [config, setConfig] = useState<ChorusConfig>(() => loadChorusConfig());
@@ -190,6 +195,17 @@ export default function SettingsPage() {
             </div>
 
             <div className="space-y-2">
+              <Label>Méthode test connexion</Label>
+              <Select value={config.connectionTestMethod} onValueChange={(value: ChorusConfig['connectionTestMethod']) => handleFieldChange('connectionTestMethod', value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="GET">{connectionMethodLabels.GET}</SelectItem>
+                  <SelectItem value="POST">{connectionMethodLabels.POST}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
               <Label htmlFor="upload-file-path">Endpoint upload fichier</Label>
               <Input id="upload-file-path" value={config.uploadFilePath} onChange={(e) => handleFieldChange('uploadFilePath', e.target.value)} placeholder="/transverses/fichiers" />
             </div>
@@ -210,6 +226,7 @@ export default function SettingsPage() {
 
           <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
             En production, évite d'exposer le client secret PISTE dans le front Vite. Le connecteur direct ajouté ici est surtout utile pour la sandbox, les tests de dev et le prototypage rapide.
+            Pour un endpoint Chorus de recherche comme `/v1/rechercher/fournisseur`, utilise `POST` pour le test de connexion.
           </div>
 
           <div className="flex flex-wrap gap-3">
