@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,12 +7,39 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { publicCustomers, publicServices, suppliers } from '@/data/mock-data';
-import { Upload, FileText, X, CheckCircle, Loader2 } from 'lucide-react';
+import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { loadChorusConfig } from '@/lib/chorus/storage';
+import { extractInvoiceData, type LocalInvoiceExtractionResult } from '@/lib/chorus/extraction';
+
+function formatAmountForInput(value?: number): string {
+  if (value === undefined || Number.isNaN(value)) {
+    return '';
+  }
+
+  return value.toFixed(2).replace('.', ',');
+}
+
+function formatAmountForDisplay(value?: string): string {
+  if (!value?.trim()) {
+    return 'Non détecté';
+  }
+
+  return value;
+}
+
+function ExtractionInfoRow({ label, value }: { label: string; value?: string }) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-medium">{value || 'Non détecté'}</p>
+    </div>
+  );
+}
 
 export default function InvoiceCreate() {
   const navigate = useNavigate();
@@ -28,10 +55,92 @@ export default function InvoiceCreate() {
     engagementNumber: '',
     marketNumber: '',
     purchaseOrderNumber: '',
+    invoiceDate: '',
+    currencyCode: '',
+    totalAmountHt: '',
+    totalAmountTtc: '',
   });
+  const [extracting, setExtracting] = useState(false);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+  const [extractionResult, setExtractionResult] = useState<LocalInvoiceExtractionResult | null>(null);
 
   const chorusConfig = loadChorusConfig();
   const services = selectedCustomer ? publicServices.filter(s => s.publicCustomerId === selectedCustomer && s.active) : [];
+  const selectedSupplier = suppliers.find((supplier) => supplier.id === formData.supplierOrganizationId);
+  const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === selectedCustomer);
+  const selectedPublicService = publicServices.find((service) => service.id === formData.publicServiceId);
+  const detectedSupplierSiret = selectedSupplier?.siret || extractionResult?.fields.supplierSiret;
+  const detectedCustomerSiret = selectedPublicCustomer?.siret || extractionResult?.fields.publicCustomerSiret;
+  const detectedServiceCode = selectedPublicService?.codeServiceExecutant || extractionResult?.fields.publicServiceCode;
+
+  useEffect(() => {
+    if (!mainFile) {
+      setExtracting(false);
+      setExtractionError(null);
+      setExtractionResult(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function runExtraction() {
+      setExtracting(true);
+      setExtractionError(null);
+
+      try {
+        const result = await extractInvoiceData(mainFile, {
+          suppliers,
+          publicCustomers,
+          publicServices,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        setExtractionResult(result);
+
+        if (result.fields.publicCustomerId) {
+          setSelectedCustomer(result.fields.publicCustomerId);
+        }
+
+        setFormData((current) => ({
+          ...current,
+          supplierOrganizationId: result.fields.supplierOrganizationId ?? current.supplierOrganizationId,
+          supplierInvoiceNumber: result.fields.supplierInvoiceNumber ?? current.supplierInvoiceNumber,
+          publicServiceId: result.fields.publicServiceId ?? current.publicServiceId,
+          engagementNumber: result.fields.engagementNumber ?? current.engagementNumber,
+          marketNumber: result.fields.marketNumber ?? current.marketNumber,
+          purchaseOrderNumber: result.fields.purchaseOrderNumber ?? current.purchaseOrderNumber,
+          invoiceDate: result.fields.invoiceDate ?? current.invoiceDate,
+          currencyCode: result.fields.currencyCode ?? current.currencyCode,
+          totalAmountHt: result.fields.totalAmountHt !== undefined
+            ? formatAmountForInput(result.fields.totalAmountHt)
+            : current.totalAmountHt,
+          totalAmountTtc: result.fields.totalAmountTtc !== undefined
+            ? formatAmountForInput(result.fields.totalAmountTtc)
+            : current.totalAmountTtc,
+        }));
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setExtractionResult(null);
+        setExtractionError(error instanceof Error ? error.message : 'Erreur inconnue pendant l’analyse locale.');
+      } finally {
+        if (!cancelled) {
+          setExtracting(false);
+        }
+      }
+    }
+
+    void runExtraction();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mainFile]);
 
   const handleMainDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -53,6 +162,11 @@ export default function InvoiceCreate() {
       const payload = buildInvoiceSubmissionPayload({
         ...formData,
         publicCustomerId: selectedCustomer,
+      }, {
+        supplier: selectedSupplier,
+        publicCustomer: selectedPublicCustomer,
+        publicService: selectedPublicService,
+        extraction: extractionResult,
       });
 
       const result = await connector.submitInvoice({
@@ -145,6 +259,80 @@ export default function InvoiceCreate() {
       </Card>
 
       <Card>
+        <CardHeader><CardTitle className="text-base">Préremplissage automatique</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          {!mainFile && (
+            <p className="text-sm text-muted-foreground">
+              Déposez un PDF ou un XML pour tenter une extraction locale des champs métier avant soumission.
+              Les PDF scannés restent à contrôler tant qu’aucun OCR n’est branché.
+            </p>
+          )}
+
+          {mainFile && extracting && (
+            <div className="flex items-center gap-3 rounded-lg border bg-muted/20 p-4 text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Analyse locale du document et tentative de préremplissage du formulaire…</span>
+            </div>
+          )}
+
+          {mainFile && extractionError && (
+            <Alert variant="destructive">
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Extraction impossible</AlertTitle>
+              <AlertDescription>{extractionError}</AlertDescription>
+            </Alert>
+          )}
+
+          {mainFile && !extracting && extractionResult && (
+            <>
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-4 w-4 text-accent" />
+                  <span className="text-sm font-medium">
+                    Analyse locale {extractionResult.sourceFormat} terminée
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={extractionResult.requiresReview ? 'secondary' : 'default'}>
+                    {extractionResult.requiresReview ? 'Contrôle recommandé' : 'Préremplissage fiable'}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    Confiance {Math.round(extractionResult.confidence * 100)}%
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <ExtractionInfoRow label="N° facture" value={formData.supplierInvoiceNumber} />
+                <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
+                <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
+                <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
+                <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
+                <ExtractionInfoRow label="Code service" value={detectedServiceCode} />
+                <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
+                <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
+                <ExtractionInfoRow label="Aperçu texte" value={extractionResult.rawTextPreview || 'Texte trop pauvre pour aperçu'} />
+              </div>
+
+              {extractionResult.warnings.length > 0 && (
+                <Alert>
+                  <TriangleAlert className="h-4 w-4" />
+                  <AlertTitle>Points à contrôler</AlertTitle>
+                  <AlertDescription>
+                    <ul className="list-disc space-y-1 pl-4">
+                      {extractionResult.warnings.map((warning) => (
+                        <li key={warning}>{warning}</li>
+                      ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle className="text-base">Métadonnées initiales (optionnel)</CardTitle></CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -156,6 +344,7 @@ export default function InvoiceCreate() {
                   {suppliers.filter(s => s.active).map(s => <SelectItem key={s.id} value={s.id}>{s.legalName} ({s.siret})</SelectItem>)}
                 </SelectContent>
               </Select>
+              {detectedSupplierSiret && <p className="text-xs text-muted-foreground">SIRET détecté: {detectedSupplierSiret}</p>}
             </div>
             <div className="space-y-2">
               <Label>N° Facture</Label>
@@ -169,6 +358,7 @@ export default function InvoiceCreate() {
                   {publicCustomers.filter(c => c.active).map(c => <SelectItem key={c.id} value={c.id}>{c.legalName} ({c.codeDestinataire})</SelectItem>)}
                 </SelectContent>
               </Select>
+              {detectedCustomerSiret && <p className="text-xs text-muted-foreground">SIRET destinataire: {detectedCustomerSiret}</p>}
             </div>
             <div className="space-y-2">
               <Label>Service destinataire</Label>
@@ -178,6 +368,20 @@ export default function InvoiceCreate() {
                   {services.map(s => <SelectItem key={s.id} value={s.id}>{s.codeServiceExecutant} — {s.label}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {detectedServiceCode && <p className="text-xs text-muted-foreground">Code service: {detectedServiceCode}</p>}
+            </div>
+            <div className="space-y-2">
+              <Label>Date facture</Label>
+              <Input type="date" value={formData.invoiceDate} onChange={e => setFormData(p => ({ ...p, invoiceDate: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Devise</Label>
+              <Input
+                placeholder="EUR"
+                maxLength={3}
+                value={formData.currencyCode}
+                onChange={e => setFormData(p => ({ ...p, currencyCode: e.target.value.toUpperCase() }))}
+              />
             </div>
 
             <Separator className="col-span-full" />
@@ -193,6 +397,24 @@ export default function InvoiceCreate() {
             <div className="space-y-2">
               <Label>N° Bon de commande</Label>
               <Input placeholder="BC-..." value={formData.purchaseOrderNumber} onChange={e => setFormData(p => ({ ...p, purchaseOrderNumber: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Montant HT</Label>
+              <Input
+                inputMode="decimal"
+                placeholder="12000,00"
+                value={formData.totalAmountHt}
+                onChange={e => setFormData(p => ({ ...p, totalAmountHt: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Montant TTC</Label>
+              <Input
+                inputMode="decimal"
+                placeholder="14400,00"
+                value={formData.totalAmountTtc}
+                onChange={e => setFormData(p => ({ ...p, totalAmountTtc: e.target.value }))}
+              />
             </div>
           </div>
         </CardContent>

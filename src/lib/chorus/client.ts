@@ -101,6 +101,10 @@ export class DirectChorusConnector implements ChorusConnector {
 
   private async buildApiHeaders(extraHeaders?: HeadersInit): Promise<HeadersInit> {
     const token = await this.getAccessToken();
+    return this.buildApiHeadersFromToken(token, extraHeaders);
+  }
+
+  private buildApiHeadersFromToken(token: string, extraHeaders?: HeadersInit): HeadersInit {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
@@ -133,7 +137,7 @@ export class DirectChorusConnector implements ChorusConnector {
 
     const response = await this.fetchImpl(joinUrl(this.config.apiBaseUrl, this.config.connectionTestPath), {
       method: 'GET',
-      headers: await this.buildApiHeaders(),
+      headers: this.buildApiHeadersFromToken(token),
     });
 
     const body = await parseResponseBody(response);
