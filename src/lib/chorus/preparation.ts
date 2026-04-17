@@ -1,47 +1,25 @@
-import type { InvoiceStatusInternal, PublicCustomer, PublicService, SupplierOrganization, ValidationResult } from '@/types';
-import type { LocalInvoiceExtractionResult } from '@/lib/chorus/extraction';
-import type { InvoiceDraftFormData } from '@/lib/chorus/mappers';
+import { normalizeInvoiceDraft } from '@/lib/chorus/normalization';
+import type {
+  InvoiceDraftFormData,
+  InvoiceDraftNormalizationContext,
+  NormalizedInvoiceDraftData,
+} from '@/lib/chorus/types';
+import type { InvoiceStatusInternal, PublicService, ValidationResult } from '@/types';
 
 export type ChorusPreparationState = 'blocked' | 'review' | 'ready';
 
-export interface ChorusPreparationInput {
+export interface ChorusPreparationInput extends InvoiceDraftNormalizationContext {
   formData: InvoiceDraftFormData;
-  supplier?: Pick<SupplierOrganization, 'id' | 'legalName' | 'siret'>;
-  publicCustomer?: Pick<PublicCustomer, 'id' | 'legalName' | 'siret' | 'codeDestinataire'>;
   publicService?: Pick<PublicService, 'id' | 'publicCustomerId' | 'codeServiceExecutant' | 'label' | 'engagementRequired' | 'purchaseOrderRequired'>;
   availableServices?: Pick<PublicService, 'id' | 'publicCustomerId' | 'codeServiceExecutant' | 'label' | 'engagementRequired' | 'purchaseOrderRequired'>[];
-  extraction?: LocalInvoiceExtractionResult | null;
 }
 
 export interface ChorusPreparationResult {
   readiness: ChorusPreparationState;
   suggestedStatus: Extract<InvoiceStatusInternal, 'PENDING_HUMAN_REVIEW' | 'READY_FOR_SUBMISSION'>;
   validation: ValidationResult;
-  normalized: {
-    supplierSiret?: string;
-    publicCustomerSiret?: string;
-    publicServiceCode?: string;
-    invoiceDate?: string;
-    currencyCode?: string;
-    totalAmountHt?: number;
-    totalAmountTtc?: number;
-  };
+  normalized: NormalizedInvoiceDraftData;
   recommendations: string[];
-}
-
-function normalizeText(value: string): string | undefined {
-  const trimmed = value.trim();
-  return trimmed || undefined;
-}
-
-function parseAmount(value: string): number | undefined {
-  const normalized = value.trim().replace(/\s/g, '').replace(',', '.');
-  if (!normalized) {
-    return undefined;
-  }
-
-  const amount = Number(normalized);
-  return Number.isFinite(amount) ? amount : undefined;
 }
 
 function uniqueMessages(values: string[]): string[] {
@@ -51,22 +29,13 @@ function uniqueMessages(values: string[]): string[] {
 export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusPreparationResult {
   const { formData, supplier, publicCustomer, publicService, extraction } = input;
   const availableServices = input.availableServices ?? [];
+  const normalized = normalizeInvoiceDraft(formData, input);
   const extractedFields = extraction?.fields;
   const errors: ValidationResult['errors'] = [];
   const warnings: ValidationResult['warnings'] = [];
   const recommendations: string[] = [];
 
-  const normalized = {
-    supplierSiret: supplier?.siret || extractedFields?.supplierSiret,
-    publicCustomerSiret: publicCustomer?.siret || extractedFields?.publicCustomerSiret,
-    publicServiceCode: publicService?.codeServiceExecutant || extractedFields?.publicServiceCode,
-    invoiceDate: normalizeText(formData.invoiceDate) || extractedFields?.invoiceDate,
-    currencyCode: normalizeText(formData.currencyCode)?.toUpperCase() || extractedFields?.currencyCode,
-    totalAmountHt: parseAmount(formData.totalAmountHt) ?? extractedFields?.totalAmountHt,
-    totalAmountTtc: parseAmount(formData.totalAmountTtc) ?? extractedFields?.totalAmountTtc,
-  };
-
-  if (!formData.supplierOrganizationId && !normalized.supplierSiret) {
+  if (!normalized.supplierOrganizationId && !normalized.supplierSiret) {
     errors.push({
       field: 'supplierOrganizationId',
       code: 'SUPPLIER_REQUIRED',
@@ -74,7 +43,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!normalizeText(formData.supplierInvoiceNumber)) {
+  if (!normalized.supplierInvoiceNumber) {
     errors.push({
       field: 'supplierInvoiceNumber',
       code: 'INVOICE_NUMBER_REQUIRED',
@@ -90,7 +59,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!formData.publicCustomerId && !normalized.publicCustomerSiret) {
+  if (!normalized.publicCustomerId && !normalized.publicCustomerSiret) {
     errors.push({
       field: 'publicCustomerId',
       code: 'PUBLIC_CUSTOMER_REQUIRED',
@@ -98,7 +67,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (formData.publicCustomerId && availableServices.length > 0 && !formData.publicServiceId) {
+  if (normalized.publicCustomerId && availableServices.length > 0 && !normalized.publicServiceId) {
     errors.push({
       field: 'publicServiceId',
       code: 'PUBLIC_SERVICE_REQUIRED',
@@ -128,7 +97,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (publicService?.engagementRequired && !normalizeText(formData.engagementNumber)) {
+  if (publicService?.engagementRequired && !normalized.engagementNumber) {
     errors.push({
       field: 'engagementNumber',
       code: 'ENGAGEMENT_REQUIRED',
@@ -136,7 +105,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (publicService?.purchaseOrderRequired && !normalizeText(formData.purchaseOrderNumber)) {
+  if (publicService?.purchaseOrderRequired && !normalized.purchaseOrderNumber) {
     errors.push({
       field: 'purchaseOrderNumber',
       code: 'PURCHASE_ORDER_REQUIRED',
@@ -152,7 +121,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!formData.marketNumber.trim()) {
+  if (!normalized.marketNumber) {
     warnings.push({
       field: 'marketNumber',
       code: 'MARKET_NUMBER_MISSING',
@@ -200,7 +169,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!publicService && formData.publicCustomerId && availableServices.length === 0) {
+  if (!publicService && normalized.publicCustomerId && availableServices.length === 0) {
     warnings.push({
       field: 'publicServiceId',
       code: 'NO_ACTIVE_SERVICE_REFERENCE',

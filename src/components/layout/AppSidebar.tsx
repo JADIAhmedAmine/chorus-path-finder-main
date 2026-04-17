@@ -1,7 +1,7 @@
 import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings, Shield,
-  Archive, Cog, ClipboardList, History
+  Archive, Cog, ClipboardList, History, UserCircle2
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -24,6 +24,7 @@ const adminItems = [
   { title: 'Audit', url: '/audit', icon: History },
   { title: 'Archives', url: '/archives', icon: Archive },
   { title: 'Paramètres', url: '/settings', icon: Settings },
+  { title: 'Connexion / Profil', url: '/login', icon: UserCircle2 },
 ];
 
 export function AppSidebar() {

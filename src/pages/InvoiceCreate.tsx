@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,22 +8,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { publicCustomers, publicServices, suppliers } from '@/data/mock-data';
-import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert } from 'lucide-react';
+import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
-import { loadChorusConfig } from '@/lib/chorus/storage';
-import { extractInvoiceData, type LocalInvoiceExtractionResult } from '@/lib/chorus/extraction';
+import { createEmptyInvoiceDraft, mergeExtractionIntoDraft } from '@/lib/chorus/normalization';
+import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { prepareInvoiceSubmission } from '@/lib/chorus/preparation';
-
-function formatAmountForInput(value?: number): string {
-  if (value === undefined || Number.isNaN(value)) {
-    return '';
-  }
-
-  return value.toFixed(2).replace('.', ',');
-}
+import { extractInvoiceData } from '@/lib/chorus/extraction';
+import { buildChorusTechnicalContext } from '@/lib/chorus/technicalContext';
+import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
+import type { InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
 
 function formatAmountForDisplay(value?: string): string {
   if (!value?.trim()) {
@@ -31,6 +29,14 @@ function formatAmountForDisplay(value?: string): string {
   }
 
   return value;
+}
+
+function formatExtractedAmountForDisplay(value?: number): string | undefined {
+  if (value === undefined || Number.isNaN(value)) {
+    return undefined;
+  }
+
+  return value.toFixed(2).replace('.', ',');
 }
 
 function ExtractionInfoRow({ label, value }: { label: string; value?: string }) {
@@ -42,59 +48,138 @@ function ExtractionInfoRow({ label, value }: { label: string; value?: string }) 
   );
 }
 
+function DocumentPreviewCard({
+  file,
+  previewUrl,
+  extractedText,
+  rawTextPreview,
+}: {
+  file: File;
+  previewUrl?: string;
+  extractedText: string;
+  rawTextPreview: string;
+}) {
+  const canPreviewPdf = Boolean(previewUrl);
+  const defaultTab = canPreviewPdf ? 'pdf' : 'text';
+
+  return (
+    <Dialog>
+      <div className="rounded-lg border bg-muted/20 p-3 md:col-span-3">
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Aperçu document</p>
+        <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{file.name}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {rawTextPreview || 'Cliquez pour ouvrir le PDF et le texte extrait.'}
+            </p>
+          </div>
+          <DialogTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Eye className="mr-2 h-4 w-4" />
+              Ouvrir l’aperçu
+            </Button>
+          </DialogTrigger>
+        </div>
+      </div>
+
+      <DialogContent className="h-[88vh] max-w-6xl">
+        <DialogHeader>
+          <DialogTitle>Aperçu du document</DialogTitle>
+        </DialogHeader>
+
+        <Tabs defaultValue={defaultTab} className="flex h-full flex-col">
+          <TabsList className="w-fit">
+            {canPreviewPdf && <TabsTrigger value="pdf">PDF original</TabsTrigger>}
+            <TabsTrigger value="text">Texte extrait</TabsTrigger>
+          </TabsList>
+
+          {canPreviewPdf && (
+            <TabsContent value="pdf" className="mt-4 flex-1">
+              <iframe
+                src={previewUrl}
+                title={`Aperçu PDF ${file.name}`}
+                className="h-[68vh] w-full rounded-lg border"
+              />
+            </TabsContent>
+          )}
+
+          <TabsContent value="text" className="mt-4 flex-1">
+            <div className="h-[68vh] overflow-auto rounded-lg border bg-muted/20 p-4">
+              <pre className="whitespace-pre-wrap break-words text-sm">
+                {extractedText || 'Texte non extrait.'}
+              </pre>
+            </div>
+          </TabsContent>
+        </Tabs>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function InvoiceCreate() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [mainFile, setMainFile] = useState<File | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
-  const [selectedCustomer, setSelectedCustomer] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [formData, setFormData] = useState({
-    supplierOrganizationId: '',
-    supplierInvoiceNumber: '',
-    publicServiceId: '',
-    engagementNumber: '',
-    marketNumber: '',
-    purchaseOrderNumber: '',
-    invoiceDate: '',
-    currencyCode: '',
-    totalAmountHt: '',
-    totalAmountTtc: '',
-  });
+  const [formData, setFormData] = useState<InvoiceDraftFormData>(createEmptyInvoiceDraft);
   const [extracting, setExtracting] = useState(false);
   const [extractionError, setExtractionError] = useState<string | null>(null);
   const [extractionResult, setExtractionResult] = useState<LocalInvoiceExtractionResult | null>(null);
+  const [mainFilePreviewUrl, setMainFilePreviewUrl] = useState<string | null>(null);
+  const [lastSubmissionError, setLastSubmissionError] = useState<string | null>(null);
 
-  const chorusConfig = loadChorusConfig();
-  const services = selectedCustomer ? publicServices.filter(s => s.publicCustomerId === selectedCustomer && s.active) : [];
+  const chorusConfig = resolveChorusRuntimeConfig(loadChorusConfig());
+  const services = formData.publicCustomerId ? publicServices.filter(s => s.publicCustomerId === formData.publicCustomerId && s.active) : [];
   const selectedSupplier = suppliers.find((supplier) => supplier.id === formData.supplierOrganizationId);
-  const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === selectedCustomer);
+  const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === formData.publicCustomerId);
   const selectedPublicService = publicServices.find((service) => service.id === formData.publicServiceId);
+  const detectedSupplierName = selectedSupplier?.legalName || extractionResult?.fields.supplierName;
+  const detectedPublicCustomerName = selectedPublicCustomer?.legalName || extractionResult?.fields.publicCustomerName;
   const detectedSupplierSiret = selectedSupplier?.siret || extractionResult?.fields.supplierSiret;
   const detectedCustomerSiret = selectedPublicCustomer?.siret || extractionResult?.fields.publicCustomerSiret;
-  const detectedServiceCode = selectedPublicService?.codeServiceExecutant || extractionResult?.fields.publicServiceCode;
+  const detectedService = selectedPublicService?.codeServiceExecutant
+    ? `${selectedPublicService.codeServiceExecutant} — ${selectedPublicService.label}`
+    : extractionResult?.fields.publicServiceCode || extractionResult?.fields.publicServiceLabel;
   const submissionPreparation = prepareInvoiceSubmission({
-    formData: {
-      ...formData,
-      publicCustomerId: selectedCustomer,
-    },
+    formData,
     supplier: selectedSupplier,
     publicCustomer: selectedPublicCustomer,
     publicService: selectedPublicService,
     availableServices: services,
     extraction: extractionResult,
   });
+  const chorusTechnicalContext = useMemo(() => buildChorusTechnicalContext(chorusConfig), [chorusConfig]);
+  const submissionPayload = useMemo(() => buildInvoiceSubmissionPayload(formData, {
+    supplier: selectedSupplier,
+    publicCustomer: selectedPublicCustomer,
+    publicService: selectedPublicService,
+    extraction: extractionResult,
+    chorus: chorusTechnicalContext,
+    mainFileName: mainFile?.name,
+  }), [
+    formData,
+    selectedSupplier,
+    selectedPublicCustomer,
+    selectedPublicService,
+    extractionResult,
+    chorusTechnicalContext,
+    mainFile,
+  ]);
+  const payloadValidation = useMemo(() => validateChorusSubmissionPayload(submissionPayload), [submissionPayload]);
   const isDirectMode = chorusConfig.mode === 'direct' && chorusConfig.enabled;
-  const isSubmissionBlocked = extracting || submitting || (isDirectMode && !submissionPreparation.validation.valid);
+  const isSubmissionBlocked = extracting || submitting || (isDirectMode && (!submissionPreparation.validation.valid || !payloadValidation.valid));
 
   useEffect(() => {
     if (!mainFile) {
       setExtracting(false);
       setExtractionError(null);
       setExtractionResult(null);
+      setLastSubmissionError(null);
       return;
     }
 
+    setLastSubmissionError(null);
     let cancelled = false;
 
     async function runExtraction() {
@@ -113,28 +198,7 @@ export default function InvoiceCreate() {
         }
 
         setExtractionResult(result);
-
-        if (result.fields.publicCustomerId) {
-          setSelectedCustomer(result.fields.publicCustomerId);
-        }
-
-        setFormData((current) => ({
-          ...current,
-          supplierOrganizationId: result.fields.supplierOrganizationId ?? current.supplierOrganizationId,
-          supplierInvoiceNumber: result.fields.supplierInvoiceNumber ?? current.supplierInvoiceNumber,
-          publicServiceId: result.fields.publicServiceId ?? current.publicServiceId,
-          engagementNumber: result.fields.engagementNumber ?? current.engagementNumber,
-          marketNumber: result.fields.marketNumber ?? current.marketNumber,
-          purchaseOrderNumber: result.fields.purchaseOrderNumber ?? current.purchaseOrderNumber,
-          invoiceDate: result.fields.invoiceDate ?? current.invoiceDate,
-          currencyCode: result.fields.currencyCode ?? current.currencyCode,
-          totalAmountHt: result.fields.totalAmountHt !== undefined
-            ? formatAmountForInput(result.fields.totalAmountHt)
-            : current.totalAmountHt,
-          totalAmountTtc: result.fields.totalAmountTtc !== undefined
-            ? formatAmountForInput(result.fields.totalAmountTtc)
-            : current.totalAmountTtc,
-        }));
+        setFormData((current) => mergeExtractionIntoDraft(current, result));
       } catch (error) {
         if (cancelled) {
           return;
@@ -153,6 +217,22 @@ export default function InvoiceCreate() {
 
     return () => {
       cancelled = true;
+    };
+  }, [mainFile]);
+
+  useEffect(() => {
+    const isPdf = mainFile?.type === 'application/pdf' || mainFile?.name.toLowerCase().endsWith('.pdf');
+
+    if (!mainFile || !isPdf) {
+      setMainFilePreviewUrl(null);
+      return;
+    }
+
+    const nextUrl = URL.createObjectURL(mainFile);
+    setMainFilePreviewUrl(nextUrl);
+
+    return () => {
+      URL.revokeObjectURL(nextUrl);
     };
   }, [mainFile]);
 
@@ -179,21 +259,22 @@ export default function InvoiceCreate() {
       return;
     }
 
+    if (isDirectMode && !payloadValidation.valid) {
+      toast({
+        title: 'Contexte Chorus incomplet',
+        description: payloadValidation.errors[0]?.message || 'Complétez le contexte technique Chorus dans les paramètres avant l’envoi.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setLastSubmissionError(null);
     setSubmitting(true);
     try {
       const connector = createChorusConnector(chorusConfig);
-      const payload = buildInvoiceSubmissionPayload({
-        ...formData,
-        publicCustomerId: selectedCustomer,
-      }, {
-        supplier: selectedSupplier,
-        publicCustomer: selectedPublicCustomer,
-        publicService: selectedPublicService,
-        extraction: extractionResult,
-      });
 
       const result = await connector.submitInvoice({
-        invoiceData: payload,
+        invoiceData: submissionPayload,
         mainFile,
         attachments,
       });
@@ -206,9 +287,11 @@ export default function InvoiceCreate() {
       });
       navigate('/invoices');
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      setLastSubmissionError(message);
       toast({
         title: 'Échec de soumission',
-        description: error instanceof Error ? error.message : 'Erreur inconnue',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -326,15 +409,24 @@ export default function InvoiceCreate() {
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <ExtractionInfoRow label="Fournisseur" value={detectedSupplierName} />
                 <ExtractionInfoRow label="N° facture" value={formData.supplierInvoiceNumber} />
                 <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
+                <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
+                <ExtractionInfoRow label="Client public" value={detectedPublicCustomerName} />
                 <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
                 <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
                 <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
-                <ExtractionInfoRow label="Code service" value={detectedServiceCode} />
+                <ExtractionInfoRow label="Service détecté" value={detectedService} />
                 <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
+                <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
                 <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
-                <ExtractionInfoRow label="Aperçu texte" value={extractionResult.rawTextPreview || 'Texte trop pauvre pour aperçu'} />
+                <DocumentPreviewCard
+                  file={mainFile}
+                  previewUrl={mainFilePreviewUrl ?? undefined}
+                  extractedText={extractionResult.rawText}
+                  rawTextPreview={extractionResult.rawTextPreview}
+                />
               </div>
 
               {extractionResult.warnings.length > 0 && (
@@ -375,7 +467,14 @@ export default function InvoiceCreate() {
             </div>
             <div className="space-y-2">
               <Label>Client public</Label>
-              <Select value={selectedCustomer} onValueChange={v => { setSelectedCustomer(v); setFormData(p => ({ ...p, publicServiceId: '' })); }}>
+              <Select
+                value={formData.publicCustomerId}
+                onValueChange={value => setFormData((current) => ({
+                  ...current,
+                  publicCustomerId: value,
+                  publicServiceId: '',
+                }))}
+              >
                 <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
                 <SelectContent>
                   {publicCustomers.filter(c => c.active).map(c => <SelectItem key={c.id} value={c.id}>{c.legalName} ({c.codeDestinataire})</SelectItem>)}
@@ -385,13 +484,13 @@ export default function InvoiceCreate() {
             </div>
             <div className="space-y-2">
               <Label>Service destinataire</Label>
-              <Select value={formData.publicServiceId} onValueChange={v => setFormData(p => ({ ...p, publicServiceId: v }))} disabled={!selectedCustomer}>
-                <SelectTrigger><SelectValue placeholder={selectedCustomer ? 'Sélectionner...' : 'Choisir un client d\'abord'} /></SelectTrigger>
+              <Select value={formData.publicServiceId} onValueChange={v => setFormData(p => ({ ...p, publicServiceId: v }))} disabled={!formData.publicCustomerId}>
+                <SelectTrigger><SelectValue placeholder={formData.publicCustomerId ? 'Sélectionner...' : 'Choisir un client d\'abord'} /></SelectTrigger>
                 <SelectContent>
                   {services.map(s => <SelectItem key={s.id} value={s.id}>{s.codeServiceExecutant} — {s.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              {detectedServiceCode && <p className="text-xs text-muted-foreground">Code service: {detectedServiceCode}</p>}
+              {detectedService && <p className="text-xs text-muted-foreground">Service détecté: {detectedService}</p>}
             </div>
             <div className="space-y-2">
               <Label>Date facture</Label>
@@ -517,6 +616,34 @@ export default function InvoiceCreate() {
             </Alert>
           )}
 
+          {isDirectMode && payloadValidation.errors.length > 0 && (
+            <Alert variant="destructive">
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Contexte technique Chorus manquant</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-4">
+                  {payloadValidation.errors.map((error) => (
+                    <li key={`${error.code}-${error.path}`}>{error.message}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {isDirectMode && payloadValidation.warnings.length > 0 && (
+            <Alert>
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Vérifications payload Chorus</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc space-y-1 pl-4">
+                  {payloadValidation.warnings.map((warning) => (
+                    <li key={`${warning.code}-${warning.path}`}>{warning.message}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
           {submissionPreparation.recommendations.length > 0 && (
             <div className="rounded-lg border bg-muted/20 p-4">
               <p className="text-sm font-medium">Actions suggérées</p>
@@ -526,6 +653,22 @@ export default function InvoiceCreate() {
                 ))}
               </ul>
             </div>
+          )}
+
+          {lastSubmissionError && (
+            <Alert variant="destructive">
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Dernière erreur Chorus</AlertTitle>
+              <AlertDescription>
+                <p>{lastSubmissionError}</p>
+                {lastSubmissionError.includes('Soumission Chorus échouée (500)') && (
+                  <p className="mt-2 text-xs">
+                    Le jeton OAuth2 et l’appel API passent désormais. Le blocage restant est côté soumission métier Chorus,
+                    très probablement sur la forme du JSON envoyé à <code>/v1/soumettre</code>.
+                  </p>
+                )}
+              </AlertDescription>
+            </Alert>
           )}
         </CardContent>
       </Card>

@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { loadAuthSession } from "@/lib/auth/session";
 import Dashboard from "./pages/Dashboard";
 import InvoiceList from "./pages/InvoiceList";
 import InvoiceDetail from "./pages/InvoiceDetail";
@@ -18,6 +19,10 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  return loadAuthSession() ? <>{children}</> : <Navigate to="/login" replace />;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -26,16 +31,16 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={<AppLayout><Dashboard /></AppLayout>} />
-          <Route path="/invoices" element={<AppLayout><InvoiceList /></AppLayout>} />
-          <Route path="/invoices/new" element={<AppLayout><InvoiceCreate /></AppLayout>} />
-          <Route path="/invoices/:id" element={<AppLayout><InvoiceDetail /></AppLayout>} />
-          <Route path="/references/customers" element={<AppLayout><References /></AppLayout>} />
-          <Route path="/references/services" element={<AppLayout><References /></AppLayout>} />
-          <Route path="/jobs" element={<AppLayout><Jobs /></AppLayout>} />
-          <Route path="/audit" element={<AppLayout><AuditPage /></AppLayout>} />
-          <Route path="/archives" element={<AppLayout><Archives /></AppLayout>} />
-          <Route path="/settings" element={<AppLayout><SettingsPage /></AppLayout>} />
+          <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
+          <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
+          <Route path="/invoices/new" element={<RequireAuth><AppLayout><InvoiceCreate /></AppLayout></RequireAuth>} />
+          <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />
+          <Route path="/references/customers" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
+          <Route path="/references/services" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
+          <Route path="/jobs" element={<RequireAuth><AppLayout><Jobs /></AppLayout></RequireAuth>} />
+          <Route path="/audit" element={<RequireAuth><AppLayout><AuditPage /></AppLayout></RequireAuth>} />
+          <Route path="/archives" element={<RequireAuth><AppLayout><Archives /></AppLayout></RequireAuth>} />
+          <Route path="/settings" element={<RequireAuth><AppLayout><SettingsPage /></AppLayout></RequireAuth>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

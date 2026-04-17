@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 
 describe('chorus mappers', () => {
-  it('builds an enriched payload with resolved business metadata', () => {
+  it('maps the invoice draft to a typed Chorus submission payload', () => {
     const payload = buildInvoiceSubmissionPayload({
       supplierOrganizationId: 's1',
       supplierInvoiceNumber: 'FAC-2026-001',
@@ -23,7 +23,7 @@ describe('chorus mappers', () => {
       },
       publicCustomer: {
         id: 'pc2',
-        legalName: 'Direction Générale des Finances Publiques',
+        legalName: 'Direction Generale des Finances Publiques',
         siret: '13001803200011',
         codeDestinataire: '99002',
       },
@@ -31,37 +31,58 @@ describe('chorus mappers', () => {
         id: 'ps3',
         publicCustomerId: 'pc2',
         codeServiceExecutant: 'SE003',
-        label: 'Bureau de la comptabilité',
+        label: 'Bureau de la comptabilite',
       },
       extraction: {
         sourceFormat: 'PDF',
         confidence: 0.91,
         requiresReview: false,
         warnings: [],
-        rawTextPreview: 'Facture numéro : FAC-2026-001',
+        rawText: 'Facture numero : FAC-2026-001',
+        rawTextPreview: 'Facture numero : FAC-2026-001',
         fields: {
           supplierSiret: '12345678901234',
           publicCustomerSiret: '13001803200011',
           publicServiceCode: 'SE003',
+          totalVat: 2400,
         },
+      },
+      chorus: {
+        idUtilisateurCourant: 42,
+        idFournisseur: 160,
+        idServiceFournisseur: 436,
+        codeCoordonneesBancairesFournisseur: 132,
       },
     });
 
     expect(payload).toMatchObject({
-      supplierInvoiceNumber: 'FAC-2026-001',
-      invoiceDate: '2026-04-15',
-      currencyCode: 'EUR',
-      totalAmountHt: 12000,
-      totalAmountTtc: 14400,
-      supplierSiret: '12345678901234',
-      publicCustomerSiret: '13001803200011',
-      publicCustomerCodeDestinataire: '99002',
-      publicServiceCode: 'SE003',
-      publicServiceLabel: 'Bureau de la comptabilité',
-      sourceFormat: 'PDF',
-      extractionConfidence: 0.91,
-      requiresHumanReview: false,
+      dateFacture: '2026-04-15',
+      numeroFactureSaisi: 'FAC-2026-001',
+      destinataire: {
+        codeDestinataire: '99002',
+        codeServiceExecutant: 'SE003',
+      },
+      fournisseur: {
+        idFournisseur: 160,
+        idServiceFournisseur: 436,
+        codeCoordonneesBancairesFournisseur: 132,
+      },
+      montantTotal: {
+        montantHtTotal: 12000,
+        montantTVA: 2400,
+        montantTtcTotal: 14400,
+        montantAPayer: 14400,
+      },
+      references: {
+        deviseFacture: 'EUR',
+        numeroBonCommande: 'BC-2026-55',
+        numeroMarche: 'MA-2026-10',
+        typeFacture: 'FACTURE',
+        typeTva: 'TVA_SUR_DEBIT',
+      },
     });
-    expect(typeof payload.requestedAt).toBe('string');
+
+    expect(payload.lignePoste).toHaveLength(1);
+    expect(payload.lignePoste[0]?.lignePosteMontantUnitaireHT).toBe(12000);
   });
 });

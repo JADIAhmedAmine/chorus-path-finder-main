@@ -10,8 +10,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { createChorusConnector } from '@/lib/chorus/client';
-import { loadChorusConfig, maskSecret, saveChorusConfig } from '@/lib/chorus/storage';
-import type { ChorusConfig, ChorusConnectionResult } from '@/types/chorus';
+import { loadAuthSession } from '@/lib/auth/session';
+import { loadChorusConfig, maskSecret, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
+import type { ChorusConfig, ChorusConnectionResult, ChorusTechnicalContextResolutionResult } from '@/types/chorus';
 import { Loader2, PlugZap } from 'lucide-react';
 
 const connectorModeLabels = {
@@ -24,11 +25,35 @@ const connectionMethodLabels = {
   POST: 'POST',
 } as const;
 
+const paymentModeLabels = {
+  CHEQUE: 'CHEQUE',
+  ESPECE: 'ESPECE',
+  VIREMENT: 'VIREMENT',
+} as const;
+
+const invoiceTypeLabels = {
+  FACTURE: 'FACTURE',
+  AVOIR: 'AVOIR',
+} as const;
+
+const vatTypeLabels = {
+  AUTO: 'AUTO',
+  TVA_SUR_DEBIT: 'TVA_SUR_DEBIT',
+  TVA_SUR_ENCAISSEMENT: 'TVA_SUR_ENCAISSEMENT',
+  EXONERATION: 'EXONERATION',
+  SANS_TVA: 'SANS_TVA',
+} as const;
+
 export default function SettingsPage() {
   const { toast } = useToast();
+  const authSession = loadAuthSession();
   const [config, setConfig] = useState<ChorusConfig>(() => loadChorusConfig());
   const [testingConnection, setTestingConnection] = useState(false);
   const [lastConnectionResult, setLastConnectionResult] = useState<ChorusConnectionResult | null>(null);
+  const [resolvingTechnicalContext, setResolvingTechnicalContext] = useState(false);
+  const [lastTechnicalContextResult, setLastTechnicalContextResult] = useState<ChorusTechnicalContextResolutionResult | null>(null);
+  const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? currentUser.email);
+  const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState(() => suppliers.find((supplier) => supplier.active)?.id ?? suppliers[0]?.id ?? '');
 
   const connectorStatus = useMemo(() => {
     if (!config.enabled) {
@@ -37,6 +62,11 @@ export default function SettingsPage() {
 
     return config.mode === 'mock' ? 'Simulation active' : 'Prêt pour test réel';
   }, [config.enabled, config.mode]);
+
+  const selectedSupplierForTechnicalContext = useMemo(
+    () => suppliers.find((supplier) => supplier.id === technicalContextSupplierId),
+    [technicalContextSupplierId],
+  );
 
   const handleFieldChange = <K extends keyof ChorusConfig>(field: K, value: ChorusConfig[K]) => {
     setConfig((previous) => ({
@@ -58,7 +88,7 @@ export default function SettingsPage() {
     setLastConnectionResult(null);
 
     try {
-      const connector = createChorusConnector(config);
+      const connector = createChorusConnector(resolveChorusRuntimeConfig(config));
       const result = await connector.testConnection();
       setLastConnectionResult(result);
       toast({
@@ -79,6 +109,44 @@ export default function SettingsPage() {
       });
     } finally {
       setTestingConnection(false);
+    }
+  };
+
+  const handleResolveTechnicalContext = async () => {
+    setResolvingTechnicalContext(true);
+    setLastTechnicalContextResult(null);
+
+    try {
+      const connector = createChorusConnector(resolveChorusRuntimeConfig(config));
+      const result = await connector.resolveTechnicalContext({
+        userEmail: technicalContextEmail.trim() || undefined,
+        supplierSiret: selectedSupplierForTechnicalContext?.siret,
+      });
+
+      const nextConfig: ChorusConfig = {
+        ...config,
+        submissionCurrentUserId: result.userId !== undefined ? String(result.userId) : config.submissionCurrentUserId,
+        submissionSupplierId: result.supplierStructureId !== undefined ? String(result.supplierStructureId) : config.submissionSupplierId,
+        submissionSupplierServiceId: result.supplierServiceId !== undefined ? String(result.supplierServiceId) : config.submissionSupplierServiceId,
+      };
+
+      setConfig(nextConfig);
+      saveChorusConfig(nextConfig);
+      setLastTechnicalContextResult(result);
+
+      toast({
+        title: 'Contexte Chorus récupéré',
+        description: result.message,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      toast({
+        title: 'Échec récupération contexte',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setResolvingTechnicalContext(false);
     }
   };
 
@@ -218,6 +286,162 @@ export default function SettingsPage() {
 
           <Separator />
 
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-sm font-medium">Contexte technique Chorus</h3>
+              <p className="text-xs text-muted-foreground mt-1">
+                Ces identifiants ne viennent pas du PDF. Ils servent a construire le JSON exact pour `deposer/pdf` et `soumettre`.
+              </p>
+            </div>
+
+            <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
+              <div>
+                <p className="text-sm font-medium">Récupération automatique via API utilisateurs</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Cette action appelle `consulter/compte` pour `idUtilisateurCourant` et `monCompte/recuperer/rattachements` pour `idStructure` / `idService`.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="technical-context-email">Email utilisateur Chorus</Label>
+                  <Input
+                    id="technical-context-email"
+                    value={technicalContextEmail}
+                    onChange={(e) => setTechnicalContextEmail(e.target.value)}
+                    placeholder="adresse email de connexion Chorus"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Fournisseur à rapprocher</Label>
+                  <Select value={technicalContextSupplierId} onValueChange={setTechnicalContextSupplierId}>
+                    <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
+                    <SelectContent>
+                      {suppliers.filter((supplier) => supplier.active).map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>
+                          {supplier.legalName} ({supplier.siret})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                <Button variant="outline" onClick={handleResolveTechnicalContext} disabled={resolvingTechnicalContext}>
+                  {resolvingTechnicalContext ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Récupérer depuis Chorus
+                </Button>
+              </div>
+
+              {lastTechnicalContextResult && (
+                <div className="rounded-lg border bg-background p-4 text-sm space-y-2">
+                  <p className="font-medium">{lastTechnicalContextResult.message}</p>
+                  <p className="text-muted-foreground">
+                    `idUtilisateurCourant`: {lastTechnicalContextResult.userId ?? 'non trouvé'} ·
+                    `idFournisseur`: {lastTechnicalContextResult.supplierStructureId ?? 'non trouvé'} ·
+                    `idServiceFournisseur`: {lastTechnicalContextResult.supplierServiceId ?? 'non trouvé'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Le rapprochement du fournisseur par SIRET est {lastTechnicalContextResult.matchedOnSupplierSiret ? 'réussi' : 'approximatif'}.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="submission-current-user-id">idUtilisateurCourant</Label>
+                <Input id="submission-current-user-id" value={config.submissionCurrentUserId} onChange={(e) => handleFieldChange('submissionCurrentUserId', e.target.value)} placeholder="331" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-supplier-id">idFournisseur</Label>
+                <Input id="submission-supplier-id" value={config.submissionSupplierId} onChange={(e) => handleFieldChange('submissionSupplierId', e.target.value)} placeholder="160" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-supplier-service-id">idServiceFournisseur</Label>
+                <Input id="submission-supplier-service-id" value={config.submissionSupplierServiceId} onChange={(e) => handleFieldChange('submissionSupplierServiceId', e.target.value)} placeholder="436" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-bank-account-code">codeCoordonneesBancairesFournisseur</Label>
+                <Input id="submission-bank-account-code" value={config.submissionBankAccountCode} onChange={(e) => handleFieldChange('submissionBankAccountCode', e.target.value)} placeholder="132" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-cadre-code">codeCadreFacturation</Label>
+                <Input id="submission-cadre-code" value={config.submissionCadreCode} onChange={(e) => handleFieldChange('submissionCadreCode', e.target.value)} placeholder="A1_FACTURE_FOURNISSEUR" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-validator-structure-code">codeStructureValideur</Label>
+                <Input id="submission-validator-structure-code" value={config.submissionValidatorStructureCode} onChange={(e) => handleFieldChange('submissionValidatorStructureCode', e.target.value)} placeholder="Optionnel" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-validator-service-code">codeServiceValideur</Label>
+                <Input id="submission-validator-service-code" value={config.submissionValidatorServiceCode} onChange={(e) => handleFieldChange('submissionValidatorServiceCode', e.target.value)} placeholder="Optionnel" />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Mode de paiement</Label>
+                <Select value={config.submissionPaymentMode} onValueChange={(value: ChorusConfig['submissionPaymentMode']) => handleFieldChange('submissionPaymentMode', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CHEQUE">{paymentModeLabels.CHEQUE}</SelectItem>
+                    <SelectItem value="ESPECE">{paymentModeLabels.ESPECE}</SelectItem>
+                    <SelectItem value="VIREMENT">{paymentModeLabels.VIREMENT}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Type de facture</Label>
+                <Select value={config.submissionInvoiceType} onValueChange={(value: ChorusConfig['submissionInvoiceType']) => handleFieldChange('submissionInvoiceType', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="FACTURE">{invoiceTypeLabels.FACTURE}</SelectItem>
+                    <SelectItem value="AVOIR">{invoiceTypeLabels.AVOIR}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Type TVA</Label>
+                <Select value={config.submissionVatType} onValueChange={(value: ChorusConfig['submissionVatType']) => handleFieldChange('submissionVatType', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="AUTO">{vatTypeLabels.AUTO}</SelectItem>
+                    <SelectItem value="TVA_SUR_DEBIT">{vatTypeLabels.TVA_SUR_DEBIT}</SelectItem>
+                    <SelectItem value="TVA_SUR_ENCAISSEMENT">{vatTypeLabels.TVA_SUR_ENCAISSEMENT}</SelectItem>
+                    <SelectItem value="EXONERATION">{vatTypeLabels.EXONERATION}</SelectItem>
+                    <SelectItem value="SANS_TVA">{vatTypeLabels.SANS_TVA}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-vat-exoneration-reason">motifExonerationTva</Label>
+                <Input id="submission-vat-exoneration-reason" value={config.submissionVatExonerationReason} onChange={(e) => handleFieldChange('submissionVatExonerationReason', e.target.value)} placeholder="Seulement si EXONERATION" />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="submission-original-invoice-number">numeroFactureOrigine</Label>
+                <Input id="submission-original-invoice-number" value={config.submissionOriginalInvoiceNumber} onChange={(e) => handleFieldChange('submissionOriginalInvoiceNumber', e.target.value)} placeholder="Pour un avoir" />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="submission-comment">commentaire</Label>
+                <Input id="submission-comment" value={config.submissionComment} onChange={(e) => handleFieldChange('submissionComment', e.target.value)} placeholder="Optionnel" />
+              </div>
+            </div>
+          </div>
+
+          <Separator />
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <InfoTile label="Mode" value={connectorModeLabels[config.mode]} />
             <InfoTile label="Statut" value={connectorStatus} />
@@ -227,6 +451,8 @@ export default function SettingsPage() {
           <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
             En production, évite d'exposer le client secret PISTE dans le front Vite. Le connecteur direct ajouté ici est surtout utile pour la sandbox, les tests de dev et le prototypage rapide.
             Pour un endpoint Chorus de recherche comme `/v1/rechercher/fournisseur`, utilise `POST` pour le test de connexion.
+            Les champs du bloc de soumission (`idUtilisateurCourant`, `idFournisseur`, etc.) servent au JSON envoyé vers Chorus et ne peuvent pas être déduits du PDF.
+            {import.meta.env.DEV ? ' En développement local, les URLs officielles sandbox PISTE sont automatiquement relayées via le proxy Vite pour contourner le blocage CORS du navigateur.' : ''}
           </div>
 
           <div className="flex flex-wrap gap-3">

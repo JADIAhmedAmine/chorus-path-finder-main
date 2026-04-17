@@ -1,39 +1,10 @@
-import type { PublicCustomer, PublicService, SupplierOrganization } from '@/types';
-
-export type InvoiceSourceFormat = 'PDF' | 'XML';
-
-export interface InvoiceExtractionReferences {
-  suppliers: Pick<SupplierOrganization, 'id' | 'legalName' | 'siret'>[];
-  publicCustomers: Pick<PublicCustomer, 'id' | 'legalName' | 'siret' | 'codeDestinataire'>[];
-  publicServices: Pick<PublicService, 'id' | 'publicCustomerId' | 'codeServiceExecutant' | 'label'>[];
-}
-
-export interface ExtractedInvoiceDraftData {
-  supplierOrganizationId?: string;
-  supplierInvoiceNumber?: string;
-  publicCustomerId?: string;
-  publicServiceId?: string;
-  engagementNumber?: string;
-  marketNumber?: string;
-  purchaseOrderNumber?: string;
-  invoiceDate?: string;
-  currencyCode?: string;
-  supplierSiret?: string;
-  publicCustomerSiret?: string;
-  publicServiceCode?: string;
-  publicCustomerCode?: string;
-  totalAmountHt?: number;
-  totalAmountTtc?: number;
-}
-
-export interface LocalInvoiceExtractionResult {
-  sourceFormat: InvoiceSourceFormat;
-  fields: ExtractedInvoiceDraftData;
-  confidence: number;
-  requiresReview: boolean;
-  warnings: string[];
-  rawTextPreview: string;
-}
+import type {
+  ExtractedInvoiceDraftData,
+  InvoiceExtractionReferences,
+  InvoiceSourceFormat,
+  LocalInvoiceExtractionResult,
+} from '@/lib/chorus/types';
+import { extractInvoiceDataWithOllama } from '@/lib/llm/ollama';
 
 interface CandidateMatch<T> {
   value?: T;
@@ -85,8 +56,180 @@ function scoreReadableText(value: string): number {
   return readableChars / compact.length;
 }
 
+function decodeOctalSequence(value: string): string {
+  const parsed = Number.parseInt(value, 8);
+  return Number.isFinite(parsed) ? String.fromCharCode(parsed) : '';
+}
+
+function decodePdfLiteralString(value: string): string {
+  return value
+    .replace(/\\([nrtbf()\\])/g, (_, escaped: string) => {
+      switch (escaped) {
+        case 'n':
+          return '\n';
+        case 'r':
+          return '\r';
+        case 't':
+          return '\t';
+        case 'b':
+          return '\b';
+        case 'f':
+          return '\f';
+        default:
+          return escaped;
+      }
+    })
+    .replace(/\\([0-7]{1,3})/g, (_, octal: string) => decodeOctalSequence(octal));
+}
+
+function extractPdfLiteralStrings(content: string): string[] {
+  const values: string[] = [];
+  let current = '';
+  let depth = 0;
+  let escaped = false;
+
+  for (const character of content) {
+    if (depth === 0) {
+      if (character === '(') {
+        depth = 1;
+        current = '';
+        escaped = false;
+      }
+      continue;
+    }
+
+    if (escaped) {
+      current += `\\${character}`;
+      escaped = false;
+      continue;
+    }
+
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (character === '(') {
+      depth += 1;
+      current += character;
+      continue;
+    }
+
+    if (character === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        const decoded = compactWhitespace(decodePdfLiteralString(current));
+        if (decoded.length >= 2) {
+          values.push(decoded);
+        }
+        current = '';
+      } else {
+        current += character;
+      }
+      continue;
+    }
+
+    current += character;
+  }
+
+  return values;
+}
+
+function decodePdfHexString(value: string): string {
+  const normalized = value.replace(/\s+/g, '');
+  if (!normalized || normalized.length % 2 !== 0) {
+    return '';
+  }
+
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let index = 0; index < normalized.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(normalized.slice(index, index + 2), 16);
+  }
+
+  return compactWhitespace(new TextDecoder('windows-1252').decode(bytes));
+}
+
+function extractPdfHexStrings(content: string): string[] {
+  return Array.from(content.matchAll(/<([0-9A-Fa-f\s]{6,})>\s*Tj/g))
+    .map((match) => decodePdfHexString(match[1]))
+    .filter((value) => value.length >= 2);
+}
+
+function extractPrintableRuns(content: string): string[] {
+  return Array.from(content.matchAll(/[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9@&/.,:;_#'’()\- ]{4,}/g))
+    .map((match) => compactWhitespace(match[0]))
+    .filter((value) => value.length >= 5);
+}
+
+function latin1BytesToString(bytes: Uint8Array): string {
+  let result = '';
+  const chunkSize = 0x8000;
+
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    const chunk = bytes.subarray(index, index + chunkSize);
+    result += String.fromCharCode(...chunk);
+  }
+
+  return result;
+}
+
+async function inflatePdfStreamBytes(bytes: Uint8Array): Promise<string | null> {
+  if (typeof DecompressionStream === 'undefined') {
+    return null;
+  }
+
+  try {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+    const inflated = await new Response(stream).arrayBuffer();
+    return new TextDecoder('windows-1252').decode(inflated);
+  } catch {
+    return null;
+  }
+}
+
+async function decodePdfBufferToText(buffer: ArrayBuffer): Promise<string> {
+  const bytes = new Uint8Array(buffer);
+  const binaryText = new TextDecoder('windows-1252').decode(buffer);
+  const contents: string[] = [binaryText];
+  const streamRegex = /stream\r?\n([\s\S]*?)endstream/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = streamRegex.exec(binaryText)) !== null) {
+    const streamContent = match[1].replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+    const dictWindowStart = Math.max(0, match.index - 300);
+    const dictText = binaryText.slice(dictWindowStart, match.index);
+
+    if (/FlateDecode/.test(dictText)) {
+      const startIndex = match.index + match[0].indexOf(streamContent);
+      const streamBytes = bytes.subarray(startIndex, startIndex + streamContent.length);
+      const inflated = await inflatePdfStreamBytes(streamBytes);
+      if (inflated) {
+        contents.push(inflated);
+      }
+    } else {
+      contents.push(streamContent);
+    }
+  }
+
+  const fragments = uniqueValues(contents.flatMap((content) => [
+    ...extractPdfLiteralStrings(content),
+    ...extractPdfHexStrings(content),
+    ...extractPrintableRuns(content),
+  ]));
+
+  if (fragments.length > 0) {
+    return compactWhitespace(fragments.join(' '));
+  }
+
+  return compactWhitespace(latin1BytesToString(bytes));
+}
+
 async function decodeFileToText(file: File): Promise<string> {
-  if (typeof file.text === 'function') {
+  const lowerName = file.name.toLowerCase();
+  const lowerType = file.type.toLowerCase();
+  const isPdf = lowerName.endsWith('.pdf') || lowerType.includes('pdf');
+
+  if (!isPdf && typeof file.text === 'function') {
     const directText = await file.text();
     if (directText) {
       return directText;
@@ -98,10 +241,14 @@ async function decodeFileToText(file: File): Promise<string> {
       const reader = new FileReader();
       reader.onerror = () => reject(reader.error ?? new Error('Impossible de lire le fichier.'));
       reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-      reader.readAsText(file);
+      if (isPdf) {
+        reader.readAsArrayBuffer(file);
+      } else {
+        reader.readAsText(file);
+      }
     });
 
-    if (readerText) {
+    if (readerText && !isPdf) {
       return readerText;
     }
   }
@@ -109,6 +256,11 @@ async function decodeFileToText(file: File): Promise<string> {
   const buffer = typeof file.arrayBuffer === 'function'
     ? await file.arrayBuffer()
     : await new Response(file).arrayBuffer();
+
+  if (isPdf) {
+    return decodePdfBufferToText(buffer);
+  }
+
   const encodings = ['utf-8', 'windows-1252'] as const;
   let bestText = '';
   let bestScore = -1;
@@ -130,6 +282,8 @@ async function decodeFileToText(file: File): Promise<string> {
   return bestText;
 }
 
+// This extractor deliberately stays frontend-native and heuristic.
+// It works well for XML and text PDFs, but it is not a full PDF parser and does not perform OCR.
 function determineSourceFormat(file: File): InvoiceSourceFormat {
   const lowerName = file.name.toLowerCase();
   const lowerType = file.type.toLowerCase();
@@ -182,6 +336,11 @@ function extractXmlTagValue(text: string, tagNames: string[]): string | undefine
   return undefined;
 }
 
+function extractFullUppercaseLine(text: string): string | undefined {
+  const match = text.match(/\b([A-Z][A-Z'’.-]{2,}(?:\s+[A-Z][A-Z'’.-]{2,}){1,}(?:\s+-\s+[A-Z][A-Z'’.-]{2,}(?:\s+[A-Z][A-Z'’.-]{2,})*)?)\b/);
+  return match?.[1] ? compactWhitespace(match[1]) : undefined;
+}
+
 function normalizeDate(value: string): string | undefined {
   const cleaned = sanitizeToken(value).replace(/\./g, '/').replace(/-/g, '/');
 
@@ -208,6 +367,7 @@ function normalizeDate(value: string): string | undefined {
 function parseAmount(value: string): number | undefined {
   const cleaned = sanitizeToken(value)
     .replace(/\s/g, '')
+    .replace(/['’]/g, '')
     .replace(/[A-Za-z€$£]/g, '');
 
   if (!cleaned) {
@@ -235,23 +395,38 @@ function detectCurrency(text: string, rawText: string, sourceFormat: InvoiceSour
     ? extractXmlTagValue(rawText, ['Currency', 'InvoiceCurrencyCode', 'DocumentCurrencyCode'])
     : undefined;
 
-  const candidate = (xmlCurrency ?? pickFirstMatch(text, [
-    { regex: /\b(?:currency|devise)\s*[:#-]?\s*([A-Z]{3})\b/i, confidence: 0.9 },
-    { regex: /\b(EUR|USD|GBP|CHF)\b/i, confidence: 0.72 },
-  ]).value);
+  if (xmlCurrency) {
+    return {
+      value: xmlCurrency.toUpperCase(),
+      confidence: 0.92,
+    };
+  }
 
-  if (!candidate && /€/.test(rawText)) {
+  const explicitLabelMatch = pickFirstMatch(text, [
+    { regex: /\b(?:currency|devise)\s*[:#-]?\s*(EUR|USD|GBP|CHF)\b/i, confidence: 0.92 },
+    { regex: /\b(?:montant|total|net\s+a\s+payer|net\s+à\s+payer)[^A-Z]{0,25}(EUR|USD|GBP|CHF)\b/i, confidence: 0.82 },
+  ]);
+
+  if (explicitLabelMatch.value) {
+    return {
+      value: explicitLabelMatch.value.toUpperCase(),
+      confidence: explicitLabelMatch.confidence,
+    };
+  }
+
+  const amountWithCurrency = text.match(/\b[0-9][0-9\s.,']{0,20}\s*(EUR|USD|GBP|CHF)\b/i);
+  if (amountWithCurrency?.[1]) {
+    return {
+      value: amountWithCurrency[1].toUpperCase(),
+      confidence: 0.8,
+    };
+  }
+
+  if (/€/.test(rawText)) {
     return { value: 'EUR', confidence: 0.7 };
   }
 
-  if (!candidate) {
-    return {};
-  }
-
-  return {
-    value: candidate.toUpperCase(),
-    confidence: xmlCurrency ? 0.92 : 0.9,
-  };
+  return {};
 }
 
 function extractInvoiceNumber(text: string, rawText: string, filename: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
@@ -298,12 +473,36 @@ function extractInvoiceDate(text: string, rawText: string, sourceFormat: Invoice
 
   const regexMatch = pickFirstMatch(text, [
     {
+      regex: /\bfacture\b[^0-9]{0,10}(?:n[°ºo]?|numero|numéro)?[^A-Z0-9]{0,10}[A-Z0-9/_-]{2,}[^0-9]{0,12}(?:du|le)\s*(\d{2}[\/.-]\d{2}[\/.-]\d{4})/i,
+      confidence: 0.96,
+    },
+    {
       regex: /\b(?:date\s+facture|invoice\s+date|date\s+d['’]emission|date\s+d['’]émission|issue\s+date)\s*[:#-]?\s*(\d{2}[\/.-]\d{2}[\/.-]\d{4}|\d{4}[\/.-]\d{2}[\/.-]\d{2}|\d{8})/i,
       confidence: 0.93,
     },
     {
       regex: /\b(?:date)\s*[:#-]?\s*(\d{2}[\/.-]\d{2}[\/.-]\d{4}|\d{4}[\/.-]\d{2}[\/.-]\d{2})/i,
       confidence: 0.74,
+    },
+  ]);
+
+  const candidate = xmlDate ?? regexMatch.value;
+  const normalized = candidate ? normalizeDate(candidate) : undefined;
+
+  return normalized
+    ? { value: normalized, confidence: xmlDate ? 0.94 : regexMatch.confidence }
+    : {};
+}
+
+function extractDueDate(text: string, rawText: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
+  const xmlDate = sourceFormat === 'XML'
+    ? extractXmlTagValue(rawText, ['DueDate', 'PaymentDueDate', 'PaymentTermsDate'])
+    : undefined;
+
+  const regexMatch = pickFirstMatch(text, [
+    {
+      regex: /\b(?:jusqu['’]au|date\s+echeance|date\s+échéance|echeance|échéance|delai\s+de\s+reglement|délai\s+de\s+règlement)\s*[:#-]?\s*(\d{2}[\/.-]\d{2}[\/.-]\d{4}|\d{4}[\/.-]\d{2}[\/.-]\d{2})/i,
+      confidence: 0.94,
     },
   ]);
 
@@ -382,6 +581,72 @@ function extractAmount(text: string, rawText: string, sourceFormat: InvoiceSourc
     : {};
 }
 
+function extractVatAmount(text: string, rawText: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<number> {
+  const xmlValue = sourceFormat === 'XML'
+    ? extractXmlTagValue(rawText, ['TaxAmount', 'TotalTaxAmount'])
+    : undefined;
+
+  const regexMatch = pickFirstMatch(text, [
+    { regex: /\b(?:montant\s+tva|total\s+tva|tva\s*\d{1,2}(?:[.,]\d+)?%)\s*[:#-]?\s*([0-9\s.,']+)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.86 },
+  ]);
+
+  const candidate = xmlValue ?? regexMatch.value;
+  const amount = candidate ? parseAmount(candidate) : undefined;
+
+  return amount !== undefined
+    ? { value: amount, confidence: xmlValue ? 0.9 : regexMatch.confidence }
+    : {};
+}
+
+function extractCustomerReference(text: string, rawText: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
+  const xmlValue = sourceFormat === 'XML'
+    ? extractXmlTagValue(rawText, ['CustomerReference', 'BuyerReference'])
+    : undefined;
+
+  if (xmlValue) {
+    return { value: xmlValue, confidence: 0.9 };
+  }
+
+  return pickFirstMatch(text, [
+    { regex: /\b(?:id\s+client|reference\s+client|référence\s+client)\s*(?:n[°ºo]?|numero|numéro|number)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.9 },
+  ]);
+}
+
+function extractSupplierVatNumber(text: string, rawText: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
+  const xmlValue = sourceFormat === 'XML'
+    ? extractXmlTagValue(rawText, ['CompanyVATNumber', 'SupplierVATIdentifier', 'TaxRegistrationIdentifier'])
+    : undefined;
+
+  if (xmlValue) {
+    return { value: xmlValue.toUpperCase(), confidence: 0.9 };
+  }
+
+  return pickFirstMatch(text, [
+    { regex: /\b(?:n[°ºo]?\s*tva\s+fournisseur|tva\s+fournisseur|vat\s+number)\s*[:#-]?\s*([A-Z]{2}[A-Z0-9]{8,20})/i, confidence: 0.9 },
+  ]);
+}
+
+function extractServiceLabel(text: string): CandidateMatch<string> {
+  const normalizedText = compactWhitespace(text);
+  const explicitMatch = normalizedText.match(/\b((?:comptabilite|comptabilité)\s+fournisseurs)\b/i);
+  if (explicitMatch?.[1]) {
+    return {
+      value: explicitMatch[1],
+      confidence: 0.86,
+    };
+  }
+
+  return {};
+}
+
+function extractLabelledSirets(text: string): string[] {
+  return uniqueValues(
+    Array.from(text.matchAll(/\bsiret\s*:\s*((?:\d[\s.-]?){14,20})/gi))
+      .map((match) => cleanDigits(match[1]))
+      .filter((candidate) => candidate.length === 14),
+  );
+}
+
 function findMentionedCode(text: string, codes: string[]): string | undefined {
   for (const code of codes) {
     const regex = new RegExp(`\\b${code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
@@ -434,6 +699,7 @@ export async function extractInvoiceData(
   const sourceFormat = determineSourceFormat(file);
   const rawText = await decodeFileToText(file);
   const text = compactWhitespace(rawText);
+  const readabilityScore = scoreReadableText(rawText);
   const warnings: string[] = [];
   const fieldConfidences: number[] = [];
   const fields: ExtractedInvoiceDraftData = {};
@@ -448,6 +714,12 @@ export async function extractInvoiceData(
   if (invoiceDate.value) {
     fields.invoiceDate = invoiceDate.value;
     fieldConfidences.push(invoiceDate.confidence ?? 0.6);
+  }
+
+  const dueDate = extractDueDate(text, rawText, sourceFormat);
+  if (dueDate.value) {
+    fields.dueDate = dueDate.value;
+    fieldConfidences.push(dueDate.confidence ?? 0.6);
   }
 
   const engagementNumber = extractCode(text, rawText, sourceFormat, 'engagement');
@@ -480,17 +752,40 @@ export async function extractInvoiceData(
     fieldConfidences.push(totalAmountHt.confidence ?? 0.6);
   }
 
+  const totalVat = extractVatAmount(text, rawText, sourceFormat);
+  if (totalVat.value !== undefined) {
+    fields.totalVat = totalVat.value;
+    fieldConfidences.push(totalVat.confidence ?? 0.6);
+  }
+
   const totalAmountTtc = extractAmount(text, rawText, sourceFormat, 'ttc');
   if (totalAmountTtc.value !== undefined) {
     fields.totalAmountTtc = totalAmountTtc.value;
     fieldConfidences.push(totalAmountTtc.confidence ?? 0.6);
   }
 
+  const customerReference = extractCustomerReference(text, rawText, sourceFormat);
+  if (customerReference.value) {
+    fields.customerReference = customerReference.value;
+    fieldConfidences.push(customerReference.confidence ?? 0.6);
+  }
+
+  const supplierVatNumber = extractSupplierVatNumber(text, rawText, sourceFormat);
+  if (supplierVatNumber.value) {
+    fields.supplierVatNumber = supplierVatNumber.value;
+    fieldConfidences.push(supplierVatNumber.confidence ?? 0.6);
+  }
+
+  const llmEnrichedFields = await extractInvoiceDataWithOllama(text, sourceFormat, file.name, fields);
+  Object.assign(fields, llmEnrichedFields);
+
   const candidateSirets = extractSiretCandidates(rawText);
+  const labelledSirets = extractLabelledSirets(rawText);
   const supplierRefs = references.suppliers as NamedReference[];
   const customerRefs = references.publicCustomers as NamedReference[];
 
   const supplierSiret = findLabelledSiret(rawText, ['siret fournisseur', 'supplier', 'seller', 'vendeur', 'fournisseur'])
+    ?? labelledSirets[0]
     ?? candidateSirets.find((candidate) => supplierRefs.some((supplier) => supplier.siret === candidate));
   if (supplierSiret) {
     fields.supplierSiret = supplierSiret;
@@ -498,6 +793,7 @@ export async function extractInvoiceData(
   }
 
   const publicCustomerSiret = findLabelledSiret(rawText, ['siret destinataire', 'client public', 'buyer', 'destinataire', 'administration'])
+    ?? labelledSirets.find((candidate) => candidate !== supplierSiret)
     ?? candidateSirets.find((candidate) => customerRefs.some((customer) => customer.siret === candidate));
   if (publicCustomerSiret) {
     fields.publicCustomerSiret = publicCustomerSiret;
@@ -513,13 +809,28 @@ export async function extractInvoiceData(
   let supplier = supplierSiret
     ? references.suppliers.find((item) => item.siret === supplierSiret)
     : undefined;
+  if (!supplier && fields.supplierName) {
+    supplier = references.suppliers.find((item) => normalizeLookup(item.legalName) === normalizeLookup(fields.supplierName ?? ''));
+  }
   if (!supplier) {
     supplier = findMatchByName(text, references.suppliers);
   }
   if (supplier) {
     fields.supplierOrganizationId = supplier.id;
     fields.supplierSiret = supplier.siret;
+    fields.supplierName = supplier.legalName;
     fieldConfidences.push(supplierSiret ? 0.97 : 0.8);
+  }
+
+  if (!fields.supplierName) {
+    const supplierName = pickFirstMatch(text, [
+      { regex: /\b(GIP\s+Gigalis)\b/i, confidence: 0.82 },
+    ]);
+
+    if (supplierName.value) {
+      fields.supplierName = supplierName.value;
+      fieldConfidences.push(supplierName.confidence ?? 0.6);
+    }
   }
 
   let publicCustomer = fields.publicCustomerCode
@@ -528,6 +839,9 @@ export async function extractInvoiceData(
   if (!publicCustomer && publicCustomerSiret) {
     publicCustomer = references.publicCustomers.find((item) => item.siret === publicCustomerSiret);
   }
+  if (!publicCustomer && fields.publicCustomerName) {
+    publicCustomer = references.publicCustomers.find((item) => normalizeLookup(item.legalName) === normalizeLookup(fields.publicCustomerName ?? ''));
+  }
   if (!publicCustomer) {
     publicCustomer = findMatchByName(text, references.publicCustomers);
   }
@@ -535,7 +849,16 @@ export async function extractInvoiceData(
     fields.publicCustomerId = publicCustomer.id;
     fields.publicCustomerSiret = publicCustomer.siret;
     fields.publicCustomerCode = publicCustomer.codeDestinataire;
+    fields.publicCustomerName = publicCustomer.legalName;
     fieldConfidences.push(publicCustomerSiret || fields.publicCustomerCode ? 0.97 : 0.82);
+  }
+
+  if (!fields.publicCustomerName) {
+    const upperLine = extractFullUppercaseLine(text);
+    if (upperLine && upperLine !== fields.supplierName) {
+      fields.publicCustomerName = upperLine;
+      fieldConfidences.push(0.8);
+    }
   }
 
   const explicitServiceCode = extractCode(text, rawText, sourceFormat, 'service').value
@@ -543,6 +866,12 @@ export async function extractInvoiceData(
   if (explicitServiceCode) {
     fields.publicServiceCode = explicitServiceCode;
     fieldConfidences.push(0.9);
+  }
+
+  const explicitServiceLabel = extractServiceLabel(text);
+  if (explicitServiceLabel.value) {
+    fields.publicServiceLabel = explicitServiceLabel.value;
+    fieldConfidences.push(explicitServiceLabel.confidence ?? 0.6);
   }
 
   let serviceCandidates = references.publicServices as ServiceReference[];
@@ -553,6 +882,9 @@ export async function extractInvoiceData(
   let publicService = explicitServiceCode
     ? serviceCandidates.find((item) => item.codeServiceExecutant.toLowerCase() === explicitServiceCode.toLowerCase())
     : undefined;
+  if (!publicService && fields.publicServiceLabel) {
+    publicService = serviceCandidates.find((item) => normalizeLookup(item.label) === normalizeLookup(fields.publicServiceLabel ?? ''));
+  }
   if (!publicService) {
     const matchedByLabel = serviceCandidates.find((item) => normalizeLookup(text).includes(normalizeLookup(item.label)));
     publicService = matchedByLabel;
@@ -563,6 +895,7 @@ export async function extractInvoiceData(
   if (publicService) {
     fields.publicServiceId = publicService.id;
     fields.publicServiceCode = publicService.codeServiceExecutant;
+    fields.publicServiceLabel = publicService.label;
     fieldConfidences.push(explicitServiceCode ? 0.95 : 0.78);
 
     if (!fields.publicCustomerId) {
@@ -580,17 +913,28 @@ export async function extractInvoiceData(
     warnings.push('Le PDF semble peu textuel. Les PDF scannés ou OCRisés ne sont pas encore pris en charge.');
   }
 
+  if (sourceFormat === 'PDF' && readabilityScore < 0.75) {
+    warnings.push('Le texte extrait du PDF est bruité. Certaines métadonnées peuvent être incorrectes sans un vrai parseur PDF/OCR.');
+  }
+
   if (!fields.supplierInvoiceNumber) {
     warnings.push('Numéro de facture non détecté automatiquement.');
   }
   if (!fields.invoiceDate) {
     warnings.push('Date de facture non détectée automatiquement.');
   }
-  if (!fields.publicCustomerId) {
+  if (!fields.publicCustomerId && !fields.publicCustomerSiret && !fields.publicCustomerName) {
     warnings.push('Destinataire public non reconnu dans le document.');
+  } else if (!fields.publicCustomerId) {
+    warnings.push('Destinataire extrait mais non rapproché des références locales.');
   }
-  if (!fields.publicServiceId) {
+  if (!fields.publicServiceId && !fields.publicServiceCode && !fields.publicServiceLabel) {
     warnings.push('Code service non reconnu automatiquement.');
+  } else if (!fields.publicServiceId) {
+    warnings.push('Service destinataire extrait mais non rapproché des références locales.');
+  }
+  if (!fields.currencyCode) {
+    warnings.push('Devise non détectée automatiquement.');
   }
 
   const criticalFieldCount = [
@@ -600,7 +944,7 @@ export async function extractInvoiceData(
     fields.publicCustomerId ?? fields.publicCustomerSiret,
   ].filter(Boolean).length;
   const confidence = average(fieldConfidences);
-  const requiresReview = confidence < 0.78 || criticalFieldCount < 3;
+  const requiresReview = confidence < 0.78 || criticalFieldCount < 3 || readabilityScore < 0.75;
 
   return {
     sourceFormat,
@@ -608,6 +952,7 @@ export async function extractInvoiceData(
     confidence,
     requiresReview,
     warnings: uniqueValues(warnings),
+    rawText: text,
     rawTextPreview: text.slice(0, 240),
   };
 }

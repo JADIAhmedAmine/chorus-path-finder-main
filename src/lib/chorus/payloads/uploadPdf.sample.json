@@ -1,0 +1,23 @@
+{
+  "comment": "Upload PDF Payload for Chorus /deposer/pdf endpoint",
+  "description": "This payload structure is sent when uploading a PDF invoice to Chorus Pro",
+  "example": {
+    "idUtilisateurCourant": 331,
+    "fichierFacture": "JVBERi0xLjQKJVBERi1jb250ZW50CnhyZWYgZmlsZSBpbiBCQVNFNjQgZW5jb2Rpbmcgb2YgYSBQREYgZmlsZQpzZWUgYGJ1aWxkVXBsb2FkUGRmUGF5bG9hZCgpYCBmb3IgYSBnZW5lcmF0b3IgZnVuY3Rpb24K",
+    "formatDepot": "PDF_NON_SIGNE",
+    "nomFichier": "facture-2026-001-GIGALIS.pdf"
+  },
+  "fieldDescriptions": {
+    "idUtilisateurCourant": "Technical Chorus user identifier required by the PDF deposit API",
+    "fichierFacture": "Base64-encoded PDF file content (required)",
+    "formatDepot": "PDF format: 'PDF_NON_SIGNE' for unsigned, 'PDF_SIGNE' for digitally signed",
+    "nomFichier": "PDF filename with .pdf extension (used for reference and context)"
+  },
+  "notes": [
+    "The technical user id must match the authenticated Chorus context used for submission",
+    "The fichierFacture field must be valid base64-encoded PDF binary content",
+    "Chorus will return a pieceJointeId in the response that must be referenced in the invoice submission",
+    "The returned pieceJointeId should be injected into pieceJointePrincipale[0].pieceJointePrincipaleId in the submission payload",
+    "formatDepot defaults to PDF_NON_SIGNE unless the PDF carries a digital signature"
+  ]
+}

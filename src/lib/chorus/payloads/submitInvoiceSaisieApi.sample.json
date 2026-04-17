@@ -1,0 +1,93 @@
+{
+  "comment": "Invoice Submission Payload without PDF (SAISIE_API mode)",
+  "description": "Example of an invoice submitted to Chorus Pro without PDF attachment - useful for testing business logic in isolation",
+  "example": {
+    "cadreDeFacturation": {
+      "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+      "codeServiceValideur": null,
+      "codeStructureValideur": null
+    },
+    "commentaire": "Test submission without PDF attachment",
+    "dateFacture": "2026-04-17",
+    "destinataire": {
+      "codeDestinataire": "23440003400026",
+      "codeServiceExecutant": "SE-PDL"
+    },
+    "fournisseur": {
+      "codeCoordonneesBancairesFournisseur": 132,
+      "idFournisseur": 160,
+      "idServiceFournisseur": 436
+    },
+    "idUtilisateurCourant": 331,
+    "lignePoste": [
+      {
+        "lignePosteDenomination": "Frais de prestation - avril 2026",
+        "lignePosteMontantHT": 1500.0,
+        "lignePosteTauxTVA": 20.0
+      },
+      {
+        "lignePosteDenomination": "Déplacement forfaitaire",
+        "lignePosteMontantHT": 250.0,
+        "lignePosteTauxTVA": 20.0
+      }
+    ],
+    "ligneTva": [
+      {
+        "ligneTvaBaseHT": 1750.0,
+        "ligneTvaMontant": 350.0,
+        "ligneTvaTaux": 20.0
+      }
+    ],
+    "modeDepot": "SAISIE_API",
+    "montantTotal": {
+      "montantAPayer": 2100.0,
+      "montantHtTotal": 1750.0,
+      "montantRemiseGlobaleTTC": 0,
+      "montantTVA": 350.0,
+      "montantTtcTotal": 2100.0,
+      "motifRemiseGlobaleTTC": ""
+    },
+    "numeroFactureSaisi": "FAC-2026-SAISIE-001",
+    "pieceJointeComplementaire": [],
+    "pieceJointePrincipale": [],
+    "references": {
+      "deviseFacture": "EUR",
+      "modePaiement": "VIREMENT",
+      "motifExonerationTva": null,
+      "numeroBonCommande": "CMD-2026-004",
+      "numeroFactureOrigine": null,
+      "typeFacture": "FACTURE",
+      "typeTva": "TVA_SUR_DEBIT"
+    }
+  },
+  "fieldDescriptions": {
+    "modeDepot": "Set to 'SAISIE_API' when NO PDF is attached",
+    "pieceJointePrincipale": "MUST be an empty array [] for SAISIE_API mode",
+    "pieceJointeComplementaire": "Additional attachments (also empty for pure data entry)",
+    "lignePoste": "Multiple line items are encouraged to test line-level calculations",
+    "ligneTva": "Can have multiple VAT rates if needed"
+  },
+  "keyDifferencesFromPdfMode": [
+    "modeDepot = 'SAISIE_API' instead of 'DEPOT_PDF_API'",
+    "pieceJointePrincipale = [] (empty array) - no PDF reference",
+    "All invoice details must be provided as structured data",
+    "Useful for testing invoice metadata, calculations, and business rules without PDF dependencies",
+    "Ideal for isolated testing of Chorus business logic"
+  ],
+  "useCase": [
+    "Testing business rule validation (amount matching, dates, IDs)",
+    "Testing multi-line invoice scenarios",
+    "Testing different VAT configurations",
+    "Isolating PDF upload issues from invoice submission issues",
+    "Quick testing of invoice metadata without file I/O overhead"
+  ],
+  "howToUse": [
+    "1. No need to upload a PDF first",
+    "2. Fill in all fournisseur/supplier details from Chorus context",
+    "3. Fill in destinataire details from the target customer",
+    "4. Populate lignePoste and ligneTva with real invoice data",
+    "5. Ensure all amounts balance correctly",
+    "6. POST this payload directly to /cpro/factures/v1/soumettre with Bearer token",
+    "7. If errors occur, they will be purely business logic errors, not file-related"
+  ]
+}

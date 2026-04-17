@@ -1,6 +1,9 @@
 import type { ChorusConfig, ChorusConnectionTestMethod, ChorusConnectorMode } from '@/types/chorus';
 
 export const CHORUS_CONFIG_STORAGE_KEY = 'chorus.connector.config';
+const DEV_PROXY_SANDBOX_OAUTH_PREFIX = '/__chorus-proxy/sandbox-oauth';
+const DEV_PROXY_SANDBOX_API_PREFIX = '/__chorus-proxy/sandbox-api';
+const DEV_PROXY_CHORUS_QUALIF_PREFIX = '/__chorus-proxy/chorus-qualif';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
@@ -12,6 +15,35 @@ function envBool(key: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+function pickEnumValue<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
+  return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+function mergeConfigWithFallback(
+  fallback: ChorusConfig,
+  parsed: Partial<ChorusConfig>,
+): ChorusConfig {
+  const merged = { ...fallback } as ChorusConfig;
+
+  (Object.keys(parsed) as Array<keyof ChorusConfig>).forEach((key) => {
+    const nextValue = parsed[key];
+
+    if (typeof nextValue === 'string') {
+      const trimmed = nextValue.trim();
+      if (trimmed) {
+        merged[key] = nextValue as ChorusConfig[typeof key];
+      }
+      return;
+    }
+
+    if (nextValue !== undefined) {
+      merged[key] = nextValue as ChorusConfig[typeof key];
+    }
+  });
+
+  return merged;
+}
+
 export function getDefaultChorusConfig(): ChorusConfig {
   const mode = (envValue('VITE_CHORUS_MODE', 'mock') as ChorusConnectorMode) === 'direct' ? 'direct' : 'mock';
   const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
@@ -21,7 +53,7 @@ export function getDefaultChorusConfig(): ChorusConfig {
   return {
     enabled: envBool('VITE_CHORUS_ENABLED', mode === 'direct'),
     mode,
-    tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token'),
+    tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token'),
     apiBaseUrl: envValue('VITE_CHORUS_API_BASE_URL', ''),
     clientId: envValue('VITE_CHORUS_CLIENT_ID', ''),
     clientSecret: envValue('VITE_CHORUS_CLIENT_SECRET', ''),
@@ -32,6 +64,33 @@ export function getDefaultChorusConfig(): ChorusConfig {
     connectionTestMethod,
     uploadFilePath: envValue('VITE_CHORUS_UPLOAD_FILE_PATH', ''),
     submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', ''),
+    userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte'),
+    userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements'),
+    submissionCurrentUserId: envValue('VITE_CHORUS_SUBMISSION_CURRENT_USER_ID', ''),
+    submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', ''),
+    submissionSupplierServiceId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID', ''),
+    submissionBankAccountCode: envValue('VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE', ''),
+    submissionCadreCode: envValue('VITE_CHORUS_SUBMISSION_CADRE_CODE', 'A1_FACTURE_FOURNISSEUR'),
+    submissionValidatorServiceCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_SERVICE_CODE', ''),
+    submissionValidatorStructureCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_STRUCTURE_CODE', ''),
+    submissionPaymentMode: pickEnumValue(
+      envValue('VITE_CHORUS_SUBMISSION_PAYMENT_MODE', 'CHEQUE').toUpperCase(),
+      ['CHEQUE', 'ESPECE', 'VIREMENT'],
+      'CHEQUE',
+    ),
+    submissionInvoiceType: pickEnumValue(
+      envValue('VITE_CHORUS_SUBMISSION_INVOICE_TYPE', 'FACTURE').toUpperCase(),
+      ['FACTURE', 'AVOIR'],
+      'FACTURE',
+    ),
+    submissionVatType: pickEnumValue(
+      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'AUTO').toUpperCase(),
+      ['AUTO', 'TVA_SUR_DEBIT', 'TVA_SUR_ENCAISSEMENT', 'EXONERATION', 'SANS_TVA'],
+      'AUTO',
+    ),
+    submissionVatExonerationReason: envValue('VITE_CHORUS_SUBMISSION_VAT_EXONERATION_REASON', ''),
+    submissionOriginalInvoiceNumber: envValue('VITE_CHORUS_SUBMISSION_ORIGINAL_INVOICE_NUMBER', ''),
+    submissionComment: envValue('VITE_CHORUS_SUBMISSION_COMMENT', ''),
   };
 }
 
@@ -49,10 +108,48 @@ export function loadChorusConfig(): ChorusConfig {
 
   try {
     const parsed = JSON.parse(raw) as Partial<ChorusConfig>;
-    return { ...fallback, ...parsed };
+    return mergeConfigWithFallback(fallback, parsed);
   } catch {
     return fallback;
   }
+}
+
+function rewriteUrlToDevProxy(url: string): string {
+  if (!url || url.startsWith('/')) {
+    return url;
+  }
+
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.origin === 'https://sandbox-oauth.piste.gouv.fr') {
+      return `${DEV_PROXY_SANDBOX_OAUTH_PREFIX}${parsed.pathname}${parsed.search}`;
+    }
+
+    if (parsed.origin === 'https://sandbox-api.piste.gouv.fr') {
+      return `${DEV_PROXY_SANDBOX_API_PREFIX}${parsed.pathname}${parsed.search}`;
+    }
+
+    if (parsed.origin === 'https://chorus-pro.gouv.fr:5443') {
+      return `${DEV_PROXY_CHORUS_QUALIF_PREFIX}${parsed.pathname}${parsed.search}`;
+    }
+  } catch {
+    return url;
+  }
+
+  return url;
+}
+
+export function resolveChorusRuntimeConfig(config: ChorusConfig, devMode = import.meta.env.DEV): ChorusConfig {
+  if (!devMode) {
+    return config;
+  }
+
+  return {
+    ...config,
+    tokenUrl: rewriteUrlToDevProxy(config.tokenUrl),
+    apiBaseUrl: rewriteUrlToDevProxy(config.apiBaseUrl),
+  };
 }
 
 export function saveChorusConfig(config: ChorusConfig): void {

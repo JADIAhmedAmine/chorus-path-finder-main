@@ -1,0 +1,96 @@
+{
+  "comment": "Invoice Submission Payload with PDF (DEPOT_PDF_API mode)",
+  "description": "Complete example of an invoice submitted to Chorus Pro with a PDF attachment",
+  "example": {
+    "cadreDeFacturation": {
+      "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+      "codeServiceValideur": null,
+      "codeStructureValideur": null
+    },
+    "commentaire": null,
+    "dateFacture": "2026-03-16",
+    "destinataire": {
+      "codeDestinataire": "23440003400026",
+      "codeServiceExecutant": "SE-PDL"
+    },
+    "fournisseur": {
+      "codeCoordonneesBancairesFournisseur": 132,
+      "idFournisseur": 160,
+      "idServiceFournisseur": 436
+    },
+    "idUtilisateurCourant": 331,
+    "lignePoste": [
+      {
+        "lignePosteDenomination": "Services de conseil - Achat 2026-001",
+        "lignePosteMontantHT": 45903.52,
+        "lignePosteTauxTVA": 20.0
+      }
+    ],
+    "ligneTva": [
+      {
+        "ligneTvaBaseHT": 45903.52,
+        "ligneTvaMontant": 9180.7,
+        "ligneTvaTaux": 20.0
+      }
+    ],
+    "modeDepot": "DEPOT_PDF_API",
+    "montantTotal": {
+      "montantAPayer": 55084.22,
+      "montantHtTotal": 45903.52,
+      "montantRemiseGlobaleTTC": 0,
+      "montantTVA": 9180.7,
+      "montantTtcTotal": 55084.22,
+      "motifRemiseGlobaleTTC": ""
+    },
+    "numeroFactureSaisi": "2026-003-00565",
+    "pieceJointeComplementaire": [],
+    "pieceJointePrincipale": [
+      {
+        "pieceJointePrincipaleDesignation": "Facture principale",
+        "pieceJointePrincipaleId": "pie-xxxx-yyyy-zzzz"
+      }
+    ],
+    "references": {
+      "deviseFacture": "EUR",
+      "modePaiement": "CHEQUE",
+      "motifExonerationTva": null,
+      "numeroBonCommande": "BC2025/25-007915",
+      "numeroFactureOrigine": null,
+      "typeFacture": "FACTURE",
+      "typeTva": "TVA_SUR_DEBIT"
+    }
+  },
+  "fieldDescriptions": {
+    "cadreDeFacturation": "Billing framework context for Chorus",
+    "dateFacture": "Invoice date in ISO format (YYYY-MM-DD)",
+    "destinataire": "Recipient/customer details with SIRET code and service code",
+    "fournisseur": "Supplier details with Chorus-specific IDs (from backend/context)",
+    "idUtilisateurCourant": "Current user ID from Chorus context (cannot be invented)",
+    "lignePoste": "Line items array with denomination, net amount, and VAT rate",
+    "ligneTva": "VAT lines array with base, amount, and rate",
+    "modeDepot": "Submission mode - use 'DEPOT_PDF_API' when a PDF is attached",
+    "montantTotal": "Total amounts (HT, TTC, VAT, etc.)",
+    "numeroFactureSaisi": "Invoice number from supplier",
+    "pieceJointePrincipale": "Main attachment - REQUIRED for DEPOT_PDF_API mode",
+    "pieceJointePrincipaleId": "File ID returned from the PDF upload request"
+  },
+  "importantNotes": [
+    "modeDepot MUST be 'DEPOT_PDF_API' when using a PDF",
+    "pieceJointePrincipaleId must be obtained from the PDF upload response",
+    "All amounts are in decimal notation (e.g., 45903.52)",
+    "All IDs (idFournisseur, idUtilisateurCourant, etc.) come from the backend context, not the PDF",
+    "destinataire.codeDestinataire is typically the customer SIRET",
+    "When calculating montants, ensure: montantTtcTotal = montantHtTotal + montantTVA",
+    "For TVA_SUR_DEBIT mode, tax is calculated on the invoice date",
+    "modePaiement options: CHEQUE, ESPECE, VIREMENT, etc."
+  ],
+  "howToUse": [
+    "1. First, upload a PDF using uploadPdf.sample.json and get the pieceJointeId",
+    "2. Replace 'pie-xxxx-yyyy-zzzz' with the actual pieceJointeId from the upload response",
+    "3. Fill in the supplier/fournisseur details from your Chorus context",
+    "4. Fill in destinataire details from the target customer data",
+    "5. Populate lignePoste and ligneTva arrays with the actual line items",
+    "6. Calculate and verify all montants",
+    "7. POST this payload to /cpro/factures/v1/soumettre with Bearer token"
+  ]
+}

@@ -27,6 +27,7 @@ describe('chorus preparation', () => {
         confidence: 0.93,
         requiresReview: false,
         warnings: [],
+        rawText: 'Facture numéro FAC-2026-001',
         rawTextPreview: 'Facture numéro FAC-2026-001',
         fields: {
           supplierSiret: suppliers[0].siret,
@@ -94,6 +95,7 @@ describe('chorus preparation', () => {
         confidence: 0.68,
         requiresReview: true,
         warnings: ['Contrôle manuel conseillé'],
+        rawText: 'Facture peu lisible',
         rawTextPreview: 'Facture peu lisible',
         fields: {
           supplierSiret: suppliers[1].siret,
