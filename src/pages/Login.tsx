@@ -4,19 +4,38 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { currentUser } from '@/data/mock-data';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getCurrentUser } from '@/data/mock-data';
 import { loadAuthSession, saveAuthSession, syncAuthSessionToChorusConfig } from '@/lib/auth/session';
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { Shield } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [existingSession] = useState(() => loadAuthSession());
-  const [email, setEmail] = useState(currentUser.email);
-  const [firstName, setFirstName] = useState(currentUser.firstName);
-  const [lastName, setLastName] = useState(currentUser.lastName);
+  const { data: currentUser, error: currentUserError } = useAsyncResource(
+    () => getCurrentUser(),
+    [],
+    {
+      id: 'user-unresolved',
+      tenantId: 'tenant-unresolved',
+      email: existingSession?.email ?? '',
+      firstName: existingSession?.firstName ?? '',
+      lastName: existingSession?.lastName ?? '',
+      roleCode: existingSession?.roleCode === 'DEPOSANT' || existingSession?.roleCode === 'ADMINISTRATEUR' || existingSession?.roleCode === 'AUDITEUR'
+        ? existingSession.roleCode
+        : 'GESTIONNAIRE',
+      active: true,
+      createdAt: existingSession?.createdAt ?? new Date(0).toISOString(),
+      updatedAt: existingSession?.createdAt ?? new Date(0).toISOString(),
+    },
+  );
+  const [email, setEmail] = useState(existingSession?.email ?? '');
+  const [firstName, setFirstName] = useState(existingSession?.firstName ?? '');
+  const [lastName, setLastName] = useState(existingSession?.lastName ?? '');
   const [password, setPassword] = useState('password');
   const [chorusCurrentUserId, setChorusCurrentUserId] = useState('');
   const [chorusSupplierId, setChorusSupplierId] = useState('');
@@ -25,6 +44,9 @@ export default function Login() {
 
   useEffect(() => {
     if (!existingSession) {
+      setEmail((value) => value || currentUser.email);
+      setFirstName((value) => value || currentUser.firstName);
+      setLastName((value) => value || currentUser.lastName);
       return;
     }
 
@@ -78,6 +100,13 @@ export default function Login() {
           </div>
         </CardHeader>
         <CardContent>
+          {currentUserError && (
+            <Alert className="mb-4">
+              <AlertDescription>
+                Le profil utilisateur n&apos;a pas pu être chargé depuis le backend. Le formulaire reste utilisable avec la session locale.
+              </AlertDescription>
+            </Alert>
+          )}
           {existingSession && (
             <div className="mb-4 rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
               Une session est déjà active. Tu peux modifier ici ton profil local et les identifiants Chorus utiles, puis enregistrer.

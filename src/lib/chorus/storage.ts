@@ -4,6 +4,12 @@ export const CHORUS_CONFIG_STORAGE_KEY = 'chorus.connector.config';
 const DEV_PROXY_SANDBOX_OAUTH_PREFIX = '/__chorus-proxy/sandbox-oauth';
 const DEV_PROXY_SANDBOX_API_PREFIX = '/__chorus-proxy/sandbox-api';
 const DEV_PROXY_CHORUS_QUALIF_PREFIX = '/__chorus-proxy/chorus-qualif';
+const DEFAULT_USER_ACCOUNT_PATH = 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte';
+const DEFAULT_USER_CONNECTIONS_PATH = 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements';
+const DEFAULT_DEV_ANNUAIRE_JSON_URL = '/annuaire/annuaire.normalized.json';
+const DEFAULT_DEV_ANNUAIRE_XML_URL = '/annuaire/FAR0037A_SEC001_CPP0010037000000000007495';
+const LEGACY_DEV_ANNUAIRE_JSON_URL = '/src/data/annuaire_out/annuaire.normalized.json';
+const LEGACY_DEV_ANNUAIRE_XML_URL = '/src/data/annuaire_out/FAR0037A_SEC001_CPP0010037000000000007495';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
@@ -41,7 +47,41 @@ function mergeConfigWithFallback(
     }
   });
 
-  return merged;
+  return normalizeLegacyChorusUserServiceConfig(merged);
+}
+
+function normalizeLegacyChorusUserServiceUrl(
+  value: string,
+  fallback: string,
+): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  const normalized = trimmed
+    .replace('https://sandbox-api.piste.gouv.fr/cpro/utilisateurs/v1/consulter/compte', DEFAULT_USER_ACCOUNT_PATH)
+    .replace('https://sandbox-api.piste.gouv.fr/cpro/utilisateurs/v1/monCompte/recuperer/rattachements', DEFAULT_USER_CONNECTIONS_PATH)
+    .replace('/cpro/utilisateurs/v1/consulter/compte', DEFAULT_USER_ACCOUNT_PATH)
+    .replace('/cpro/utilisateurs/v1/monCompte/recuperer/rattachements', DEFAULT_USER_CONNECTIONS_PATH)
+    .replace('https://chorus-pro.gouv.fr:5443/service-qualif/consulter/compte', DEFAULT_USER_ACCOUNT_PATH)
+    .replace('https://chorus-pro.gouv.fr:5443/service-qualif/monCompte/recuperer/rattachements', DEFAULT_USER_CONNECTIONS_PATH);
+
+  return normalized;
+}
+
+function normalizeLegacyChorusUserServiceConfig(config: ChorusConfig): ChorusConfig {
+  return {
+    ...config,
+    userAccountPath: normalizeLegacyChorusUserServiceUrl(config.userAccountPath, DEFAULT_USER_ACCOUNT_PATH),
+    userConnectionsPath: normalizeLegacyChorusUserServiceUrl(config.userConnectionsPath, DEFAULT_USER_CONNECTIONS_PATH),
+    referenceAnnuaireJsonUrl: config.referenceAnnuaireJsonUrl === LEGACY_DEV_ANNUAIRE_JSON_URL
+      ? DEFAULT_DEV_ANNUAIRE_JSON_URL
+      : config.referenceAnnuaireJsonUrl,
+    referenceAnnuaireXmlUrl: config.referenceAnnuaireXmlUrl === LEGACY_DEV_ANNUAIRE_XML_URL
+      ? DEFAULT_DEV_ANNUAIRE_XML_URL
+      : config.referenceAnnuaireXmlUrl,
+  };
 }
 
 export function getDefaultChorusConfig(): ChorusConfig {
@@ -55,6 +95,18 @@ export function getDefaultChorusConfig(): ChorusConfig {
     mode,
     tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token'),
     apiBaseUrl: envValue('VITE_CHORUS_API_BASE_URL', ''),
+    referenceApiBaseUrl: envValue('VITE_REFERENCE_API_BASE_URL', ''),
+    referenceSuppliersPath: envValue('VITE_REFERENCE_SUPPLIERS_PATH', ''),
+    referencePublicCustomersPath: envValue('VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH', ''),
+    referencePublicServicesPath: envValue('VITE_REFERENCE_PUBLIC_SERVICES_PATH', ''),
+    referenceAnnuaireJsonUrl: envValue(
+      'VITE_REFERENCE_ANNUAIRE_JSON_URL',
+      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_JSON_URL : '',
+    ),
+    referenceAnnuaireXmlUrl: envValue(
+      'VITE_REFERENCE_ANNUAIRE_XML_URL',
+      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_XML_URL : '',
+    ),
     clientId: envValue('VITE_CHORUS_CLIENT_ID', ''),
     clientSecret: envValue('VITE_CHORUS_CLIENT_SECRET', ''),
     scope: envValue('VITE_CHORUS_SCOPE', 'openid'),
@@ -64,8 +116,8 @@ export function getDefaultChorusConfig(): ChorusConfig {
     connectionTestMethod,
     uploadFilePath: envValue('VITE_CHORUS_UPLOAD_FILE_PATH', ''),
     submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', ''),
-    userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte'),
-    userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements'),
+    userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', DEFAULT_USER_ACCOUNT_PATH),
+    userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', DEFAULT_USER_CONNECTIONS_PATH),
     submissionCurrentUserId: envValue('VITE_CHORUS_SUBMISSION_CURRENT_USER_ID', ''),
     submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', ''),
     submissionSupplierServiceId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID', ''),
@@ -75,7 +127,7 @@ export function getDefaultChorusConfig(): ChorusConfig {
     submissionValidatorStructureCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_STRUCTURE_CODE', ''),
     submissionPaymentMode: pickEnumValue(
       envValue('VITE_CHORUS_SUBMISSION_PAYMENT_MODE', 'CHEQUE').toUpperCase(),
-      ['CHEQUE', 'ESPECE', 'VIREMENT'],
+      ['CHEQUE', 'ESPECE', 'VIREMENT', 'PRELEVEMENT', 'AUTRE', 'REPORT'],
       'CHEQUE',
     ),
     submissionInvoiceType: pickEnumValue(
@@ -149,6 +201,8 @@ export function resolveChorusRuntimeConfig(config: ChorusConfig, devMode = impor
     ...config,
     tokenUrl: rewriteUrlToDevProxy(config.tokenUrl),
     apiBaseUrl: rewriteUrlToDevProxy(config.apiBaseUrl),
+    userAccountPath: rewriteUrlToDevProxy(config.userAccountPath),
+    userConnectionsPath: rewriteUrlToDevProxy(config.userConnectionsPath),
   };
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { prepareInvoiceSubmission } from '@/lib/chorus/preparation';
-import { publicCustomers, publicServices, suppliers } from '@/data/mock-data';
+import { publicCustomersFixture, publicServicesFixture, suppliersFixture } from '@/test/fixtures/reference-data';
 
 describe('chorus preparation', () => {
   it('marks a complete draft as ready for submission', () => {
@@ -18,10 +18,10 @@ describe('chorus preparation', () => {
         totalAmountHt: '12000,00',
         totalAmountTtc: '14400,00',
       },
-      supplier: suppliers[0],
-      publicCustomer: publicCustomers[0],
-      publicService: publicServices[0],
-      availableServices: publicServices.filter((service) => service.publicCustomerId === 'pc1' && service.active),
+      supplier: suppliersFixture[0],
+      publicCustomer: publicCustomersFixture[0],
+      publicService: publicServicesFixture[0],
+      availableServices: publicServicesFixture.filter((service) => service.publicCustomerId === 'pc1' && service.active),
       extraction: {
         sourceFormat: 'PDF',
         confidence: 0.93,
@@ -30,9 +30,9 @@ describe('chorus preparation', () => {
         rawText: 'Facture numéro FAC-2026-001',
         rawTextPreview: 'Facture numéro FAC-2026-001',
         fields: {
-          supplierSiret: suppliers[0].siret,
-          publicCustomerSiret: publicCustomers[0].siret,
-          publicServiceCode: publicServices[0].codeServiceExecutant,
+          supplierSiret: suppliersFixture[0].siret,
+          publicCustomerSiret: publicCustomersFixture[0].siret,
+          publicServiceCode: publicServicesFixture[0].codeServiceExecutant,
         },
       },
     });
@@ -59,10 +59,10 @@ describe('chorus preparation', () => {
         totalAmountHt: '',
         totalAmountTtc: '14400,00',
       },
-      supplier: suppliers[0],
-      publicCustomer: publicCustomers[0],
-      publicService: publicServices[0],
-      availableServices: publicServices.filter((service) => service.publicCustomerId === 'pc1' && service.active),
+      supplier: suppliersFixture[0],
+      publicCustomer: publicCustomersFixture[0],
+      publicService: publicServicesFixture[0],
+      availableServices: publicServicesFixture.filter((service) => service.publicCustomerId === 'pc1' && service.active),
       extraction: null,
     });
 
@@ -86,10 +86,10 @@ describe('chorus preparation', () => {
         totalAmountHt: '1000,00',
         totalAmountTtc: '1200,00',
       },
-      supplier: suppliers[1],
-      publicCustomer: publicCustomers[1],
-      publicService: publicServices[2],
-      availableServices: publicServices.filter((service) => service.publicCustomerId === 'pc2' && service.active),
+      supplier: suppliersFixture[1],
+      publicCustomer: publicCustomersFixture[1],
+      publicService: publicServicesFixture[2],
+      availableServices: publicServicesFixture.filter((service) => service.publicCustomerId === 'pc2' && service.active),
       extraction: {
         sourceFormat: 'PDF',
         confidence: 0.68,
@@ -98,9 +98,9 @@ describe('chorus preparation', () => {
         rawText: 'Facture peu lisible',
         rawTextPreview: 'Facture peu lisible',
         fields: {
-          supplierSiret: suppliers[1].siret,
-          publicCustomerSiret: publicCustomers[1].siret,
-          publicServiceCode: publicServices[2].codeServiceExecutant,
+          supplierSiret: suppliersFixture[1].siret,
+          publicCustomerSiret: publicCustomersFixture[1].siret,
+          publicServiceCode: publicServicesFixture[2].codeServiceExecutant,
         },
       },
     });

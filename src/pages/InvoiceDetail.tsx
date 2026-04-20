@@ -1,36 +1,140 @@
 import { useParams, Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { StatusTimeline } from '@/components/common/StatusTimeline';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
-import { invoices, getSupplier, getCustomer, getService, getInvoiceHistory, getInvoiceAttachments, getInvoiceLines, getInvoiceApiLogs, extractionResults, auditLogs } from '@/data/mock-data';
+import {
+  getAuditLogs,
+  getCustomer,
+  getExtractionResults,
+  getInvoice,
+  getInvoiceApiLogs,
+  getInvoiceAttachments,
+  getInvoiceHistory,
+  getInvoiceLines,
+  getService,
+  getSupplier,
+} from '@/data/mock-data';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { ArrowLeft, Edit, CheckCircle, Send, RotateCcw, Download, FileText, Paperclip, AlertTriangle } from 'lucide-react';
 
 export default function InvoiceDetail() {
   const { id } = useParams();
-  const invoice = invoices.find(i => i.id === id);
+  const { data, loading, error } = useAsyncResource(
+    async () => {
+      if (!id) {
+        return {
+          invoice: undefined,
+          supplier: undefined,
+          customer: undefined,
+          service: undefined,
+          history: [],
+          attachments: [],
+          lines: [],
+          apiLogs: [],
+          extraction: undefined,
+          invoiceAudit: [],
+        };
+      }
+
+      const invoice = await getInvoice(id);
+      if (!invoice) {
+        return {
+          invoice: undefined,
+          supplier: undefined,
+          customer: undefined,
+          service: undefined,
+          history: [],
+          attachments: [],
+          lines: [],
+          apiLogs: [],
+          extraction: undefined,
+          invoiceAudit: [],
+        };
+      }
+
+      const [
+        supplier,
+        customer,
+        service,
+        history,
+        attachments,
+        lines,
+        apiLogs,
+        extractionResults,
+        invoiceAudit,
+      ] = await Promise.all([
+        getSupplier(invoice.supplierOrganizationId),
+        getCustomer(invoice.publicCustomerId),
+        invoice.publicServiceId ? getService(invoice.publicServiceId) : Promise.resolve(undefined),
+        getInvoiceHistory(invoice.id),
+        getInvoiceAttachments(invoice.id),
+        getInvoiceLines(invoice.id),
+        getInvoiceApiLogs(invoice.id),
+        getExtractionResults(invoice.id),
+        getAuditLogs(invoice.id),
+      ]);
+
+      return {
+        invoice,
+        supplier,
+        customer,
+        service,
+        history,
+        attachments,
+        lines,
+        apiLogs,
+        extraction: extractionResults[0],
+        invoiceAudit,
+      };
+    },
+    [id],
+    {
+      invoice: undefined,
+      supplier: undefined,
+      customer: undefined,
+      service: undefined,
+      history: [],
+      attachments: [],
+      lines: [],
+      apiLogs: [],
+      extraction: undefined,
+      invoiceAudit: [],
+    },
+  );
+  const invoice = data.invoice;
 
   if (!invoice) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
-        <p className="text-lg text-muted-foreground">Facture non trouvée</p>
+        {loading ? (
+          <p className="text-lg text-muted-foreground">Chargement de la facture...</p>
+        ) : (
+          <p className="text-lg text-muted-foreground">Facture non trouvée</p>
+        )}
+        {error && (
+          <Alert variant="destructive" className="mt-4 max-w-xl">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         <Button asChild className="mt-4"><Link to="/invoices">Retour à la liste</Link></Button>
       </div>
     );
   }
 
-  const supplier = getSupplier(invoice.supplierOrganizationId);
-  const customer = getCustomer(invoice.publicCustomerId);
-  const service = invoice.publicServiceId ? getService(invoice.publicServiceId) : undefined;
-  const history = getInvoiceHistory(invoice.id);
-  const attachments = getInvoiceAttachments(invoice.id);
-  const lines = getInvoiceLines(invoice.id);
-  const apiLogs = getInvoiceApiLogs(invoice.id);
-  const extraction = extractionResults.find(e => e.invoiceId === invoice.id);
-  const invoiceAudit = auditLogs.filter(a => a.entityId === invoice.id);
+  const supplier = data.supplier;
+  const customer = data.customer;
+  const service = data.service;
+  const history = data.history;
+  const attachments = data.attachments;
+  const lines = data.lines;
+  const apiLogs = data.apiLogs;
+  const extraction = data.extraction;
+  const invoiceAudit = data.invoiceAudit;
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL';
 
   return (
@@ -62,6 +166,12 @@ export default function InvoiceDetail() {
           )}
         </div>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Rejection Banner */}
       {isRejected && invoice.statusReasonLabel && (
@@ -274,17 +384,24 @@ export default function InvoiceDetail() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {Object.entries(extraction.extractedPayload).map(([key, val]: [string, any]) => (
-                    <div key={key} className="flex items-center justify-between p-2 rounded border">
-                      <span className="text-sm font-medium">{key}</span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm">{String(val.value)}</span>
-                        <span className={`text-xs px-2 py-0.5 rounded ${val.confidence >= 0.8 ? 'bg-success/10 text-success' : val.confidence >= 0.6 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'}`}>
-                          {(val.confidence * 100).toFixed(0)}%
-                        </span>
+                  {Object.entries(extraction.extractedPayload).map(([key, val]: [string, any]) => {
+                    const confidence = typeof val?.confidence === 'number' ? val.confidence : undefined;
+                    const displayValue = typeof val?.value !== 'undefined' ? val.value : val;
+
+                    return (
+                      <div key={key} className="flex items-center justify-between p-2 rounded border">
+                        <span className="text-sm font-medium">{key}</span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm">{String(displayValue)}</span>
+                          {typeof confidence === 'number' && (
+                            <span className={`text-xs px-2 py-0.5 rounded ${confidence >= 0.8 ? 'bg-success/10 text-success' : confidence >= 0.6 ? 'bg-warning/10 text-warning' : 'bg-destructive/10 text-destructive'}`}>
+                              {(confidence * 100).toFixed(0)}%
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

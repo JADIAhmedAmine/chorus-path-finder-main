@@ -1,9 +1,20 @@
+import { useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
-import { auditLogs } from '@/data/mock-data';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getAuditLogs } from '@/data/mock-data';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { formatDateTime } from '@/lib/status-utils';
 
 export default function AuditPage() {
-  const sorted = [...auditLogs].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const { data: auditLogs, error } = useAsyncResource(
+    () => getAuditLogs(),
+    [],
+    [],
+  );
+  const sorted = useMemo(
+    () => [...auditLogs].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()),
+    [auditLogs],
+  );
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -11,6 +22,12 @@ export default function AuditPage() {
         <h1 className="text-2xl font-semibold">Journal d'audit</h1>
         <p className="text-sm text-muted-foreground">Traçabilité complète des actions utilisateurs et système</p>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardContent className="p-0">

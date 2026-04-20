@@ -1,17 +1,58 @@
-import { useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { SidebarTrigger } from '@/components/ui/sidebar';
-import { currentUser, tenant } from '@/data/mock-data';
+import { getCurrentUser, getTenant } from '@/data/mock-data';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { clearAuthSession, loadAuthSession } from '@/lib/auth/session';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { Building2, LogOut, UserCircle2 } from 'lucide-react';
 
 export function AppHeader() {
   const navigate = useNavigate();
-  const [session] = useState(() => loadAuthSession());
-  const profile = session ?? currentUser;
+  const session = useMemo(() => loadAuthSession(), []);
+  const { data } = useAsyncResource(
+    async () => {
+      const [tenant, currentUser] = await Promise.all([getTenant(), getCurrentUser()]);
+      return { tenant, currentUser };
+    },
+    [],
+    {
+      tenant: {
+        id: 'tenant-unresolved',
+        code: 'UNRESOLVED',
+        name: 'Chargement du tenant...',
+        active: false,
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+      currentUser: {
+        id: 'user-unresolved',
+        tenantId: 'tenant-unresolved',
+        email: session?.email ?? '',
+        firstName: session?.firstName ?? 'Utilisateur',
+        lastName: session?.lastName ?? 'local',
+        roleCode: session?.roleCode === 'DEPOSANT' || session?.roleCode === 'ADMINISTRATEUR' || session?.roleCode === 'AUDITEUR'
+          ? session.roleCode
+          : 'GESTIONNAIRE',
+        active: true,
+        createdAt: session?.createdAt ?? new Date(0).toISOString(),
+        updatedAt: session?.createdAt ?? new Date(0).toISOString(),
+      },
+    },
+  );
+  const profile = session
+    ? {
+        ...data.currentUser,
+        email: session.email,
+        firstName: session.firstName || data.currentUser.firstName,
+        lastName: session.lastName || data.currentUser.lastName,
+        roleCode: session.roleCode === 'DEPOSANT' || session.roleCode === 'ADMINISTRATEUR' || session.roleCode === 'AUDITEUR'
+          ? session.roleCode
+          : 'GESTIONNAIRE',
+      }
+    : data.currentUser;
 
   const handleLogout = () => {
     clearAuthSession();
@@ -25,7 +66,7 @@ export function AppHeader() {
         <Separator orientation="vertical" className="h-6" />
         <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Building2 className="h-3.5 w-3.5" />
-          <span>{tenant.name}</span>
+          <span>{data.tenant.name}</span>
         </div>
       </div>
       <div className="flex items-center gap-3">

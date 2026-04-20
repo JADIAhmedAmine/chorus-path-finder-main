@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extractInvoiceData } from '@/lib/chorus/extraction';
-import { publicCustomers, publicServices, suppliers } from '@/data/mock-data';
+import { publicCustomersFixture, publicServicesFixture, suppliersFixture } from '@/test/fixtures/reference-data';
 
 describe('chorus extraction', () => {
   it('extracts and resolves invoice metadata from a text-based pdf payload', async () => {
@@ -18,9 +18,9 @@ describe('chorus extraction', () => {
     `], 'invoice.pdf', { type: 'application/pdf' });
 
     const result = await extractInvoiceData(file, {
-      suppliers,
-      publicCustomers,
-      publicServices,
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
     });
 
     expect(result.sourceFormat).toBe('PDF');
@@ -55,9 +55,9 @@ describe('chorus extraction', () => {
     `], 'invoice.xml', { type: 'text/xml' });
 
     const result = await extractInvoiceData(file, {
-      suppliers,
-      publicCustomers,
-      publicServices,
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
     });
 
     expect(result.sourceFormat).toBe('XML');
@@ -85,9 +85,9 @@ describe('chorus extraction', () => {
     `], 'noisy-invoice.pdf', { type: 'application/pdf' });
 
     const result = await extractInvoiceData(file, {
-      suppliers,
-      publicCustomers,
-      publicServices,
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
     });
 
     expect(result.fields.currencyCode).toBeUndefined();
@@ -104,9 +104,9 @@ describe('chorus extraction', () => {
     `], 'invoice-chf.pdf', { type: 'application/pdf' });
 
     const result = await extractInvoiceData(file, {
-      suppliers,
-      publicCustomers,
-      publicServices,
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
     });
 
     expect(result.fields.currencyCode).toBe('CHF');
@@ -145,9 +145,9 @@ describe('chorus extraction', () => {
     `], 'gigalis-invoice.pdf', { type: 'application/pdf' });
 
     const result = await extractInvoiceData(file, {
-      suppliers,
-      publicCustomers,
-      publicServices,
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
     });
 
     expect(result.sourceFormat).toBe('PDF');

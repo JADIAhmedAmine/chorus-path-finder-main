@@ -1,20 +1,59 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { invoices, getSupplier, getCustomer } from '@/data/mock-data';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
-import { Archive, Eye } from 'lucide-react';
-
-const archived = invoices.filter(i => i.statusInternal === 'ARCHIVED');
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getInvoices, getPublicCustomers, getSuppliers } from '@/data/mock-data';
+import { useAsyncResource } from '@/hooks/use-async-resource';
+import { formatCurrency, formatDateTime } from '@/lib/status-utils';
+import { Eye } from 'lucide-react';
 
 export default function Archives() {
+  const { data, loading, error } = useAsyncResource(
+    async () => {
+      const [invoices, suppliers, publicCustomers] = await Promise.all([
+        getInvoices(),
+        getSuppliers(),
+        getPublicCustomers(),
+      ]);
+
+      return { invoices, suppliers, publicCustomers };
+    },
+    [],
+    {
+      invoices: [],
+      suppliers: [],
+      publicCustomers: [],
+    },
+  );
+
+  const archived = useMemo(
+    () => data.invoices.filter((invoice) => invoice.statusInternal === 'ARCHIVED'),
+    [data.invoices],
+  );
+  const supplierById = useMemo(
+    () => new Map(data.suppliers.map((supplier) => [supplier.id, supplier])),
+    [data.suppliers],
+  );
+  const customerById = useMemo(
+    () => new Map(data.publicCustomers.map((customer) => [customer.id, customer])),
+    [data.publicCustomers],
+  );
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
         <h1 className="text-2xl font-semibold">Archives</h1>
-        <p className="text-sm text-muted-foreground">{archived.length} facture(s) archivée(s)</p>
+        <p className="text-sm text-muted-foreground">
+          {loading ? 'Chargement des archives...' : `${archived.length} facture(s) archivée(s)`}
+        </p>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -31,8 +70,8 @@ export default function Archives() {
             </thead>
             <tbody>
               {archived.map(inv => {
-                const supplier = getSupplier(inv.supplierOrganizationId);
-                const customer = getCustomer(inv.publicCustomerId);
+                const supplier = supplierById.get(inv.supplierOrganizationId);
+                const customer = customerById.get(inv.publicCustomerId);
                 return (
                   <tr key={inv.id} className="border-b">
                     <td className="p-3 font-medium">{inv.supplierInvoiceNumber}</td>

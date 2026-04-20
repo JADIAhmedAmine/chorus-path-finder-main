@@ -1,46 +1,95 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { formatCurrency, formatDate } from '@/lib/status-utils';
-import { invoices, asyncJobs, statusHistory } from '@/data/mock-data';
-import { getSupplier, getCustomer } from '@/data/mock-data';
+import { getAsyncJobs, getInvoices, getStatusHistory, getSuppliers } from '@/data/mock-data';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { FileText, AlertTriangle, CheckCircle, Clock, Upload, Ban, ArrowRight, Plus, Wrench } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import type { InvoiceStatusInternal } from '@/types';
-
-const statusCounts = invoices.reduce((acc, inv) => {
-  acc[inv.statusInternal] = (acc[inv.statusInternal] || 0) + 1;
-  return acc;
-}, {} as Record<string, number>);
-
-const pieData = [
-  { name: 'Brouillons', value: (statusCounts['DRAFT_UPLOADED'] || 0) + (statusCounts['DRAFT_STRUCTURED'] || 0), color: '#6b7280' },
-  { name: 'En attente', value: (statusCounts['PENDING_HUMAN_REVIEW'] || 0), color: '#f59e0b' },
-  { name: 'Prêt/Soumis', value: (statusCounts['READY_FOR_SUBMISSION'] || 0) + (statusCounts['SUBMISSION_REQUESTED'] || 0) + (statusCounts['SUBMITTED_TO_CHORUS'] || 0), color: '#3b82f6' },
-  { name: 'Rejetés', value: (statusCounts['REJECTED_BUSINESS'] || 0) + (statusCounts['REJECTED_TECHNICAL'] || 0), color: '#ef4444' },
-  { name: 'Acceptés/Payés', value: (statusCounts['ACCEPTED_BY_CHORUS'] || 0) + (statusCounts['PAID'] || 0), color: '#22c55e' },
-  { name: 'Archivés', value: (statusCounts['ARCHIVED'] || 0), color: '#9ca3af' },
-].filter(d => d.value > 0);
-
-const barData = [
-  { month: 'Juil', count: 1 },
-  { month: 'Août', count: 1 },
-  { month: 'Sep', count: 1 },
-  { month: 'Oct', count: 7 },
-];
-
-const failedJobs = asyncJobs.filter(j => j.status === 'FAILED' || j.status === 'DEAD');
-const recentEvents = [...statusHistory].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()).slice(0, 5);
-
-const statCards = [
-  { label: 'Total factures', value: invoices.length, icon: FileText, color: 'text-foreground' },
-  { label: 'En attente de revue', value: invoices.filter(i => i.statusInternal === 'PENDING_HUMAN_REVIEW').length, icon: Clock, color: 'text-warning' },
-  { label: 'Rejetées', value: invoices.filter(i => i.statusInternal === 'REJECTED_BUSINESS' || i.statusInternal === 'REJECTED_TECHNICAL').length, icon: AlertTriangle, color: 'text-destructive' },
-  { label: 'Acceptées / Payées', value: invoices.filter(i => i.statusInternal === 'ACCEPTED_BY_CHORUS' || i.statusInternal === 'PAID').length, icon: CheckCircle, color: 'text-success' },
-];
 
 export default function Dashboard() {
+  const { data, loading, error } = useAsyncResource(
+    async () => {
+      const [invoices, asyncJobs, statusHistory, suppliers] = await Promise.all([
+        getInvoices(),
+        getAsyncJobs(),
+        getStatusHistory(),
+        getSuppliers(),
+      ]);
+
+      return { invoices, asyncJobs, statusHistory, suppliers };
+    },
+    [],
+    {
+      invoices: [],
+      asyncJobs: [],
+      statusHistory: [],
+      suppliers: [],
+    },
+  );
+
+  const supplierById = useMemo(
+    () => new Map(data.suppliers.map((supplier) => [supplier.id, supplier])),
+    [data.suppliers],
+  );
+
+  const statusCounts = useMemo(() => {
+    return data.invoices.reduce((acc, invoice) => {
+      acc[invoice.statusInternal] = (acc[invoice.statusInternal] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+  }, [data.invoices]);
+
+  const pieData = useMemo(() => [
+    { name: 'Brouillons', value: (statusCounts['DRAFT_UPLOADED'] || 0) + (statusCounts['DRAFT_STRUCTURED'] || 0), color: '#6b7280' },
+    { name: 'En attente', value: statusCounts['PENDING_HUMAN_REVIEW'] || 0, color: '#f59e0b' },
+    { name: 'Prêt/Soumis', value: (statusCounts['READY_FOR_SUBMISSION'] || 0) + (statusCounts['SUBMISSION_REQUESTED'] || 0) + (statusCounts['SUBMITTED_TO_CHORUS'] || 0), color: '#3b82f6' },
+    { name: 'Rejetés', value: (statusCounts['REJECTED_BUSINESS'] || 0) + (statusCounts['REJECTED_TECHNICAL'] || 0), color: '#ef4444' },
+    { name: 'Acceptés/Payés', value: (statusCounts['ACCEPTED_BY_CHORUS'] || 0) + (statusCounts['PAID'] || 0), color: '#22c55e' },
+    { name: 'Archivés', value: statusCounts['ARCHIVED'] || 0, color: '#9ca3af' },
+  ].filter((item) => item.value > 0), [statusCounts]);
+
+  const barData = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const invoice of data.invoices) {
+      const key = invoice.invoiceDate.slice(0, 7);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return [...counts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([month, count]) => ({
+        month: new Date(`${month}-01T00:00:00Z`).toLocaleDateString('fr-FR', { month: 'short' }),
+        count,
+      }));
+  }, [data.invoices]);
+
+  const failedJobs = useMemo(
+    () => data.asyncJobs.filter((job) => job.status === 'FAILED' || job.status === 'DEAD'),
+    [data.asyncJobs],
+  );
+
+  const recentEvents = useMemo(
+    () => [...data.statusHistory].sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()).slice(0, 5),
+    [data.statusHistory],
+  );
+
+  const recentInvoices = useMemo(
+    () => [...data.invoices].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()).slice(0, 5),
+    [data.invoices],
+  );
+
+  const statCards = useMemo(() => [
+    { label: 'Total factures', value: data.invoices.length, icon: FileText, color: 'text-foreground' },
+    { label: 'En attente de revue', value: data.invoices.filter((invoice) => invoice.statusInternal === 'PENDING_HUMAN_REVIEW').length, icon: Clock, color: 'text-warning' },
+    { label: 'Rejetées', value: data.invoices.filter((invoice) => invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL').length, icon: AlertTriangle, color: 'text-destructive' },
+    { label: 'Acceptées / Payées', value: data.invoices.filter((invoice) => invoice.statusInternal === 'ACCEPTED_BY_CHORUS' || invoice.statusInternal === 'PAID').length, icon: CheckCircle, color: 'text-success' },
+  ], [data.invoices]);
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
@@ -61,6 +110,12 @@ export default function Dashboard() {
           </Button>
         </div>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -135,8 +190,8 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {invoices.slice(0, 5).map((inv) => {
-                const supplier = getSupplier(inv.supplierOrganizationId);
+              {recentInvoices.map((inv) => {
+                const supplier = supplierById.get(inv.supplierOrganizationId);
                 return (
                   <Link key={inv.id} to={`/invoices/${inv.id}`} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted/50 transition-colors">
                     <div className="min-w-0">
@@ -159,7 +214,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="space-y-3">
               {recentEvents.map((event) => {
-                const inv = invoices.find(i => i.id === event.invoiceId);
+                const inv = data.invoices.find((invoice) => invoice.id === event.invoiceId);
                 return (
                   <div key={event.id} className="flex items-start gap-3 py-2">
                     <div className="h-2 w-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: event.source === 'CHORUS' ? '#8b5cf6' : event.source === 'USER' ? '#3b82f6' : '#6b7280' }} />
@@ -192,7 +247,7 @@ export default function Dashboard() {
           <CardContent>
             <div className="space-y-2">
               {failedJobs.slice(0, 3).map((job) => {
-                const inv = invoices.find(i => i.id === job.invoiceId);
+                const inv = data.invoices.find((invoice) => invoice.id === job.invoiceId);
                 return (
                   <div key={job.id} className="flex items-center justify-between text-sm py-1">
                     <span>{job.jobType} — {inv?.supplierInvoiceNumber || 'Batch'}</span>
@@ -201,6 +256,14 @@ export default function Dashboard() {
                 );
               })}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading && data.invoices.length === 0 && !error && (
+        <Card>
+          <CardContent className="py-8 text-center text-muted-foreground">
+            Aucune donnée facture n&apos;a encore été chargée depuis le backend.
           </CardContent>
         </Card>
       )}
