@@ -1,13 +1,14 @@
-import { useState, useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { formatCurrency, formatDate } from '@/lib/status-utils';
-import { invoices } from '@/data/mock-data';
-import { getSupplier, getCustomer, getService } from '@/data/mock-data';
+import { getInvoices, getPublicCustomers, getSuppliers } from '@/data/mock-data';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { Search, Download, Plus, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 import type { InvoiceStatusInternal } from '@/types';
 
@@ -26,11 +27,37 @@ export default function InvoiceList() {
   const [statusFilter, setStatusFilter] = useState(initialStatus);
   const [formatFilter, setFormatFilter] = useState('');
   const [page, setPage] = useState(1);
+  const { data, loading, error } = useAsyncResource(
+    async () => {
+      const [invoices, suppliers, publicCustomers] = await Promise.all([
+        getInvoices(),
+        getSuppliers(),
+        getPublicCustomers(),
+      ]);
+
+      return { invoices, suppliers, publicCustomers };
+    },
+    [],
+    {
+      invoices: [],
+      suppliers: [],
+      publicCustomers: [],
+    },
+  );
+
+  const supplierById = useMemo(
+    () => new Map(data.suppliers.map((supplier) => [supplier.id, supplier])),
+    [data.suppliers],
+  );
+  const customerById = useMemo(
+    () => new Map(data.publicCustomers.map((customer) => [customer.id, customer])),
+    [data.publicCustomers],
+  );
 
   const filtered = useMemo(() => {
-    return invoices.filter((inv) => {
-      const supplier = getSupplier(inv.supplierOrganizationId);
-      const customer = getCustomer(inv.publicCustomerId);
+    return data.invoices.filter((inv) => {
+      const supplier = supplierById.get(inv.supplierOrganizationId);
+      const customer = customerById.get(inv.publicCustomerId);
       const matchSearch = !search || [
         inv.supplierInvoiceNumber,
         supplier?.legalName,
@@ -42,16 +69,17 @@ export default function InvoiceList() {
       const matchFormat = !formatFilter || inv.sourceFormat === formatFilter;
       return matchSearch && matchStatus && matchFormat;
     });
-  }, [search, statusFilter, formatFilter]);
+  }, [customerById, data.invoices, formatFilter, search, statusFilter, supplierById]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const safePage = Math.min(page, Math.max(totalPages, 1));
+  const paginated = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const exportCSV = () => {
     const headers = ['Numéro', 'Fournisseur', 'SIRET', 'Client', 'Date', 'Montant TTC', 'Statut'];
     const rows = filtered.map(inv => {
-      const supplier = getSupplier(inv.supplierOrganizationId);
-      const customer = getCustomer(inv.publicCustomerId);
+      const supplier = supplierById.get(inv.supplierOrganizationId);
+      const customer = customerById.get(inv.publicCustomerId);
       return [inv.supplierInvoiceNumber, supplier?.legalName, supplier?.siret, customer?.legalName, inv.invoiceDate, inv.totalTtc, inv.statusInternal].join(';');
     });
     const csv = [headers.join(';'), ...rows].join('\n');
@@ -68,7 +96,9 @@ export default function InvoiceList() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Factures</h1>
-          <p className="text-sm text-muted-foreground">{filtered.length} facture(s) trouvée(s)</p>
+          <p className="text-sm text-muted-foreground">
+            {loading ? 'Chargement des factures...' : `${filtered.length} facture(s) trouvée(s)`}
+          </p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={exportCSV}>
@@ -79,6 +109,12 @@ export default function InvoiceList() {
           </Button>
         </div>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Filters */}
       <Card>
@@ -127,8 +163,8 @@ export default function InvoiceList() {
               </thead>
               <tbody>
                 {paginated.map((inv) => {
-                  const supplier = getSupplier(inv.supplierOrganizationId);
-                  const customer = getCustomer(inv.publicCustomerId);
+                  const supplier = supplierById.get(inv.supplierOrganizationId);
+                  const customer = customerById.get(inv.publicCustomerId);
                   return (
                     <tr key={inv.id} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => window.location.href = `/invoices/${inv.id}`}>
                       <td className="p-3">
@@ -157,12 +193,12 @@ export default function InvoiceList() {
           </div>
           {totalPages > 1 && (
             <div className="flex items-center justify-between px-4 py-3 border-t">
-              <span className="text-sm text-muted-foreground">Page {page} / {totalPages}</span>
+              <span className="text-sm text-muted-foreground">Page {safePage} / {totalPages}</span>
               <div className="flex gap-1">
-                <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
+                <Button variant="outline" size="sm" disabled={safePage === 1} onClick={() => setPage(p => p - 1)}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <Button variant="outline" size="sm" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>
+                <Button variant="outline" size="sm" disabled={safePage === totalPages} onClick={() => setPage(p => p + 1)}>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>

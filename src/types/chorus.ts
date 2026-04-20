@@ -13,6 +13,12 @@ export interface ChorusConfig {
   mode: ChorusConnectorMode;
   tokenUrl: string;
   apiBaseUrl: string;
+  referenceApiBaseUrl: string;
+  referenceSuppliersPath: string;
+  referencePublicCustomersPath: string;
+  referencePublicServicesPath: string;
+  referenceAnnuaireJsonUrl: string;
+  referenceAnnuaireXmlUrl: string;
   clientId: string;
   clientSecret: string;
   scope: string;
@@ -96,6 +102,7 @@ export interface ChorusSubmitInvoiceInput {
   invoiceData: ChorusSubmissionPayload;
   mainFile: File;
   attachments: File[];
+  debugBypassValidation?: boolean;
 }
 
 export interface ChorusSubmitInvoiceResult {
@@ -103,4 +110,71 @@ export interface ChorusSubmitInvoiceResult {
   externalId?: string;
   uploadedFiles: ChorusUploadedFile[];
   response?: unknown;
+}
+
+export interface ChorusTransverseCodeListItem {
+  code: string;
+  label?: string;
+}
+
+export interface ChorusTransverseVatRate {
+  code: string;
+  label?: string;
+  rate?: number;
+}
+
+export interface ChorusTransverseStructure {
+  designationStructure?: string;
+  idStructureCPP?: number;
+  identifiant?: string;
+}
+
+export interface ChorusTransverseBankAccount {
+  idCoordonneeBancaire?: number;
+  nomCoordonneeBancaire?: string;
+}
+
+export interface ChorusTransverseRecipient {
+  adresseCodePostal?: string;
+  adresseVille?: string;
+  idStructureCPP?: number;
+  nomDestinataire?: string;
+  siret?: string;
+}
+
+export interface ChorusTransverseOperatingService {
+  codeServiceExecutant?: string;
+  idServicesCPP?: number;
+  nomServiceExecutant?: string;
+}
+
+export interface ChorusSubmissionReferenceResolutionInput {
+  payload: ChorusSubmissionPayload;
+  codeLangue?: 'FR' | 'EN';
+}
+
+export interface ChorusSubmissionReferenceChecks {
+  cadreFacturationValid: boolean;
+  deviseValid: boolean;
+  modePaiementValid: boolean;
+  modeDepotValid: boolean;
+  fournisseurStructureValid: boolean;
+  coordonneeBancaireValide: boolean;
+  destinataireTrouve: boolean;
+  serviceExecutantTrouve: boolean;
+  tauxTvaValides: boolean;
+  warnings: string[];
+}
+
+export interface ChorusSubmissionReferenceSnapshot {
+  cadresFacturation: ChorusTransverseCodeListItem[];
+  devises: ChorusTransverseCodeListItem[];
+  tauxTva: ChorusTransverseVatRate[];
+  modesReglement: ChorusTransverseCodeListItem[];
+  modesDepot: ChorusTransverseCodeListItem[];
+  coordonneesBancaires: ChorusTransverseBankAccount[];
+  structuresFournisseur: ChorusTransverseStructure[];
+  destinataires: ChorusTransverseRecipient[];
+  servicesExecutants: ChorusTransverseOperatingService[];
+  checks: ChorusSubmissionReferenceChecks;
 }

@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { tenant, currentUser, suppliers } from '@/data/mock-data';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
+import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { loadAuthSession } from '@/lib/auth/session';
 import { loadChorusConfig, maskSecret, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
@@ -29,6 +29,9 @@ const paymentModeLabels = {
   CHEQUE: 'CHEQUE',
   ESPECE: 'ESPECE',
   VIREMENT: 'VIREMENT',
+  PRELEVEMENT: 'PRELEVEMENT',
+  AUTRE: 'AUTRE',
+  REPORT: 'REPORT',
 } as const;
 
 const invoiceTypeLabels = {
@@ -52,8 +55,9 @@ export default function SettingsPage() {
   const [lastConnectionResult, setLastConnectionResult] = useState<ChorusConnectionResult | null>(null);
   const [resolvingTechnicalContext, setResolvingTechnicalContext] = useState(false);
   const [lastTechnicalContextResult, setLastTechnicalContextResult] = useState<ChorusTechnicalContextResolutionResult | null>(null);
-  const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? currentUser.email);
-  const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState(() => suppliers.find((supplier) => supplier.active)?.id ?? suppliers[0]?.id ?? '');
+  const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? '');
+  const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState('');
+  const { suppliers, loading: loadingReferenceSuppliers, error: referenceSuppliersError } = useReferenceCatalog(config);
 
   const connectorStatus = useMemo(() => {
     if (!config.enabled) {
@@ -62,6 +66,10 @@ export default function SettingsPage() {
 
     return config.mode === 'mock' ? 'Simulation active' : 'Prêt pour test réel';
   }, [config.enabled, config.mode]);
+  const userApisRequireProductionAccess = useMemo(() => {
+    const userPaths = `${config.userAccountPath} ${config.userConnectionsPath}`.toLowerCase();
+    return userPaths.includes('service-qualif') || userPaths.includes('sandbox');
+  }, [config.userAccountPath, config.userConnectionsPath]);
 
   const selectedSupplierForTechnicalContext = useMemo(
     () => suppliers.find((supplier) => supplier.id === technicalContextSupplierId),
@@ -69,10 +77,15 @@ export default function SettingsPage() {
   );
 
   const handleFieldChange = <K extends keyof ChorusConfig>(field: K, value: ChorusConfig[K]) => {
-    setConfig((previous) => ({
-      ...previous,
-      [field]: value,
-    }));
+    setConfig((previous) => {
+      const nextConfig = {
+        ...previous,
+        [field]: value,
+      };
+
+      saveChorusConfig(nextConfig);
+      return nextConfig;
+    });
   };
 
   const handleSave = () => {
@@ -156,39 +169,6 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold">Paramètres</h1>
         <p className="text-sm text-muted-foreground">Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro</p>
       </div>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Organisation</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <InfoRow label="Nom" value={tenant.name} />
-          <InfoRow label="Code" value={tenant.code} />
-          <InfoRow label="Statut" value={tenant.active ? 'Actif' : 'Inactif'} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Utilisateur courant</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <InfoRow label="Nom" value={`${currentUser.firstName} ${currentUser.lastName}`} />
-          <InfoRow label="Email" value={currentUser.email} />
-          <InfoRow label="Rôle" value={currentUser.roleCode} />
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle className="text-base">Fournisseurs enregistrés</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          {suppliers.map(s => (
-            <div key={s.id} className="flex items-center justify-between py-2">
-              <div>
-                <div className="font-medium text-sm">{s.legalName}</div>
-                <div className="text-xs text-muted-foreground">SIRET: {s.siret} · TVA: {s.vatNumber}</div>
-              </div>
-              <Badge variant={s.active ? 'default' : 'secondary'}>{s.active ? 'Actif' : 'Inactif'}</Badge>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -282,6 +262,72 @@ export default function SettingsPage() {
               <Label htmlFor="submit-invoice-path">Endpoint soumission facture</Label>
               <Input id="submit-invoice-path" value={config.submitInvoicePath} onChange={(e) => handleFieldChange('submitInvoicePath', e.target.value)} placeholder="/factures/soumettre" />
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reference-api-base-url">Base API référentiels</Label>
+              <Input
+                id="reference-api-base-url"
+                value={config.referenceApiBaseUrl}
+                onChange={(e) => handleFieldChange('referenceApiBaseUrl', e.target.value)}
+                placeholder="https://mon-backend/api"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reference-suppliers-path">Endpoint fournisseurs</Label>
+              <Input
+                id="reference-suppliers-path"
+                value={config.referenceSuppliersPath}
+                onChange={(e) => handleFieldChange('referenceSuppliersPath', e.target.value)}
+                placeholder="/references/suppliers"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reference-public-customers-path">Endpoint clients publics</Label>
+              <Input
+                id="reference-public-customers-path"
+                value={config.referencePublicCustomersPath}
+                onChange={(e) => handleFieldChange('referencePublicCustomersPath', e.target.value)}
+                placeholder="/references/public-customers"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="reference-public-services-path">Endpoint services publics</Label>
+              <Input
+                id="reference-public-services-path"
+                value={config.referencePublicServicesPath}
+                onChange={(e) => handleFieldChange('referencePublicServicesPath', e.target.value)}
+                placeholder="/references/public-services"
+              />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="reference-annuaire-json-url">Annuaire JSON normalisé</Label>
+              <Input
+                id="reference-annuaire-json-url"
+                value={config.referenceAnnuaireJsonUrl}
+                onChange={(e) => handleFieldChange('referenceAnnuaireJsonUrl', e.target.value)}
+                placeholder="/annuaire/annuaire.normalized.json"
+              />
+              <p className="text-xs text-muted-foreground">
+                Source recommandée pour charger rapidement l&apos;annuaire Chorus déjà converti en JSON.
+              </p>
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="reference-annuaire-xml-url">Annuaire XML Chorus</Label>
+              <Input
+                id="reference-annuaire-xml-url"
+                value={config.referenceAnnuaireXmlUrl}
+                onChange={(e) => handleFieldChange('referenceAnnuaireXmlUrl', e.target.value)}
+                placeholder="/annuaire/FAR..."
+              />
+              <p className="text-xs text-muted-foreground">
+                Fallback XML si le JSON normalisé n&apos;est pas encore disponible.
+              </p>
+            </div>
           </div>
 
           <Separator />
@@ -328,12 +374,39 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              {loadingReferenceSuppliers && (
+                <p className="text-xs text-muted-foreground">
+                  Chargement des fournisseurs depuis l’API de référentiel…
+                </p>
+              )}
+
+              {referenceSuppliersError && (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
+                  {referenceSuppliersError}
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-3">
-                <Button variant="outline" onClick={handleResolveTechnicalContext} disabled={resolvingTechnicalContext}>
+                <Button
+                  variant="outline"
+                  onClick={handleResolveTechnicalContext}
+                  disabled={resolvingTechnicalContext || userApisRequireProductionAccess}
+                >
                   {resolvingTechnicalContext ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Récupérer depuis Chorus
                 </Button>
               </div>
+
+              {userApisRequireProductionAccess && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4 text-sm">
+                  <p className="font-medium">API utilisateurs non exploitable dans cette configuration</p>
+                  <p className="mt-1 text-muted-foreground">
+                    Les endpoints configurés pointent vers la qualification / sandbox. Dans ton contexte actuel, la récupération automatique
+                    via `consulter/compte` et `monCompte/recuperer/rattachements` doit être considérée comme indisponible.
+                    Renseigne donc `idUtilisateurCourant`, `idFournisseur` et `idServiceFournisseur` manuellement dans ce bloc.
+                  </p>
+                </div>
+              )}
 
               {lastTechnicalContextResult && (
                 <div className="rounded-lg border bg-background p-4 text-sm space-y-2">
@@ -394,6 +467,9 @@ export default function SettingsPage() {
                     <SelectItem value="CHEQUE">{paymentModeLabels.CHEQUE}</SelectItem>
                     <SelectItem value="ESPECE">{paymentModeLabels.ESPECE}</SelectItem>
                     <SelectItem value="VIREMENT">{paymentModeLabels.VIREMENT}</SelectItem>
+                    <SelectItem value="PRELEVEMENT">{paymentModeLabels.PRELEVEMENT}</SelectItem>
+                    <SelectItem value="AUTRE">{paymentModeLabels.AUTRE}</SelectItem>
+                    <SelectItem value="REPORT">{paymentModeLabels.REPORT}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -449,11 +525,9 @@ export default function SettingsPage() {
           </div>
 
           <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
-            En production, évite d'exposer le client secret PISTE dans le front Vite. Le connecteur direct ajouté ici est surtout utile pour la sandbox, les tests de dev et le prototypage rapide.
-            Pour un endpoint Chorus de recherche comme `/v1/rechercher/fournisseur`, utilise `POST` pour le test de connexion.
-            Les champs du bloc de soumission (`idUtilisateurCourant`, `idFournisseur`, etc.) servent au JSON envoyé vers Chorus et ne peuvent pas être déduits du PDF.
-            {import.meta.env.DEV ? ' En développement local, les URLs officielles sandbox PISTE sont automatiquement relayées via le proxy Vite pour contourner le blocage CORS du navigateur.' : ''}
+            Les champs de cette page sont autosauvegardés localement dès la saisie. Le bouton `Enregistrer la configuration` reste disponible comme action explicite de confirmation.
           </div>
+
 
           <div className="flex flex-wrap gap-3">
             <Button onClick={handleSave}>Enregistrer la configuration</Button>
@@ -481,15 +555,6 @@ export default function SettingsPage() {
           )}
         </CardContent>
       </Card>
-    </div>
-  );
-}
-
-function InfoRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex justify-between text-sm gap-4">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium text-right">{value}</span>
     </div>
   );
 }

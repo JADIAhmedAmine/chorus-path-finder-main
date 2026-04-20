@@ -10,9 +10,9 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { publicCustomers, publicServices, suppliers } from '@/data/mock-data';
 import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { createEmptyInvoiceDraft, mergeExtractionIntoDraft } from '@/lib/chorus/normalization';
@@ -20,8 +20,11 @@ import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/stora
 import { prepareInvoiceSubmission } from '@/lib/chorus/preparation';
 import { extractInvoiceData } from '@/lib/chorus/extraction';
 import { buildChorusTechnicalContext } from '@/lib/chorus/technicalContext';
+import { ChorusTransversesClient } from '@/lib/chorus/transversesClient';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
+import { buildChorusDebugFile } from '@/lib/chorus/debug';
 import type { InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
+import type { ChorusSubmissionReferenceSnapshot } from '@/types/chorus';
 
 function formatAmountForDisplay(value?: string): string {
   if (!value?.trim()) {
@@ -128,8 +131,22 @@ export default function InvoiceCreate() {
   const [extractionResult, setExtractionResult] = useState<LocalInvoiceExtractionResult | null>(null);
   const [mainFilePreviewUrl, setMainFilePreviewUrl] = useState<string | null>(null);
   const [lastSubmissionError, setLastSubmissionError] = useState<string | null>(null);
+  const [showDebugPanel, setShowDebugPanel] = useState(false);
+  const [exportingDebugFile, setExportingDebugFile] = useState(false);
+  const [loadingTransverses, setLoadingTransverses] = useState(false);
+  const [transversesError, setTransversesError] = useState<string | null>(null);
+  const [transversesSnapshot, setTransversesSnapshot] = useState<ChorusSubmissionReferenceSnapshot | null>(null);
+  const {
+    suppliers,
+    publicCustomers,
+    publicServices,
+    metadata: referenceCatalogMetadata,
+    loading: loadingReferences,
+    error: referenceCatalogError,
+  } = useReferenceCatalog();
 
-  const chorusConfig = resolveChorusRuntimeConfig(loadChorusConfig());
+  const rawChorusConfig = loadChorusConfig();
+  const chorusConfig = resolveChorusRuntimeConfig(rawChorusConfig);
   const services = formData.publicCustomerId ? publicServices.filter(s => s.publicCustomerId === formData.publicCustomerId && s.active) : [];
   const selectedSupplier = suppliers.find((supplier) => supplier.id === formData.supplierOrganizationId);
   const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === formData.publicCustomerId);
@@ -167,6 +184,33 @@ export default function InvoiceCreate() {
     mainFile,
   ]);
   const payloadValidation = useMemo(() => validateChorusSubmissionPayload(submissionPayload), [submissionPayload]);
+  const debugSnapshot = useMemo(() => JSON.stringify({
+    chorusConfig: {
+      mode: chorusConfig.mode,
+      enabled: chorusConfig.enabled,
+      apiBaseUrl: chorusConfig.apiBaseUrl,
+      uploadFilePath: chorusConfig.uploadFilePath,
+      submitInvoicePath: chorusConfig.submitInvoicePath,
+      submissionCurrentUserId: chorusConfig.submissionCurrentUserId,
+      submissionSupplierId: chorusConfig.submissionSupplierId,
+      submissionSupplierServiceId: chorusConfig.submissionSupplierServiceId,
+      submissionBankAccountCode: chorusConfig.submissionBankAccountCode,
+    },
+    technicalContext: chorusTechnicalContext,
+    submissionPreparation: {
+      readiness: submissionPreparation.readiness,
+      errors: submissionPreparation.validation.errors,
+      warnings: submissionPreparation.validation.warnings,
+    },
+    payloadValidation,
+    payloadPreview: submissionPayload,
+  }, null, 2), [
+    chorusConfig,
+    chorusTechnicalContext,
+    submissionPreparation,
+    payloadValidation,
+    submissionPayload,
+  ]);
   const isDirectMode = chorusConfig.mode === 'direct' && chorusConfig.enabled;
   const isSubmissionBlocked = extracting || submitting || (isDirectMode && (!submissionPreparation.validation.valid || !payloadValidation.valid));
 
@@ -218,7 +262,7 @@ export default function InvoiceCreate() {
     return () => {
       cancelled = true;
     };
-  }, [mainFile]);
+  }, [mainFile, suppliers, publicCustomers, publicServices]);
 
   useEffect(() => {
     const isPdf = mainFile?.type === 'application/pdf' || mainFile?.name.toLowerCase().endsWith('.pdf');
@@ -244,13 +288,14 @@ export default function InvoiceCreate() {
     }
   }, []);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (options?: { forceDebug?: boolean }) => {
+    const forceDebug = options?.forceDebug === true;
     if (!mainFile) {
       toast({ title: 'Erreur', description: 'Veuillez déposer une facture principale.', variant: 'destructive' });
       return;
     }
 
-    if (isDirectMode && !submissionPreparation.validation.valid) {
+    if (isDirectMode && !submissionPreparation.validation.valid && !forceDebug) {
       toast({
         title: 'Soumission bloquée',
         description: submissionPreparation.validation.errors[0]?.message || 'Complétez les métadonnées obligatoires avant l’envoi.',
@@ -259,13 +304,24 @@ export default function InvoiceCreate() {
       return;
     }
 
-    if (isDirectMode && !payloadValidation.valid) {
+    if (isDirectMode && !payloadValidation.valid && !forceDebug) {
       toast({
         title: 'Contexte Chorus incomplet',
         description: payloadValidation.errors[0]?.message || 'Complétez le contexte technique Chorus dans les paramètres avant l’envoi.',
         variant: 'destructive',
       });
       return;
+    }
+
+    if (forceDebug) {
+      console.groupCollapsed('[Chorus debug] Force submit from UI');
+      console.log({
+        chorusTechnicalContext,
+        submissionPreparation,
+        payloadValidation,
+        submissionPayload,
+      });
+      console.groupEnd();
     }
 
     setLastSubmissionError(null);
@@ -277,6 +333,7 @@ export default function InvoiceCreate() {
         invoiceData: submissionPayload,
         mainFile,
         attachments,
+        debugBypassValidation: forceDebug,
       });
 
       toast({
@@ -296,6 +353,70 @@ export default function InvoiceCreate() {
       });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleExportDebugFile = async () => {
+    setExportingDebugFile(true);
+
+    try {
+      const debugFile = await buildChorusDebugFile({
+        config: rawChorusConfig,
+        payload: submissionPayload,
+        validation: payloadValidation,
+        mainFile,
+        connectionTestMethod: rawChorusConfig.connectionTestMethod,
+      });
+
+      const blob = new Blob([debugFile], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'debug_chorus.txt';
+      link.click();
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: 'debug_chorus exporté',
+        description: 'Le fichier contient les commandes POST utiles pour reproduire les appels du code.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Échec export debug',
+        description: error instanceof Error ? error.message : 'Erreur inconnue',
+        variant: 'destructive',
+      });
+    } finally {
+      setExportingDebugFile(false);
+    }
+  };
+
+  const handleCheckTransverses = async () => {
+    setLoadingTransverses(true);
+    setTransversesError(null);
+
+    try {
+      const client = new ChorusTransversesClient(chorusConfig);
+      const snapshot = await client.resolveSubmissionReferences({
+        payload: submissionPayload,
+      });
+
+      setTransversesSnapshot(snapshot);
+      toast({
+        title: 'Référentiels Chorus récupérés',
+        description: 'Les valeurs Transverses ont été contrôlées pour cette soumission.',
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      setTransversesError(message);
+      setTransversesSnapshot(null);
+      toast({
+        title: 'Échec vérification Transverses',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingTransverses(false);
     }
   };
 
@@ -450,6 +571,43 @@ export default function InvoiceCreate() {
       <Card>
         <CardHeader><CardTitle className="text-base">Métadonnées initiales (optionnel)</CardTitle></CardHeader>
         <CardContent>
+          <div className="space-y-4">
+            {loadingReferences && (
+              <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
+                Chargement des référentiels fournisseur / client public / service depuis les APIs configurées…
+              </div>
+            )}
+
+            {!loadingReferences && !referenceCatalogError && (publicCustomers.length > 0 || publicServices.length > 0 || suppliers.length > 0) && (
+              <div className="rounded-lg border bg-muted/10 p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">Référentiels actifs :</span>
+                  <Badge variant={referenceCatalogMetadata.suppliersSource === 'api' ? 'default' : 'secondary'}>
+                    Fournisseurs : {referenceCatalogMetadata.suppliersSource === 'api' ? 'API backend' : 'Aucun'}
+                  </Badge>
+                  <Badge variant={referenceCatalogMetadata.publicCustomersSource === 'annuaire' ? 'default' : 'secondary'}>
+                    Clients publics : {referenceCatalogMetadata.publicCustomersSource === 'annuaire' ? `Annuaire ${referenceCatalogMetadata.annuaireSourceFormat === 'json' ? 'JSON' : 'XML'}` : referenceCatalogMetadata.publicCustomersSource === 'api' ? 'API backend' : 'Aucun'}
+                  </Badge>
+                  <Badge variant={referenceCatalogMetadata.publicServicesSource === 'annuaire' ? 'default' : 'secondary'}>
+                    Services : {referenceCatalogMetadata.publicServicesSource === 'annuaire' ? `Annuaire ${referenceCatalogMetadata.annuaireSourceFormat === 'json' ? 'JSON' : 'XML'}` : referenceCatalogMetadata.publicServicesSource === 'api' ? 'API backend' : 'Aucun'}
+                  </Badge>
+                </div>
+                {(referenceCatalogMetadata.annuaireJsonUrl || referenceCatalogMetadata.annuaireXmlUrl) && (referenceCatalogMetadata.publicCustomersSource === 'annuaire' || referenceCatalogMetadata.publicServicesSource === 'annuaire') && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Annuaire Chorus {referenceCatalogMetadata.annuaireSourceFormat === 'json' ? 'JSON' : 'XML'} chargé depuis {referenceCatalogMetadata.annuaireJsonUrl || referenceCatalogMetadata.annuaireXmlUrl} avec {referenceCatalogMetadata.annuaireStructureCount} structures et {referenceCatalogMetadata.annuaireServiceCount} services.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {referenceCatalogError && (
+              <Alert variant="destructive">
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>Référentiels indisponibles</AlertTitle>
+                <AlertDescription>{referenceCatalogError}</AlertDescription>
+              </Alert>
+            )}
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Fournisseur</Label>
@@ -538,6 +696,7 @@ export default function InvoiceCreate() {
                 onChange={e => setFormData(p => ({ ...p, totalAmountTtc: e.target.value }))}
               />
             </div>
+          </div>
           </div>
         </CardContent>
       </Card>
@@ -644,6 +803,69 @@ export default function InvoiceCreate() {
             </Alert>
           )}
 
+          {isDirectMode && (
+            <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Contrôle référentiel Chorus Transverses</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Vérifie avant soumission les cadres, devises, taux TVA, modes de règlement, structures fournisseur,
+                    coordonnées bancaires, destinataire et service exécutant.
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => void handleCheckTransverses()} disabled={loadingTransverses}>
+                  {loadingTransverses ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Vérifier via API Transverses
+                </Button>
+              </div>
+
+              {transversesError && (
+                <Alert variant="destructive">
+                  <TriangleAlert className="h-4 w-4" />
+                  <AlertTitle>Contrôle Transverses en erreur</AlertTitle>
+                  <AlertDescription>{transversesError}</AlertDescription>
+                </Alert>
+              )}
+
+              {transversesSnapshot && (
+                <div className="space-y-4 rounded-lg border bg-background p-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <ExtractionInfoRow label="Cadre valide" value={transversesSnapshot.checks.cadreFacturationValid ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Devise valide" value={transversesSnapshot.checks.deviseValid ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Mode paiement valide" value={transversesSnapshot.checks.modePaiementValid ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Mode dépôt valide" value={transversesSnapshot.checks.modeDepotValid ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Structure fournisseur valide" value={transversesSnapshot.checks.fournisseurStructureValid ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Coordonnées bancaires valides" value={transversesSnapshot.checks.coordonneeBancaireValide ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Destinataire trouvé" value={transversesSnapshot.checks.destinataireTrouve ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Service exécutant trouvé" value={transversesSnapshot.checks.serviceExecutantTrouve ? 'Oui' : 'Non'} />
+                    <ExtractionInfoRow label="Taux TVA valides" value={transversesSnapshot.checks.tauxTvaValides ? 'Oui' : 'Non'} />
+                  </div>
+
+                  {transversesSnapshot.checks.warnings.length > 0 && (
+                    <Alert>
+                      <TriangleAlert className="h-4 w-4" />
+                      <AlertTitle>Écarts référentiels</AlertTitle>
+                      <AlertDescription>
+                        <ul className="list-disc space-y-1 pl-4">
+                          {transversesSnapshot.checks.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <ExtractionInfoRow label="Cadres récupérés" value={String(transversesSnapshot.cadresFacturation.length)} />
+                    <ExtractionInfoRow label="Devises récupérées" value={String(transversesSnapshot.devises.length)} />
+                    <ExtractionInfoRow label="Destinataires trouvés" value={String(transversesSnapshot.destinataires.length)} />
+                    <ExtractionInfoRow label="Services trouvés" value={String(transversesSnapshot.servicesExecutants.length)} />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {submissionPreparation.recommendations.length > 0 && (
             <div className="rounded-lg border bg-muted/20 p-4">
               <p className="text-sm font-medium">Actions suggérées</p>
@@ -670,15 +892,49 @@ export default function InvoiceCreate() {
               </AlertDescription>
             </Alert>
           )}
+
+          {isDirectMode && (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Debug Chorus</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Affiche le contexte technique, la validation et le payload construit avant l’envoi.
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setShowDebugPanel((value) => !value)}>
+                  {showDebugPanel ? 'Masquer le debug' : 'Afficher le debug'}
+                </Button>
+              </div>
+
+              {showDebugPanel && (
+                <div className="mt-4 space-y-3 rounded-lg border bg-background p-4">
+                  <div className="flex justify-end">
+                    <Button variant="outline" size="sm" onClick={() => void handleExportDebugFile()} disabled={exportingDebugFile}>
+                      {exportingDebugFile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Exporter debug_chorus
+                    </Button>
+                  </div>
+                  <pre className="whitespace-pre-wrap break-words text-xs">{debugSnapshot}</pre>
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={() => navigate('/invoices')}>Annuler</Button>
-        <Button onClick={handleSubmit} disabled={isSubmissionBlocked}>
+        <Button onClick={() => void handleSubmit()} disabled={isSubmissionBlocked}>
           {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
           {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Envoyer à Chorus' : 'Déposer la facture'}
         </Button>
+        {isDirectMode && (
+          <Button variant="destructive" onClick={() => void handleSubmit({ forceDebug: true })} disabled={extracting || submitting || !mainFile}>
+            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TriangleAlert className="mr-2 h-4 w-4" />}
+            Forcer l’envoi debug
+          </Button>
+        )}
       </div>
     </div>
   );

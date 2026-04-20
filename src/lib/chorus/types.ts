@@ -116,7 +116,7 @@ export interface NormalizedInvoiceDraftData {
 export type ChorusSubmissionMode = 'SAISIE_API' | 'DEPOT_PDF_API' | 'DEPOT_PDF_SIGNE_API';
 export type ChorusInvoiceType = 'FACTURE' | 'AVOIR';
 export type ChorusVatType = 'TVA_SUR_DEBIT' | 'TVA_SUR_ENCAISSEMENT' | 'EXONERATION' | 'SANS_TVA';
-export type ChorusPaymentMode = 'CHEQUE' | 'ESPECE' | 'VIREMENT';
+export type ChorusPaymentMode = 'CHEQUE' | 'ESPECE' | 'VIREMENT' | 'PRELEVEMENT' | 'AUTRE' | 'REPORT';
 
 export interface ChorusSubmissionCadreDeFacturation {
   codeCadreFacturation: string;

@@ -26,6 +26,53 @@ npm run build
 3. Lancer l'application
 4. Vérifier la configuration dans la page `Settings`
 
+## Données backend
+
+Le fichier [src/data/mock-data.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/data/mock-data.ts) n'embarque plus de données statiques. Il sert maintenant de façade asynchrone vers un backend réel.
+
+Architecture de cette couche :
+
+- client HTTP et mappers typés : [src/data/backend-client.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/data/backend-client.ts)
+- façade de compatibilité asynchrone : [src/data/mock-data.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/data/mock-data.ts)
+- hook de chargement progressif pour l'UI : [src/hooks/use-async-resource.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/hooks/use-async-resource.ts)
+
+Variables à renseigner côté frontend pour pointer vers le backend applicatif :
+
+- `VITE_DATA_API_BASE_URL`
+- `VITE_DATA_TENANT_PATH`
+- `VITE_DATA_CURRENT_USER_PATH`
+- `VITE_DATA_SUPPLIERS_PATH`
+- `VITE_DATA_PUBLIC_CUSTOMERS_PATH`
+- `VITE_DATA_PUBLIC_SERVICES_PATH`
+- `VITE_DATA_INVOICES_PATH`
+- `VITE_DATA_INVOICE_LINES_PATH`
+- `VITE_DATA_INVOICE_ATTACHMENTS_PATH`
+- `VITE_DATA_STATUS_HISTORY_PATH`
+- `VITE_DATA_API_EXCHANGE_LOGS_PATH`
+- `VITE_DATA_ASYNC_JOBS_PATH`
+- `VITE_DATA_AUDIT_LOGS_PATH`
+- `VITE_DATA_EXTRACTION_RESULTS_PATH`
+
+Pour les référentiels destinataires/services publics, il y a maintenant deux sources possibles :
+
+- backend JSON via `VITE_REFERENCE_API_BASE_URL` + endpoints `VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH` / `VITE_REFERENCE_PUBLIC_SERVICES_PATH`
+- cache annuaire JSON via `VITE_REFERENCE_ANNUAIRE_JSON_URL`
+- fallback annuaire Chorus XML via `VITE_REFERENCE_ANNUAIRE_XML_URL`
+
+Le chemin conseillé est maintenant :
+
+1. récupérer l'export XML de l'API annuaire
+2. le convertir en JSON normalisé avec `node scripts/build-annuaire-json.mjs`
+3. charger l'application sur `VITE_REFERENCE_ANNUAIRE_JSON_URL`
+
+Le fallback XML reste disponible si le JSON n'a pas encore été généré.
+
+Migration progressive :
+
+- si un endpoint backend manque encore, la couche de données renvoie une valeur sûre vide et loggue un `TODO` explicite en console
+- les écrans restent donc utilisables sans réinjecter de faux jeux de données dans le bundle
+- les fixtures de tests ont été déplacées sous [src/test/fixtures/reference-data.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/test/fixtures/reference-data.ts)
+
 Pour une soumission reelle, la configuration ne se limite pas au client OAuth2 et au compte technique. Il faut aussi renseigner le contexte Chorus utilise dans les payloads de soumission :
 
 - `idUtilisateurCourant`
@@ -130,7 +177,7 @@ Analyse locale actuelle :
 - extraction texte heuristique
 - enrichissement optionnel par LLM local via Ollama
 - détection par regex
-- tentative de résolution vers les référentiels locaux `suppliers`, `publicCustomers`, `publicServices`
+- tentative de résolution vers les référentiels chargés par API quand `VITE_REFERENCE_*` est configuré
 
 Conséquence directe :
 
@@ -147,6 +194,7 @@ La construction du JSON Chorus se fait maintenant en plusieurs couches explicite
 - extraction locale : [src/lib/chorus/extraction.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/extraction.ts)
 - normalisation du draft : [src/lib/chorus/normalization.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/normalization.ts)
 - normalisation orientée soumission : [src/lib/chorus/normalizeSubmissionData.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/normalizeSubmissionData.ts)
+- contrôle des référentiels Chorus Transverses : [src/lib/chorus/transversesClient.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/transversesClient.ts)
 - construction du payload : [src/lib/chorus/buildSubmissionPayload.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/buildSubmissionPayload.ts)
 - validation finale : [src/lib/chorus/validateSubmissionPayload.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/validateSubmissionPayload.ts)
 - envoi HTTP et finalisation `pieceJointePrincipale` apres `deposer/pdf` : [src/lib/chorus/client.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/client.ts)
@@ -175,6 +223,7 @@ Champs venant du contexte applicatif / backend / referentiels Chorus :
 - `cadreDeFacturation.codeStructureValideur`
 - toute autre cle technique Chorus qui ne figure pas sur la facture
 - `idUtilisateurCourant` requis aussi par `deposer/pdf`
+- les référentiels `Transverses` Chorus (`cadrefacturation`, `devises`, `tauxtva`, `modereglements`, `modedepot`, `coordbanc`, `structures actives fournisseur`, `destinataire`, `service executant`) sont maintenant vérifiables avant soumission
 
 Point important :
 
@@ -212,7 +261,7 @@ Chemin conseillé pour la suite :
 - Pas d'OCR pour les scans
 - Pas encore de client dédié pour les étapes Chorus de préparation structure/service
 - Le payload de soumission est maintenant typé, mais certains champs Chorus restent dependants d'un contexte technique externe
-- Les référentiels fournisseur/client/service sont encore locaux dans `mock-data`
+- Les référentiels fournisseur/client/service du flux Chorus peuvent désormais venir d'APIs configurables (`referenceApiBaseUrl`, `referenceSuppliersPath`, `referencePublicCustomersPath`, `referencePublicServicesPath`)
 - Sans `idUtilisateurCourant` / `idFournisseur` / `idServiceFournisseur` reels, la validation bloque volontairement le POST
 
 ## Tests

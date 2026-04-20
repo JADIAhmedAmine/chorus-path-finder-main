@@ -1,14 +1,31 @@
+import { useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { JobStatusBadge } from '@/components/common/JobStatusBadge';
-import { asyncJobs, invoices } from '@/data/mock-data';
+import { getAsyncJobs, getInvoices } from '@/data/mock-data';
+import { useAsyncResource } from '@/hooks/use-async-resource';
 import { formatDateTime } from '@/lib/status-utils';
 import { RotateCcw, X, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Jobs() {
   const { toast } = useToast();
-  const sorted = [...asyncJobs].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  const { data, error } = useAsyncResource(
+    async () => {
+      const [asyncJobs, invoices] = await Promise.all([getAsyncJobs(), getInvoices()]);
+      return { asyncJobs, invoices };
+    },
+    [],
+    {
+      asyncJobs: [],
+      invoices: [],
+    },
+  );
+  const sorted = useMemo(
+    () => [...data.asyncJobs].sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()),
+    [data.asyncJobs],
+  );
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -16,6 +33,12 @@ export default function Jobs() {
         <h1 className="text-2xl font-semibold">Jobs techniques</h1>
         <p className="text-sm text-muted-foreground">Suivi des tâches asynchrones et gestion des retries</p>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardContent className="p-0">
@@ -34,7 +57,7 @@ export default function Jobs() {
             </thead>
             <tbody>
               {sorted.map(job => {
-                const inv = invoices.find(i => i.id === job.invoiceId);
+                const inv = data.invoices.find(i => i.id === job.invoiceId);
                 return (
                   <tr key={job.id} className="border-b">
                     <td className="p-3 font-mono text-xs">{job.jobType}</td>

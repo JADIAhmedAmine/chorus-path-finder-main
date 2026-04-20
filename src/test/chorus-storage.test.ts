@@ -52,6 +52,18 @@ describe('chorus storage', () => {
     expect(config.clientId).toBe(fallback.clientId);
   });
 
+  it('migrates legacy user service endpoints stored in localStorage', () => {
+    window.localStorage.setItem(CHORUS_CONFIG_STORAGE_KEY, JSON.stringify({
+      userAccountPath: '/cpro/utilisateurs/v1/consulter/compte',
+      userConnectionsPath: 'https://sandbox-api.piste.gouv.fr/cpro/utilisateurs/v1/monCompte/recuperer/rattachements',
+    }));
+
+    const config = loadChorusConfig();
+
+    expect(config.userAccountPath).toBe('https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte');
+    expect(config.userConnectionsPath).toBe('https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements');
+  });
+
   it('masks secrets safely', () => {
     expect(maskSecret('')).toBe('Non renseigné');
     expect(maskSecret('abc')).toBe('••••••');
@@ -64,10 +76,12 @@ describe('chorus storage', () => {
       tokenUrl: 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token',
       apiBaseUrl: 'https://sandbox-api.piste.gouv.fr/cpro/factures',
       userAccountPath: 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte',
+      userConnectionsPath: 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements',
     }, true);
 
     expect(resolved.tokenUrl).toBe('/__chorus-proxy/sandbox-oauth/api/oauth/token');
     expect(resolved.apiBaseUrl).toBe('/__chorus-proxy/sandbox-api/cpro/factures');
     expect(resolved.userAccountPath).toBe('/__chorus-proxy/chorus-qualif/service-qualif/utilisateurs/consulter/compte');
+    expect(resolved.userConnectionsPath).toBe('/__chorus-proxy/chorus-qualif/service-qualif/utilisateurs/monCompte/recuperer/rattachements');
   });
 });
