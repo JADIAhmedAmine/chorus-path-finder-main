@@ -59,7 +59,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!normalized.publicCustomerId && !normalized.publicCustomerSiret) {
+  if (!normalized.publicCustomerId && !normalized.publicCustomerSiret && !normalized.publicCustomerCode) {
     errors.push({
       field: 'publicCustomerId',
       code: 'PUBLIC_CUSTOMER_REQUIRED',
@@ -67,7 +67,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (normalized.publicCustomerId && availableServices.length > 0 && !normalized.publicServiceId) {
+  if (normalized.publicCustomerId && availableServices.length > 0 && !normalized.publicServiceId && !normalized.publicServiceCode) {
     errors.push({
       field: 'publicServiceId',
       code: 'PUBLIC_SERVICE_REQUIRED',
@@ -169,7 +169,7 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!publicService && normalized.publicCustomerId && availableServices.length === 0) {
+  if (!publicService && !normalized.publicServiceCode && normalized.publicCustomerId && availableServices.length === 0) {
     warnings.push({
       field: 'publicServiceId',
       code: 'NO_ACTIVE_SERVICE_REFERENCE',

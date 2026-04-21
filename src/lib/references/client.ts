@@ -9,6 +9,13 @@ export interface ReferenceCatalog {
   metadata: ReferenceCatalogMetadata;
 }
 
+export interface ReferenceCatalogLoadOptions {
+  includeSuppliers?: boolean;
+  includePublicCustomers?: boolean;
+  includePublicServices?: boolean;
+  includeAnnuaire?: boolean;
+}
+
 export type ReferenceCatalogSource = 'api' | 'annuaire' | 'empty';
 
 export interface ReferenceCatalogMetadata {
@@ -23,6 +30,8 @@ export interface ReferenceCatalogMetadata {
 }
 
 const annuaireCache = new Map<string, Promise<ChorusAnnuaireCatalog>>();
+const referenceCatalogCache = new Map<string, ReferenceCatalog>();
+const referenceCatalogPromiseCache = new Map<string, Promise<ReferenceCatalog>>();
 
 function getDefaultFetchImpl(): typeof fetch {
   return ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init)) as typeof fetch;
@@ -231,28 +240,88 @@ export class ReferenceCatalogClient {
     return nextPromise;
   }
 
-  async fetchCatalog(): Promise<ReferenceCatalog> {
-    const [suppliers, publicCustomers, publicServices, annuaireCatalog] = await Promise.all([
-      this.fetchCollection(this.config.referenceSuppliersPath, 'API fournisseurs', normalizeSupplier),
-      this.fetchCollection(this.config.referencePublicCustomersPath, 'API clients publics', normalizePublicCustomer),
-      this.fetchCollection(this.config.referencePublicServicesPath, 'API services publics', normalizePublicService),
-      this.fetchAnnuaireCatalog(),
-    ]);
+  private buildCatalogCacheKey(options: ReferenceCatalogLoadOptions): string {
+    return JSON.stringify({
+      referenceApiBaseUrl: this.config.referenceApiBaseUrl,
+      referenceSuppliersPath: this.config.referenceSuppliersPath,
+      referencePublicCustomersPath: this.config.referencePublicCustomersPath,
+      referencePublicServicesPath: this.config.referencePublicServicesPath,
+      referenceAnnuaireJsonUrl: this.config.referenceAnnuaireJsonUrl,
+      referenceAnnuaireXmlUrl: this.config.referenceAnnuaireXmlUrl,
+      includeSuppliers: options.includeSuppliers ?? true,
+      includePublicCustomers: options.includePublicCustomers ?? true,
+      includePublicServices: options.includePublicServices ?? true,
+      includeAnnuaire: options.includeAnnuaire ?? true,
+    });
+  }
 
-    return {
-      suppliers,
-      publicCustomers: publicCustomers.length > 0 ? publicCustomers : annuaireCatalog.publicCustomers,
-      publicServices: publicServices.length > 0 ? publicServices : annuaireCatalog.publicServices,
-      metadata: {
-        suppliersSource: suppliers.length > 0 ? 'api' : 'empty',
-        publicCustomersSource: publicCustomers.length > 0 ? 'api' : annuaireCatalog.publicCustomers.length > 0 ? 'annuaire' : 'empty',
-        publicServicesSource: publicServices.length > 0 ? 'api' : annuaireCatalog.publicServices.length > 0 ? 'annuaire' : 'empty',
-        annuaireSourceFormat: this.config.referenceAnnuaireJsonUrl.trim() ? 'json' : this.config.referenceAnnuaireXmlUrl.trim() ? 'xml' : undefined,
-        annuaireJsonUrl: this.config.referenceAnnuaireJsonUrl.trim() || undefined,
-        annuaireXmlUrl: this.config.referenceAnnuaireXmlUrl.trim() || undefined,
-        annuaireStructureCount: annuaireCatalog.structureCount,
-        annuaireServiceCount: annuaireCatalog.serviceCount,
-      },
-    };
+  getCachedCatalog(options: ReferenceCatalogLoadOptions = {}): ReferenceCatalog | null {
+    return referenceCatalogCache.get(this.buildCatalogCacheKey(options)) ?? null;
+  }
+
+  async fetchCatalog(options: ReferenceCatalogLoadOptions = {}): Promise<ReferenceCatalog> {
+    const cacheKey = this.buildCatalogCacheKey(options);
+    const cachedCatalog = referenceCatalogCache.get(cacheKey);
+    if (cachedCatalog) {
+      return cachedCatalog;
+    }
+
+    const pendingCatalog = referenceCatalogPromiseCache.get(cacheKey);
+    if (pendingCatalog) {
+      return pendingCatalog;
+    }
+
+    const includeSuppliers = options.includeSuppliers ?? true;
+    const includePublicCustomers = options.includePublicCustomers ?? true;
+    const includePublicServices = options.includePublicServices ?? true;
+    const includeAnnuaire = options.includeAnnuaire ?? true;
+
+    const nextPromise = (async () => {
+      const [suppliers, publicCustomers, publicServices, annuaireCatalog] = await Promise.all([
+        includeSuppliers
+          ? this.fetchCollection(this.config.referenceSuppliersPath, 'API fournisseurs', normalizeSupplier)
+          : Promise.resolve([]),
+        includePublicCustomers
+          ? this.fetchCollection(this.config.referencePublicCustomersPath, 'API clients publics', normalizePublicCustomer)
+          : Promise.resolve([]),
+        includePublicServices
+          ? this.fetchCollection(this.config.referencePublicServicesPath, 'API services publics', normalizePublicService)
+          : Promise.resolve([]),
+        includeAnnuaire
+          ? this.fetchAnnuaireCatalog()
+          : Promise.resolve({
+              publicCustomers: [],
+              publicServices: [],
+              structureCount: 0,
+              serviceCount: 0,
+            }),
+      ]);
+
+      const nextCatalog: ReferenceCatalog = {
+        suppliers,
+        publicCustomers: publicCustomers.length > 0 ? publicCustomers : annuaireCatalog.publicCustomers,
+        publicServices: publicServices.length > 0 ? publicServices : annuaireCatalog.publicServices,
+        metadata: {
+          suppliersSource: includeSuppliers && suppliers.length > 0 ? 'api' : 'empty',
+          publicCustomersSource: publicCustomers.length > 0 ? 'api' : annuaireCatalog.publicCustomers.length > 0 ? 'annuaire' : 'empty',
+          publicServicesSource: publicServices.length > 0 ? 'api' : annuaireCatalog.publicServices.length > 0 ? 'annuaire' : 'empty',
+          annuaireSourceFormat: this.config.referenceAnnuaireJsonUrl.trim() ? 'json' : this.config.referenceAnnuaireXmlUrl.trim() ? 'xml' : undefined,
+          annuaireJsonUrl: this.config.referenceAnnuaireJsonUrl.trim() || undefined,
+          annuaireXmlUrl: this.config.referenceAnnuaireXmlUrl.trim() || undefined,
+          annuaireStructureCount: annuaireCatalog.structureCount,
+          annuaireServiceCount: annuaireCatalog.serviceCount,
+        },
+      };
+
+      referenceCatalogCache.set(cacheKey, nextCatalog);
+      referenceCatalogPromiseCache.delete(cacheKey);
+      return nextCatalog;
+    })().catch((error) => {
+      referenceCatalogPromiseCache.delete(cacheKey);
+      throw error;
+    });
+
+    referenceCatalogPromiseCache.set(cacheKey, nextPromise);
+    return nextPromise;
   }
 }

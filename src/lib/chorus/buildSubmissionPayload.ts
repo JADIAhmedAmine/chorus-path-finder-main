@@ -3,7 +3,6 @@ import {
   computeSubmissionTotals,
   inferChorusVatType,
   normalizeFrenchDateToIsoDate,
-  normalizeSiret,
   normalizeSubmissionLineItems,
   normalizeSubmissionVatLines,
 } from '@/lib/chorus/normalizeSubmissionData';
@@ -37,6 +36,8 @@ function inferMainAttachmentDesignation(mainFileName: string | undefined): strin
   return sanitizeText(mainFileName) || 'Facture principale';
 }
 
+const DEFAULT_CHORUS_SUPPLIER_ID = 26359578;
+
 export function buildChorusSubmissionPayload(
   normalized: NormalizedInvoiceDraftData,
   context: ChorusPayloadBuildContext = {},
@@ -69,15 +70,13 @@ export function buildChorusSubmissionPayload(
     commentaire: sanitizeText(chorusContext.commentaire),
     dateFacture: normalizeFrenchDateToIsoDate(normalized.invoiceDate),
     destinataire: {
-      codeDestinataire: sanitizeText(normalized.publicCustomerCode) ?? normalizeSiret(normalized.publicCustomerSiret),
+      codeDestinataire: sanitizeText(normalized.publicCustomerCode),
       codeServiceExecutant: sanitizeText(normalized.publicServiceCode),
     },
     fournisseur: {
       codeCoordonneesBancairesFournisseur: asInteger(chorusContext.codeCoordonneesBancairesFournisseur),
-      idFournisseur: asInteger(chorusContext.idFournisseur),
-      idServiceFournisseur: asInteger(chorusContext.idServiceFournisseur),
+      idFournisseur: asInteger(chorusContext.idFournisseur) ?? DEFAULT_CHORUS_SUPPLIER_ID,
     },
-    idUtilisateurCourant: asInteger(chorusContext.idUtilisateurCourant),
     lignePoste,
     ligneTva,
     modeDepot,
@@ -94,11 +93,7 @@ export function buildChorusSubmissionPayload(
     pieceJointePrincipale,
     references: {
       deviseFacture: sanitizeText(normalized.currencyCode) || 'EUR',
-      modePaiement: chorusContext.modePaiement ?? 'CHEQUE',
-      motifExonerationTva: sanitizeText(chorusContext.motifExonerationTva),
-      numeroBonCommande: sanitizeText(normalized.purchaseOrderNumber) || sanitizeText(normalized.engagementNumber),
-      numeroFactureOrigine: sanitizeText(chorusContext.numeroFactureOrigine),
-      numeroMarche: sanitizeText(normalized.marketNumber),
+      modePaiement: chorusContext.modePaiement ?? 'VIREMENT',
       typeFacture: chorusContext.typeFacture ?? 'FACTURE',
       typeTva,
     },
@@ -113,11 +108,12 @@ export function buildChorusSubmissionPayloadFromDraft(
   return buildChorusSubmissionPayload(normalized, context);
 }
 
-export function finalizeChorusSubmissionPayloadForPdfDeposit(
+export function attachMainFileToChorusSubmissionPayload(
   payload: ChorusSubmissionPayload,
   input: {
     mainFileId?: number | string;
     mainFileName?: string;
+    modeDepot?: ChorusSubmissionPayload['modeDepot'];
   },
 ): ChorusSubmissionPayload {
   const pieceJointePrincipaleId = asInteger(input.mainFileId);
@@ -128,10 +124,23 @@ export function finalizeChorusSubmissionPayloadForPdfDeposit(
 
   return {
     ...payload,
-    modeDepot: payload.modeDepot === 'DEPOT_PDF_SIGNE_API' ? payload.modeDepot : 'DEPOT_PDF_API',
+    modeDepot: input.modeDepot ?? payload.modeDepot,
     pieceJointePrincipale: [{
       pieceJointePrincipaleDesignation: sanitizeText(nextMainAttachment.pieceJointePrincipaleDesignation) || fallbackDesignation,
       pieceJointePrincipaleId,
     }],
   };
+}
+
+export function finalizeChorusSubmissionPayloadForPdfDeposit(
+  payload: ChorusSubmissionPayload,
+  input: {
+    mainFileId?: number | string;
+    mainFileName?: string;
+  },
+): ChorusSubmissionPayload {
+  return attachMainFileToChorusSubmissionPayload(payload, {
+    ...input,
+    modeDepot: payload.modeDepot === 'DEPOT_PDF_SIGNE_API' ? payload.modeDepot : 'DEPOT_PDF_API',
+  });
 }

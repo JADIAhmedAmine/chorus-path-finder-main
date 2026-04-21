@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { loadChorusConfig } from '@/lib/chorus/storage';
-import { ReferenceCatalogClient, type ReferenceCatalog } from '@/lib/references/client';
+import { ReferenceCatalogClient, type ReferenceCatalog, type ReferenceCatalogLoadOptions } from '@/lib/references/client';
 import type { ChorusConfig } from '@/types/chorus';
 
 const EMPTY_REFERENCE_CATALOG: ReferenceCatalog = {
@@ -16,20 +16,32 @@ const EMPTY_REFERENCE_CATALOG: ReferenceCatalog = {
   },
 };
 
-export function useReferenceCatalog(configOverride?: ChorusConfig) {
-  const [catalog, setCatalog] = useState<ReferenceCatalog>(EMPTY_REFERENCE_CATALOG);
+export function useReferenceCatalog(
+  configOverride?: ChorusConfig,
+  options: ReferenceCatalogLoadOptions = {},
+) {
+  const [catalog, setCatalog] = useState<ReferenceCatalog>(() => {
+    const config = configOverride ?? loadChorusConfig();
+    const client = new ReferenceCatalogClient(config);
+    return client.getCachedCatalog(options) ?? EMPTY_REFERENCE_CATALOG;
+  });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const config = configOverride ?? loadChorusConfig();
 
+    const includeSuppliers = options.includeSuppliers ?? true;
+    const includePublicCustomers = options.includePublicCustomers ?? true;
+    const includePublicServices = options.includePublicServices ?? true;
+    const includeAnnuaire = options.includeAnnuaire ?? true;
+
     const hasReferenceApiSource = !!config.referenceApiBaseUrl && (
-      !!config.referenceSuppliersPath
-      || !!config.referencePublicCustomersPath
-      || !!config.referencePublicServicesPath
+      (includeSuppliers && !!config.referenceSuppliersPath)
+      || (includePublicCustomers && !!config.referencePublicCustomersPath)
+      || (includePublicServices && !!config.referencePublicServicesPath)
     );
-    const hasAnnuaireSource = !!config.referenceAnnuaireXmlUrl;
+    const hasAnnuaireSource = includeAnnuaire && (!!config.referenceAnnuaireJsonUrl || !!config.referenceAnnuaireXmlUrl);
 
     if (!hasReferenceApiSource && !hasAnnuaireSource) {
       setCatalog(EMPTY_REFERENCE_CATALOG);
@@ -39,14 +51,19 @@ export function useReferenceCatalog(configOverride?: ChorusConfig) {
     }
 
     const client = new ReferenceCatalogClient(config);
+    const cachedCatalog = client.getCachedCatalog(options);
     let cancelled = false;
 
     async function loadCatalog() {
-      setLoading(true);
+      if (cachedCatalog) {
+        setCatalog(cachedCatalog);
+      }
+
+      setLoading(!cachedCatalog);
       setError(null);
 
       try {
-        const nextCatalog = await client.fetchCatalog();
+        const nextCatalog = await client.fetchCatalog(options);
         if (!cancelled) {
           setCatalog(nextCatalog);
         }
@@ -67,7 +84,7 @@ export function useReferenceCatalog(configOverride?: ChorusConfig) {
     return () => {
       cancelled = true;
     };
-  }, [configOverride]);
+  }, [configOverride, options.includeSuppliers, options.includePublicCustomers, options.includePublicServices, options.includeAnnuaire]);
 
   return {
     ...catalog,

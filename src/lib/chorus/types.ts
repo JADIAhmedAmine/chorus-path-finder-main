@@ -10,9 +10,12 @@ export interface InvoiceExtractionReferences {
 
 export interface InvoiceDraftFormData {
   supplierOrganizationId: string;
+  supplierSiret?: string;
   supplierInvoiceNumber: string;
   publicCustomerId: string;
+  publicCustomerCode?: string;
   publicServiceId: string;
+  publicServiceCode?: string;
   engagementNumber: string;
   marketNumber: string;
   purchaseOrderNumber: string;

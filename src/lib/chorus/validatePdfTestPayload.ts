@@ -20,52 +20,53 @@ export interface ValidationResult {
 }
 
 /**
- * Validates a PDF upload payload for test readiness
- * Checks that required fields are present and properly formatted
+ * Validates the main attachment upload payload for test readiness.
  */
 export function validateTestUploadPdfPayload(payload: UploadPdfPayload): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
 
   // Required field checks
-  if (!payload.fichierFacture) {
+  if (!payload.pieceJointeFichier) {
     errors.push({
-      field: 'fichierFacture',
+      field: 'pieceJointeFichier',
       message: 'PDF content is required',
       severity: 'error',
     });
-  } else if (payload.fichierFacture.length < 200) {
+  } else if (payload.pieceJointeFichier.length < 200) {
     warnings.push({
-      field: 'fichierFacture',
+      field: 'pieceJointeFichier',
       message: 'PDF content appears unusually short - may be a test/mock PDF',
       severity: 'warning',
     });
   }
 
-  if (!payload.nomFichier) {
+  if (!payload.pieceJointeNom) {
     errors.push({
-      field: 'nomFichier',
+      field: 'pieceJointeNom',
       message: 'Filename is required',
       severity: 'error',
     });
-  } else if (!payload.nomFichier.toLowerCase().endsWith('.pdf')) {
+  } else if (!payload.pieceJointeNom.toLowerCase().endsWith('.pdf')) {
     errors.push({
-      field: 'nomFichier',
+      field: 'pieceJointeNom',
       message: 'Filename must end with .pdf extension',
       severity: 'error',
     });
   }
 
-  if (!payload.formatDepot) {
+  if (!payload.pieceJointeExtension) {
     errors.push({
-      field: 'formatDepot',
-      message: 'Format depot is required',
+      field: 'pieceJointeExtension',
+      message: 'File extension is required',
       severity: 'error',
     });
-  } else if (!['PDF_NON_SIGNE', 'PDF_SIGNE'].includes(payload.formatDepot)) {
+  }
+
+  if (!payload.pieceJointeTypeMime) {
     errors.push({
-      field: 'formatDepot',
-      message: `Invalid format: "${payload.formatDepot}". Must be PDF_NON_SIGNE or PDF_SIGNE`,
+      field: 'pieceJointeTypeMime',
+      message: 'MIME type is required',
       severity: 'error',
     });
   }
@@ -218,14 +219,6 @@ export function validateTestSaisieApiPayload(payload: ChorusSubmissionPayload): 
     errors.push({
       field: 'fournisseur.idFournisseur',
       message: 'Supplier ID is required (must come from Chorus context)',
-      severity: 'error',
-    });
-  }
-
-  if (payload.idUtilisateurCourant === undefined) {
-    errors.push({
-      field: 'idUtilisateurCourant',
-      message: 'Current user ID is required (from Chorus context)',
       severity: 'error',
     });
   }

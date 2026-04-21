@@ -109,6 +109,10 @@ export class PisteChorusRoutes {
     return PisteChorusRoutes.joinUrl(this.transversesBaseUrl(), '/v1/rechercher/serviceexecutant');
   }
 
+  isAttachmentUpload(): boolean {
+    return PisteChorusRoutes.isAttachmentUploadPath(this.uploadFilePath);
+  }
+
   isPdfDepositUpload(): boolean {
     return PisteChorusRoutes.isPdfDepositPath(this.uploadFilePath);
   }
@@ -164,6 +168,10 @@ export class PisteChorusRoutes {
 
   static isPdfDepositPath(path: string): boolean {
     return /\/v1\/deposer\/pdf$/i.test(path) || /\/deposer\/pdf$/i.test(path);
+  }
+
+  static isAttachmentUploadPath(path: string): boolean {
+    return /\/v1\/ajouter\/fichier$/i.test(path) || /\/ajouter\/fichier$/i.test(path);
   }
 
   static isQualificationUserApiUrl(url: string): boolean {

@@ -35,9 +35,7 @@ function createValidPayload(): ChorusSubmissionPayload {
     fournisseur: {
       codeCoordonneesBancairesFournisseur: 132,
       idFournisseur: 160,
-      idServiceFournisseur: 436,
     },
-    idUtilisateurCourant: 331,
     lignePoste: [{
       lignePosteDenomination: 'Ligne globale facture',
       lignePosteMontantRemiseHT: 0,
@@ -45,13 +43,13 @@ function createValidPayload(): ChorusSubmissionPayload {
       lignePosteNumero: 1,
       lignePosteQuantite: 1,
       lignePosteReference: 'FAC-2026-001',
-      lignePosteTauxTva: '0.2',
+      lignePosteTauxTva: 'TV12',
       lignePosteUnite: 'UNITE',
     }],
     ligneTva: [{
       ligneTvaMontantBaseHtParTaux: 1200,
       ligneTvaMontantTvaParTaux: 240,
-      ligneTvaTaux: '0.2',
+      ligneTvaTaux: 'TV12',
     }],
     modeDepot: 'SAISIE_API',
     montantTotal: {
@@ -298,6 +296,17 @@ describe('chorus connector', () => {
 
     expect(result.ok).toBe(true);
     expect(result.externalId).toBe('CHORUS-INV-001');
+    expect(result.apiCalls).toHaveLength(3);
+    expect(result.apiCalls[0]).toMatchObject({
+      label: 'Upload fichier Chorus: invoice.pdf',
+      method: 'POST',
+      url: 'https://api.example.test/files/upload',
+    });
+    expect(result.apiCalls[2]).toMatchObject({
+      label: 'Soumission facture Chorus',
+      method: 'POST',
+      url: 'https://api.example.test/factures/soumettre',
+    });
     expect(fetchMock).toHaveBeenCalledTimes(6);
 
     const uploadCall = fetchMock.mock.calls[1];
@@ -338,6 +347,18 @@ describe('chorus connector', () => {
     })).resolves.toMatchObject({
       ok: true,
       externalId: 'CHORUS-PDF-001',
+      apiCalls: [
+        {
+          label: 'Upload fichier Chorus: invoice.pdf',
+          method: 'POST',
+          url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/deposer/pdf',
+        },
+        {
+          label: 'Soumission facture Chorus',
+          method: 'POST',
+          url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/soumettre',
+        },
+      ],
     });
 
     const uploadCall = fetchMock.mock.calls[1];
@@ -346,11 +367,11 @@ describe('chorus connector', () => {
     expect(uploadHeaders['content-type']).toContain('application/json');
 
     const uploadBody = JSON.parse(String((uploadCall?.[1] as RequestInit).body));
-    expect(uploadBody.idUtilisateurCourant).toBe(331);
-    expect(uploadBody.nomFichier).toBe('invoice.pdf');
-    expect(uploadBody.formatDepot).toBe('PDF_NON_SIGNE');
-    expect(typeof uploadBody.fichierFacture).toBe('string');
-    expect(uploadBody.fichierFacture.length).toBeGreaterThan(0);
+    expect(uploadBody.pieceJointeNom).toBe('invoice.pdf');
+    expect(uploadBody.pieceJointeExtension).toBe('pdf');
+    expect(uploadBody.pieceJointeTypeMime).toBe('application/pdf');
+    expect(typeof uploadBody.pieceJointeFichier).toBe('string');
+    expect(uploadBody.pieceJointeFichier.length).toBeGreaterThan(0);
 
     const submitCall = fetchMock.mock.calls[3];
     const submitBody = JSON.parse(String((submitCall?.[1] as RequestInit).body));
@@ -408,7 +429,7 @@ describe('chorus connector', () => {
 
     const invalidPayload = {
       ...createValidPayload(),
-      idUtilisateurCourant: undefined,
+      dateFacture: undefined,
     };
 
     await expect(connector.submitInvoice({
@@ -417,7 +438,7 @@ describe('chorus connector', () => {
       attachments: [],
     })).rejects.toThrow(/Payload Chorus invalide/i);
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(0);
   });
 
   it('uses mock mode when direct mode is not requested', async () => {

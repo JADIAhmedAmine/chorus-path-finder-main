@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
@@ -5,6 +6,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { loadAuthSession } from "@/lib/auth/session";
+import { loadChorusConfig } from "@/lib/chorus/storage";
+import { ReferenceCatalogClient } from "@/lib/references/client";
 import Dashboard from "./pages/Dashboard";
 import InvoiceList from "./pages/InvoiceList";
 import InvoiceDetail from "./pages/InvoiceDetail";
@@ -19,6 +22,27 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+function ReferenceCatalogWarmup() {
+  const isAuthenticated = !!loadAuthSession();
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    const config = loadChorusConfig();
+    const client = new ReferenceCatalogClient(config);
+
+    void client.fetchCatalog({
+      includeAnnuaire: false,
+    }).catch(() => {
+      // Silent warmup: the dedicated screens already handle and display errors.
+    });
+  }, [isAuthenticated]);
+
+  return null;
+}
+
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return loadAuthSession() ? <>{children}</> : <Navigate to="/login" replace />;
 }
@@ -29,6 +53,7 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
+        <ReferenceCatalogWarmup />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />

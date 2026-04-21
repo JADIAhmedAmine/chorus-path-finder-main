@@ -98,6 +98,15 @@ export interface ChorusUploadedFile {
   response?: unknown;
 }
 
+export interface ChorusApiDebugEntry {
+  label: string;
+  method: 'POST' | 'GET';
+  url: string;
+  requestBody?: unknown;
+  responseStatus?: number;
+  responseBody?: unknown;
+}
+
 export interface ChorusSubmitInvoiceInput {
   invoiceData: ChorusSubmissionPayload;
   mainFile: File;
@@ -110,6 +119,7 @@ export interface ChorusSubmitInvoiceResult {
   externalId?: string;
   uploadedFiles: ChorusUploadedFile[];
   response?: unknown;
+  apiCalls: ChorusApiDebugEntry[];
 }
 
 export interface ChorusTransverseCodeListItem {
@@ -137,6 +147,7 @@ export interface ChorusTransverseBankAccount {
 export interface ChorusTransverseRecipient {
   adresseCodePostal?: string;
   adresseVille?: string;
+  codeDestinataire?: string;
   idStructureCPP?: number;
   nomDestinataire?: string;
   siret?: string;
@@ -151,6 +162,9 @@ export interface ChorusTransverseOperatingService {
 export interface ChorusSubmissionReferenceResolutionInput {
   payload: ChorusSubmissionPayload;
   codeLangue?: 'FR' | 'EN';
+  supplierSiret?: string;
+  recipientCode?: string;
+  recipientSiret?: string;
 }
 
 export interface ChorusSubmissionReferenceChecks {

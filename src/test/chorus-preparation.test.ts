@@ -110,4 +110,34 @@ describe('chorus preparation', () => {
     expect(result.validation.errors).toHaveLength(0);
     expect(result.validation.warnings.some((warning) => warning.code === 'EXTRACTION_REVIEW_REQUIRED')).toBe(true);
   });
+
+  it('accepts manual Chorus destination codes when the right references are not selectable locally', () => {
+    const result = prepareInvoiceSubmission({
+      formData: {
+        supplierOrganizationId: '',
+        supplierSiret: '25440253000011',
+        supplierInvoiceNumber: 'FAC-2026-004',
+        publicCustomerId: '',
+        publicCustomerCode: '23440003400026',
+        publicServiceId: '',
+        publicServiceCode: 'SE-COMPTA',
+        engagementNumber: '',
+        marketNumber: '',
+        purchaseOrderNumber: '',
+        invoiceDate: '2026-04-16',
+        currencyCode: 'EUR',
+        totalAmountHt: '1000,00',
+        totalAmountTtc: '1200,00',
+      },
+      supplier: undefined,
+      publicCustomer: undefined,
+      publicService: undefined,
+      availableServices: [],
+      extraction: null,
+    });
+
+    expect(result.validation.errors.some((error) => error.code === 'SUPPLIER_REQUIRED')).toBe(false);
+    expect(result.validation.errors.some((error) => error.code === 'PUBLIC_CUSTOMER_REQUIRED')).toBe(false);
+    expect(result.validation.errors.some((error) => error.code === 'PUBLIC_SERVICE_REQUIRED')).toBe(false);
+  });
 });
