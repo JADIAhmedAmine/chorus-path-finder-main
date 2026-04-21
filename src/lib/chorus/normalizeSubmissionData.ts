@@ -8,6 +8,20 @@ import type {
 
 const DEFAULT_LINE_UNIT = 'UNITE';
 const AMOUNT_EPSILON = 0.01;
+const CHORUS_VAT_CODE_BY_RATE: Array<[number, string]> = [
+  [0.0105, 'TVA20'],
+  [0.021, 'TV7'],
+  [0.05, 'TV20'],
+  [0.055, 'TV8'],
+  [0.07, 'TV9'],
+  [0.085, 'TVA4'],
+  [0.1, 'TV10'],
+  [0.13, 'TV11'],
+  [0.16, 'TV21'],
+  [0.196, 'TVA5'],
+  [0.2, 'TV12'],
+  [0.206, 'TV13'],
+];
 
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
@@ -98,6 +112,11 @@ export function normalizeVatRate(value: string | number | undefined | null): num
 export function formatVatRateForPayload(rate: number | undefined): string | undefined {
   if (rate === undefined) {
     return undefined;
+  }
+
+  const matchedVatCode = CHORUS_VAT_CODE_BY_RATE.find(([candidateRate]) => Math.abs(candidateRate - rate) <= 0.0001);
+  if (matchedVatCode) {
+    return matchedVatCode[1];
   }
 
   return rate.toString();
@@ -226,10 +245,10 @@ export function computeSubmissionTotals(
   };
 }
 
-export function inferChorusVatType(totalVat: number, motifExonerationTva?: string): 'TVA_SUR_DEBIT' | 'EXONERATION' | 'SANS_TVA' {
+export function inferChorusVatType(totalVat: number, motifExonerationTva?: string): 'TVA_SUR_ENCAISSEMENT' | 'EXONERATION' | 'SANS_TVA' {
   if (totalVat <= 0) {
     return motifExonerationTva ? 'EXONERATION' : 'SANS_TVA';
   }
 
-  return 'TVA_SUR_DEBIT';
+  return 'TVA_SUR_ENCAISSEMENT';
 }

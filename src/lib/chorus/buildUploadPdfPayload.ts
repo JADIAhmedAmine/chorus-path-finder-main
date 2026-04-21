@@ -1,30 +1,28 @@
 /**
- * PDF Upload Payload Builder for Chorus Pro API
- * 
- * Handles construction of upload payloads for the /deposer/pdf endpoint
- * which expects: fichierFacture (base64), formatDepot, nomFichier
+ * Main attachment upload payload builder for Chorus Pro API.
+ *
+ * Minimal working flow:
+ * - POST /cpro/transverses/v1/ajouter/fichier
+ * - then inject returned pieceJointeId into pieceJointePrincipale
+ * - keep modeDepot = SAISIE_API for the final /factures/v1/soumettre payload
  */
 
 export interface UploadPdfPayload {
-  idUtilisateurCourant?: number;
-  fichierFacture: string;
-  formatDepot: 'PDF_NON_SIGNE' | 'PDF_SIGNE';
-  nomFichier: string;
+  pieceJointeExtension: string;
+  pieceJointeFichier: string;
+  pieceJointeNom: string;
+  pieceJointeTypeMime: string;
 }
 
-/**
- * Builds an upload PDF payload for Chorus /deposer/pdf endpoint
- * 
- * @param pdfBase64 - Base64-encoded PDF content
- * @param fileName - Original PDF filename (used for context only in most cases)
- * @param isSigned - Whether the PDF is digitally signed (defaults to false)
- * @returns UploadPdfPayload ready to send to Chorus API
- */
+function inferExtension(fileName: string): string {
+  const match = fileName.trim().match(/\.([^.]+)$/);
+  return match?.[1]?.toLowerCase() || 'pdf';
+}
+
 export function buildUploadPdfPayload(
   pdfBase64: string,
   fileName: string,
-  isSigned: boolean = false,
-  idUtilisateurCourant?: number,
+  mimeType: string = 'application/pdf',
 ): UploadPdfPayload {
   if (!pdfBase64 || !pdfBase64.trim()) {
     throw new Error('PDF base64 content cannot be empty');
@@ -34,16 +32,15 @@ export function buildUploadPdfPayload(
     throw new Error('File name cannot be empty');
   }
 
-  // Ensure filename ends with .pdf
   const normalizedFileName = fileName.toLowerCase().endsWith('.pdf')
     ? fileName
     : `${fileName}.pdf`;
 
   return {
-    idUtilisateurCourant,
-    fichierFacture: pdfBase64.trim(),
-    formatDepot: isSigned ? 'PDF_SIGNE' : 'PDF_NON_SIGNE',
-    nomFichier: normalizedFileName,
+    pieceJointeExtension: inferExtension(normalizedFileName),
+    pieceJointeFichier: pdfBase64.trim(),
+    pieceJointeNom: normalizedFileName,
+    pieceJointeTypeMime: mimeType || 'application/pdf',
   };
 }
 
@@ -58,24 +55,24 @@ export function validateUploadPdfPayload(
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
 
-  if (!payload.fichierFacture) {
-    errors.push('fichierFacture: base64 PDF content is required');
-  } else if (payload.fichierFacture.length < 100) {
-    errors.push('fichierFacture: appears too short to be valid base64 PDF content');
+  if (!payload.pieceJointeFichier) {
+    errors.push('pieceJointeFichier: base64 PDF content is required');
+  } else if (payload.pieceJointeFichier.length < 100) {
+    errors.push('pieceJointeFichier: appears too short to be valid base64 PDF content');
   }
 
-  if (payload.idUtilisateurCourant === undefined || !Number.isFinite(payload.idUtilisateurCourant)) {
-    errors.push('idUtilisateurCourant: Chorus current user id is required');
+  if (!payload.pieceJointeNom) {
+    errors.push('pieceJointeNom: file name is required');
+  } else if (!payload.pieceJointeNom.toLowerCase().endsWith('.pdf')) {
+    errors.push('pieceJointeNom: must end with .pdf extension');
   }
 
-  if (!payload.nomFichier) {
-    errors.push('nomFichier: file name is required');
-  } else if (!payload.nomFichier.toLowerCase().endsWith('.pdf')) {
-    errors.push('nomFichier: must end with .pdf extension');
+  if (!payload.pieceJointeExtension) {
+    errors.push('pieceJointeExtension: file extension is required');
   }
 
-  if (!payload.formatDepot || !['PDF_NON_SIGNE', 'PDF_SIGNE'].includes(payload.formatDepot)) {
-    errors.push('formatDepot: must be "PDF_NON_SIGNE" or "PDF_SIGNE"');
+  if (!payload.pieceJointeTypeMime) {
+    errors.push('pieceJointeTypeMime: mime type is required');
   }
 
   return {
@@ -95,5 +92,5 @@ export function createMockUploadPdfPayload(fileName: string = 'facture-test.pdf'
   // This is NOT a real PDF but a valid base64 string starting with PDF magic bytes
   const minimalPdfBase64 = 'JVBERi0xLjQKJeLjz9CNaIHDrVjoN2V2dChkYXRhKQoxIDAgb2JqCjw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+CmVuZG9iagoyIDAgb2JqCjw8L1R5cGUvUGFnZXMvS2lkc1szIDAgUl0vQ291bnQgMT4+CmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMiAwIFIvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDQgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUIC9GMSAxMiBUZiAxMDAgNzUwIFRkIChIZWxsbyB3b3JsZCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyMTcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDUvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgozMTAKJSVFT0Y=';
 
-  return buildUploadPdfPayload(minimalPdfBase64, fileName, false, 331);
+  return buildUploadPdfPayload(minimalPdfBase64, fileName, 'application/pdf');
 }

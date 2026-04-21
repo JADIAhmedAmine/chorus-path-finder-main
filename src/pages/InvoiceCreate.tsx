@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
-import { createChorusConnector } from '@/lib/chorus/client';
+import { ChorusSubmitApiError, createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { createEmptyInvoiceDraft, mergeExtractionIntoDraft } from '@/lib/chorus/normalization';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -23,8 +23,12 @@ import { buildChorusTechnicalContext } from '@/lib/chorus/technicalContext';
 import { ChorusTransversesClient } from '@/lib/chorus/transversesClient';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
 import { buildChorusDebugFile } from '@/lib/chorus/debug';
+import {
+  resolveAndHydrateChorusSubmissionPayload,
+  type ChorusPayloadHydrationResult,
+} from '@/lib/chorus/hydrateSubmissionPayload';
 import type { InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
-import type { ChorusSubmissionReferenceSnapshot } from '@/types/chorus';
+import type { ChorusApiDebugEntry, ChorusSubmissionReferenceSnapshot, ChorusSubmitInvoiceResult } from '@/types/chorus';
 
 function formatAmountForDisplay(value?: string): string {
   if (!value?.trim()) {
@@ -136,6 +140,12 @@ export default function InvoiceCreate() {
   const [loadingTransverses, setLoadingTransverses] = useState(false);
   const [transversesError, setTransversesError] = useState<string | null>(null);
   const [transversesSnapshot, setTransversesSnapshot] = useState<ChorusSubmissionReferenceSnapshot | null>(null);
+  const [resolvedSubmission, setResolvedSubmission] = useState<ChorusPayloadHydrationResult | null>(null);
+  const [lastSubmissionResult, setLastSubmissionResult] = useState<ChorusSubmitInvoiceResult | null>(null);
+  const [lastApiCalls, setLastApiCalls] = useState<ChorusApiDebugEntry[]>([]);
+  const [showOptionalMetadata, setShowOptionalMetadata] = useState(false);
+  const submissionErrorRef = useRef<HTMLDivElement | null>(null);
+  const submissionResultRef = useRef<HTMLDivElement | null>(null);
   const {
     suppliers,
     publicCustomers,
@@ -143,21 +153,26 @@ export default function InvoiceCreate() {
     metadata: referenceCatalogMetadata,
     loading: loadingReferences,
     error: referenceCatalogError,
-  } = useReferenceCatalog();
+  } = useReferenceCatalog(undefined, {
+    includeSuppliers: true,
+    includePublicCustomers: true,
+    includePublicServices: true,
+    includeAnnuaire: false,
+  });
 
   const rawChorusConfig = loadChorusConfig();
   const chorusConfig = resolveChorusRuntimeConfig(rawChorusConfig);
-  const services = formData.publicCustomerId ? publicServices.filter(s => s.publicCustomerId === formData.publicCustomerId && s.active) : [];
+  const services = formData.publicCustomerId ? publicServices.filter((service) => service.publicCustomerId === formData.publicCustomerId && service.active) : [];
   const selectedSupplier = suppliers.find((supplier) => supplier.id === formData.supplierOrganizationId);
   const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === formData.publicCustomerId);
   const selectedPublicService = publicServices.find((service) => service.id === formData.publicServiceId);
   const detectedSupplierName = selectedSupplier?.legalName || extractionResult?.fields.supplierName;
   const detectedPublicCustomerName = selectedPublicCustomer?.legalName || extractionResult?.fields.publicCustomerName;
-  const detectedSupplierSiret = selectedSupplier?.siret || extractionResult?.fields.supplierSiret;
-  const detectedCustomerSiret = selectedPublicCustomer?.siret || extractionResult?.fields.publicCustomerSiret;
+  const detectedSupplierSiret = formData.supplierSiret || selectedSupplier?.siret || extractionResult?.fields.supplierSiret;
+  const detectedCustomerSiret = formData.publicCustomerCode || selectedPublicCustomer?.siret || extractionResult?.fields.publicCustomerSiret;
   const detectedService = selectedPublicService?.codeServiceExecutant
     ? `${selectedPublicService.codeServiceExecutant} — ${selectedPublicService.label}`
-    : extractionResult?.fields.publicServiceCode || extractionResult?.fields.publicServiceLabel;
+    : formData.publicServiceCode || extractionResult?.fields.publicServiceCode || extractionResult?.fields.publicServiceLabel;
   const submissionPreparation = prepareInvoiceSubmission({
     formData,
     supplier: selectedSupplier,
@@ -184,6 +199,9 @@ export default function InvoiceCreate() {
     mainFile,
   ]);
   const payloadValidation = useMemo(() => validateChorusSubmissionPayload(submissionPayload), [submissionPayload]);
+  const effectivePayloadValidation = resolvedSubmission?.validation ?? payloadValidation;
+  const effectiveSubmissionPayload = resolvedSubmission?.payload ?? submissionPayload;
+  const hasTreatmentDetails = Boolean(lastSubmissionResult || lastSubmissionError);
   const debugSnapshot = useMemo(() => JSON.stringify({
     chorusConfig: {
       mode: chorusConfig.mode,
@@ -203,16 +221,35 @@ export default function InvoiceCreate() {
       warnings: submissionPreparation.validation.warnings,
     },
     payloadValidation,
+    resolvedPayloadValidation: resolvedSubmission?.validation,
+    hydrationChanges: resolvedSubmission?.changes,
+    hydrationUnresolved: resolvedSubmission?.unresolved,
     payloadPreview: submissionPayload,
+    effectivePayloadPreview: effectiveSubmissionPayload,
   }, null, 2), [
     chorusConfig,
     chorusTechnicalContext,
     submissionPreparation,
     payloadValidation,
     submissionPayload,
+    resolvedSubmission,
+    effectiveSubmissionPayload,
   ]);
   const isDirectMode = chorusConfig.mode === 'direct' && chorusConfig.enabled;
-  const isSubmissionBlocked = extracting || submitting || (isDirectMode && (!submissionPreparation.validation.valid || !payloadValidation.valid));
+  const isSubmissionBlocked = extracting || submitting || (isDirectMode && !submissionPreparation.validation.valid);
+
+  const handleViewTreatmentDetails = useCallback(() => {
+    const target = lastSubmissionResult
+      ? submissionResultRef.current
+      : lastSubmissionError
+        ? submissionErrorRef.current
+        : null;
+
+    target?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }, [lastSubmissionError, lastSubmissionResult]);
 
   useEffect(() => {
     if (!mainFile) {
@@ -280,6 +317,14 @@ export default function InvoiceCreate() {
     };
   }, [mainFile]);
 
+  useEffect(() => {
+    setResolvedSubmission(null);
+    setTransversesSnapshot(null);
+    setTransversesError(null);
+    setLastSubmissionResult(null);
+    setLastApiCalls([]);
+  }, [submissionPayload]);
+
   const handleMainDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
@@ -304,47 +349,79 @@ export default function InvoiceCreate() {
       return;
     }
 
-    if (isDirectMode && !payloadValidation.valid && !forceDebug) {
-      toast({
-        title: 'Contexte Chorus incomplet',
-        description: payloadValidation.errors[0]?.message || 'Complétez le contexte technique Chorus dans les paramètres avant l’envoi.',
-        variant: 'destructive',
-      });
-      return;
-    }
+    let payloadForSubmission = submissionPayload;
+    let validationForSubmission = payloadValidation;
 
     if (forceDebug) {
       console.groupCollapsed('[Chorus debug] Force submit from UI');
       console.log({
         chorusTechnicalContext,
         submissionPreparation,
-        payloadValidation,
-        submissionPayload,
+        payloadValidation: validationForSubmission,
+        submissionPayload: payloadForSubmission,
       });
       console.groupEnd();
     }
 
     setLastSubmissionError(null);
+    setLastSubmissionResult(null);
+    setLastApiCalls([]);
     setSubmitting(true);
     try {
+      if (isDirectMode) {
+        try {
+          const transverseClient = new ChorusTransversesClient(chorusConfig);
+          const hydrationResult = await resolveAndHydrateChorusSubmissionPayload(
+            transverseClient,
+            submissionPayload,
+            submissionPreparation.normalized,
+          );
+
+          setResolvedSubmission(hydrationResult);
+          setTransversesSnapshot(hydrationResult.snapshot);
+          setTransversesError(null);
+          payloadForSubmission = hydrationResult.payload;
+          validationForSubmission = hydrationResult.validation;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Erreur inconnue lors de l’enrichissement Transverses.';
+          setTransversesError(message);
+          if (forceDebug) {
+            console.warn('[Chorus debug] Hydratation Transverses échouée, fallback sur le payload brut.', message);
+          }
+        }
+      }
+
+      if (isDirectMode && !validationForSubmission.valid && !forceDebug) {
+        toast({
+          title: 'Contexte Chorus incomplet',
+          description: validationForSubmission.errors[0]?.message || 'Complétez le contexte technique Chorus dans les paramètres avant l’envoi.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
       const connector = createChorusConnector(chorusConfig);
 
       const result = await connector.submitInvoice({
-        invoiceData: submissionPayload,
+        invoiceData: payloadForSubmission,
         mainFile,
         attachments,
         debugBypassValidation: forceDebug,
       });
+      setLastSubmissionResult(result);
+      setLastApiCalls(result.apiCalls);
 
       toast({
         title: chorusConfig.mode === 'mock' ? 'Facture mockée' : 'Facture envoyée à Chorus',
         description: result.externalId
-          ? `Référence retournée: ${result.externalId}`
-          : 'La facture a été transmise.',
+          ? `Référence retournée: ${result.externalId}. Les détails de traitement sont affichés ci-dessous.`
+          : 'La facture a été transmise. Les détails de traitement sont affichés ci-dessous.',
       });
-      navigate('/invoices');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      if (error instanceof ChorusSubmitApiError) {
+        setLastApiCalls(error.apiCalls);
+      }
       setLastSubmissionError(message);
       toast({
         title: 'Échec de soumission',
@@ -362,8 +439,8 @@ export default function InvoiceCreate() {
     try {
       const debugFile = await buildChorusDebugFile({
         config: rawChorusConfig,
-        payload: submissionPayload,
-        validation: payloadValidation,
+        payload: effectiveSubmissionPayload,
+        validation: effectivePayloadValidation,
         mainFile,
         connectionTestMethod: rawChorusConfig.connectionTestMethod,
       });
@@ -397,19 +474,25 @@ export default function InvoiceCreate() {
 
     try {
       const client = new ChorusTransversesClient(chorusConfig);
-      const snapshot = await client.resolveSubmissionReferences({
-        payload: submissionPayload,
-      });
+      const hydrationResult = await resolveAndHydrateChorusSubmissionPayload(
+        client,
+        submissionPayload,
+        submissionPreparation.normalized,
+      );
 
-      setTransversesSnapshot(snapshot);
+      setResolvedSubmission(hydrationResult);
+      setTransversesSnapshot(hydrationResult.snapshot);
       toast({
         title: 'Référentiels Chorus récupérés',
-        description: 'Les valeurs Transverses ont été contrôlées pour cette soumission.',
+        description: hydrationResult.changes.length > 0
+          ? `${hydrationResult.changes.length} champ(s) du payload ont été enrichis automatiquement.`
+          : 'Les valeurs Transverses ont été contrôlées pour cette soumission.',
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inconnue';
       setTransversesError(message);
       setTransversesSnapshot(null);
+      setResolvedSubmission(null);
       toast({
         title: 'Échec vérification Transverses',
         description: message,
@@ -574,7 +657,13 @@ export default function InvoiceCreate() {
           <div className="space-y-4">
             {loadingReferences && (
               <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
-                Chargement des référentiels fournisseur / client public / service depuis les APIs configurées…
+                Chargement des référentiels fournisseur et des éventuelles listes API configurées…
+              </div>
+            )}
+
+            {!loadingReferences && !referenceCatalogError && (rawChorusConfig.referenceAnnuaireJsonUrl || rawChorusConfig.referenceAnnuaireXmlUrl) && referenceCatalogMetadata.publicCustomersSource === 'empty' && referenceCatalogMetadata.publicServicesSource === 'empty' && (
+              <div className="rounded-lg border bg-warning/5 p-3 text-sm text-muted-foreground">
+                L&apos;annuaire Chorus massif n&apos;est pas chargé automatiquement sur cet écran pour éviter les plantages pendant l&apos;upload. Il reste consultable dans `Référentiels`.
               </div>
             )}
 
@@ -608,6 +697,14 @@ export default function InvoiceCreate() {
               </Alert>
             )}
 
+          <div className="rounded-lg border bg-muted/10 p-3 text-sm">
+            <p className="font-medium">Champs nécessaires pour un envoi minimal</p>
+            <p className="mt-1 text-muted-foreground">
+              Fournisseur, numéro de facture, destinataire, service, date de facture et montant TTC.
+              Les autres informations restent optionnelles et peuvent être ajoutées seulement si le dossier l’exige.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label>Fournisseur</Label>
@@ -617,6 +714,11 @@ export default function InvoiceCreate() {
                   {suppliers.filter(s => s.active).map(s => <SelectItem key={s.id} value={s.id}>{s.legalName} ({s.siret})</SelectItem>)}
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Ou saisir le SIRET fournisseur"
+                value={formData.supplierSiret ?? ''}
+                onChange={e => setFormData(p => ({ ...p, supplierSiret: e.target.value.replace(/\D/g, '') }))}
+              />
               {detectedSupplierSiret && <p className="text-xs text-muted-foreground">SIRET détecté: {detectedSupplierSiret}</p>}
             </div>
             <div className="space-y-2">
@@ -627,7 +729,7 @@ export default function InvoiceCreate() {
               <Label>Client public</Label>
               <Select
                 value={formData.publicCustomerId}
-                onValueChange={value => setFormData((current) => ({
+                onValueChange={(value) => setFormData((current) => ({
                   ...current,
                   publicCustomerId: value,
                   publicServiceId: '',
@@ -635,57 +737,40 @@ export default function InvoiceCreate() {
               >
                 <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
                 <SelectContent>
-                  {publicCustomers.filter(c => c.active).map(c => <SelectItem key={c.id} value={c.id}>{c.legalName} ({c.codeDestinataire})</SelectItem>)}
+                  {publicCustomers.filter((customer) => customer.active).map((customer) => (
+                    <SelectItem key={customer.id} value={customer.id}>
+                      {customer.legalName} ({customer.codeDestinataire})
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Ou saisir le code destinataire / SIRET"
+                value={formData.publicCustomerCode ?? ''}
+                onChange={e => setFormData(p => ({ ...p, publicCustomerCode: e.target.value.trim() }))}
+              />
               {detectedCustomerSiret && <p className="text-xs text-muted-foreground">SIRET destinataire: {detectedCustomerSiret}</p>}
             </div>
             <div className="space-y-2">
               <Label>Service destinataire</Label>
-              <Select value={formData.publicServiceId} onValueChange={v => setFormData(p => ({ ...p, publicServiceId: v }))} disabled={!formData.publicCustomerId}>
-                <SelectTrigger><SelectValue placeholder={formData.publicCustomerId ? 'Sélectionner...' : 'Choisir un client d\'abord'} /></SelectTrigger>
+              <Select value={formData.publicServiceId} onValueChange={(value) => setFormData((current) => ({ ...current, publicServiceId: value }))} disabled={!formData.publicCustomerId}>
+                <SelectTrigger>
+                  <SelectValue placeholder={formData.publicCustomerId ? 'Sélectionner...' : 'Choisir un client d\'abord'} />
+                </SelectTrigger>
                 <SelectContent>
                   {services.map(s => <SelectItem key={s.id} value={s.id}>{s.codeServiceExecutant} — {s.label}</SelectItem>)}
                 </SelectContent>
               </Select>
+              <Input
+                placeholder="Ou saisir le code service exécutant"
+                value={formData.publicServiceCode ?? ''}
+                onChange={e => setFormData(p => ({ ...p, publicServiceCode: e.target.value.trim() }))}
+              />
               {detectedService && <p className="text-xs text-muted-foreground">Service détecté: {detectedService}</p>}
             </div>
             <div className="space-y-2">
               <Label>Date facture</Label>
               <Input type="date" value={formData.invoiceDate} onChange={e => setFormData(p => ({ ...p, invoiceDate: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Devise</Label>
-              <Input
-                placeholder="EUR"
-                maxLength={3}
-                value={formData.currencyCode}
-                onChange={e => setFormData(p => ({ ...p, currencyCode: e.target.value.toUpperCase() }))}
-              />
-            </div>
-
-            <Separator className="col-span-full" />
-
-            <div className="space-y-2">
-              <Label>N° Engagement</Label>
-              <Input placeholder="ENG-..." value={formData.engagementNumber} onChange={e => setFormData(p => ({ ...p, engagementNumber: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>N° Marché</Label>
-              <Input placeholder="MA-..." value={formData.marketNumber} onChange={e => setFormData(p => ({ ...p, marketNumber: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>N° Bon de commande</Label>
-              <Input placeholder="BC-..." value={formData.purchaseOrderNumber} onChange={e => setFormData(p => ({ ...p, purchaseOrderNumber: e.target.value }))} />
-            </div>
-            <div className="space-y-2">
-              <Label>Montant HT</Label>
-              <Input
-                inputMode="decimal"
-                placeholder="12000,00"
-                value={formData.totalAmountHt}
-                onChange={e => setFormData(p => ({ ...p, totalAmountHt: e.target.value }))}
-              />
             </div>
             <div className="space-y-2">
               <Label>Montant TTC</Label>
@@ -695,6 +780,60 @@ export default function InvoiceCreate() {
                 value={formData.totalAmountTtc}
                 onChange={e => setFormData(p => ({ ...p, totalAmountTtc: e.target.value }))}
               />
+            </div>
+
+            <div className="col-span-full rounded-lg border bg-muted/10 p-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Champs optionnels</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    À compléter seulement si la facture ou Chorus les exige.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowOptionalMetadata((current) => !current)}
+                >
+                  {showOptionalMetadata ? 'Masquer les options' : 'Afficher les options'}
+                </Button>
+              </div>
+
+              {showOptionalMetadata && (
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Devise</Label>
+                    <Input
+                      placeholder="EUR"
+                      maxLength={3}
+                      value={formData.currencyCode}
+                      onChange={e => setFormData(p => ({ ...p, currencyCode: e.target.value.toUpperCase() }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Montant HT</Label>
+                    <Input
+                      inputMode="decimal"
+                      placeholder="12000,00"
+                      value={formData.totalAmountHt}
+                      onChange={e => setFormData(p => ({ ...p, totalAmountHt: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>N° Engagement</Label>
+                    <Input placeholder="ENG-..." value={formData.engagementNumber} onChange={e => setFormData(p => ({ ...p, engagementNumber: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>N° Marché</Label>
+                    <Input placeholder="MA-..." value={formData.marketNumber} onChange={e => setFormData(p => ({ ...p, marketNumber: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>N° Bon de commande</Label>
+                    <Input placeholder="BC-..." value={formData.purchaseOrderNumber} onChange={e => setFormData(p => ({ ...p, purchaseOrderNumber: e.target.value }))} />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           </div>
@@ -775,13 +914,13 @@ export default function InvoiceCreate() {
             </Alert>
           )}
 
-          {isDirectMode && payloadValidation.errors.length > 0 && (
+          {isDirectMode && effectivePayloadValidation.errors.length > 0 && (
             <Alert variant="destructive">
               <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>Contexte technique Chorus manquant</AlertTitle>
+              <AlertTitle>{resolvedSubmission ? 'Contexte Chorus encore manquant après enrichissement' : 'Contexte technique Chorus manquant'}</AlertTitle>
               <AlertDescription>
                 <ul className="list-disc space-y-1 pl-4">
-                  {payloadValidation.errors.map((error) => (
+                  {effectivePayloadValidation.errors.map((error) => (
                     <li key={`${error.code}-${error.path}`}>{error.message}</li>
                   ))}
                 </ul>
@@ -789,13 +928,13 @@ export default function InvoiceCreate() {
             </Alert>
           )}
 
-          {isDirectMode && payloadValidation.warnings.length > 0 && (
+          {isDirectMode && effectivePayloadValidation.warnings.length > 0 && (
             <Alert>
               <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>Vérifications payload Chorus</AlertTitle>
+              <AlertTitle>{resolvedSubmission ? 'Vérifications payload Chorus après enrichissement' : 'Vérifications payload Chorus'}</AlertTitle>
               <AlertDescription>
                 <ul className="list-disc space-y-1 pl-4">
-                  {payloadValidation.warnings.map((warning) => (
+                  {effectivePayloadValidation.warnings.map((warning) => (
                     <li key={`${warning.code}-${warning.path}`}>{warning.message}</li>
                   ))}
                 </ul>
@@ -841,6 +980,40 @@ export default function InvoiceCreate() {
                     <ExtractionInfoRow label="Taux TVA valides" value={transversesSnapshot.checks.tauxTvaValides ? 'Oui' : 'Non'} />
                   </div>
 
+                  {resolvedSubmission && resolvedSubmission.changes.length > 0 && (
+                    <Alert>
+                      <TriangleAlert className="h-4 w-4" />
+                      <AlertTitle>Champs enrichis automatiquement</AlertTitle>
+                      <AlertDescription>
+                        <ul className="list-disc space-y-1 pl-4">
+                          {resolvedSubmission.changes.map((change) => (
+                            <li key={`${change.path}-${String(change.nextValue)}`}>
+                              <span className="font-medium">{change.path}</span>
+                              {' '}→ {String(change.nextValue)}. {change.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {resolvedSubmission && resolvedSubmission.unresolved.length > 0 && (
+                    <Alert>
+                      <TriangleAlert className="h-4 w-4" />
+                      <AlertTitle>Champs restant hors PDF</AlertTitle>
+                      <AlertDescription>
+                        <ul className="list-disc space-y-1 pl-4">
+                          {resolvedSubmission.unresolved.map((issue) => (
+                            <li key={`${issue.path}-${issue.message}`}>
+                              <span className="font-medium">{issue.path}</span>
+                              {' '}— {issue.message}
+                            </li>
+                          ))}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
                   {transversesSnapshot.checks.warnings.length > 0 && (
                     <Alert>
                       <TriangleAlert className="h-4 w-4" />
@@ -878,6 +1051,7 @@ export default function InvoiceCreate() {
           )}
 
           {lastSubmissionError && (
+            <div ref={submissionErrorRef}>
             <Alert variant="destructive">
               <TriangleAlert className="h-4 w-4" />
               <AlertTitle>Dernière erreur Chorus</AlertTitle>
@@ -891,6 +1065,7 @@ export default function InvoiceCreate() {
                 )}
               </AlertDescription>
             </Alert>
+            </div>
           )}
 
           {isDirectMode && (
@@ -923,8 +1098,110 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
+      {lastSubmissionResult && (
+        <div ref={submissionResultRef}>
+        <Card>
+          <CardHeader><CardTitle className="text-base">Résultat du traitement Chorus</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <ExtractionInfoRow label="Traitement" value={lastSubmissionResult.ok ? 'Réussi' : 'Échoué'} />
+              <ExtractionInfoRow label="Référence Chorus" value={lastSubmissionResult.externalId} />
+              <ExtractionInfoRow label="Pièces jointes uploadées" value={String(lastSubmissionResult.uploadedFiles.length)} />
+            </div>
+
+            {lastSubmissionResult.uploadedFiles.length > 0 && (
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <p className="text-sm font-medium">Retour upload des pièces jointes</p>
+                <div className="mt-3 space-y-3">
+                  {lastSubmissionResult.uploadedFiles.map((uploadedFile) => (
+                    <div
+                      key={`${uploadedFile.id}-${uploadedFile.filename}`}
+                      className="rounded-lg border bg-background p-3"
+                    >
+                      <p className="text-sm font-medium">{uploadedFile.filename}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Identifiant extrait : {uploadedFile.id}
+                      </p>
+                      <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                        {JSON.stringify(uploadedFile.response ?? null, null, 2)}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
+              <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                {JSON.stringify(lastSubmissionResult.response ?? null, null, 2)}
+              </pre>
+            </div>
+
+          </CardContent>
+        </Card>
+        </div>
+      )}
+
+      {lastApiCalls.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Journal des appels API Chorus</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">Dernière tentative de soumission</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Corps de requête et réponses utiles pour débugger l’upload et la soumission. Les secrets et le base64 complet sont masqués.
+                </p>
+              </div>
+              <Badge variant="outline">{lastApiCalls.length} appel(s)</Badge>
+            </div>
+
+            <div className="space-y-3">
+              {lastApiCalls.map((apiCall, index) => (
+                <div
+                  key={`${apiCall.label}-${apiCall.url}-${index}`}
+                  className="rounded-lg border bg-background p-3"
+                >
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <p className="text-sm font-medium">{apiCall.label}</p>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">{apiCall.method}</Badge>
+                      <Badge variant={apiCall.responseStatus && apiCall.responseStatus >= 400 ? 'destructive' : 'outline'}>
+                        {apiCall.responseStatus ?? 'n/a'}
+                      </Badge>
+                    </div>
+                  </div>
+                  <p className="mt-2 break-all text-xs text-muted-foreground">{apiCall.url}</p>
+
+                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Body envoyé</p>
+                      <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 text-xs">
+                        {JSON.stringify(apiCall.requestBody ?? null, null, 2)}
+                      </pre>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Réponse API</p>
+                      <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 text-xs">
+                        {JSON.stringify(apiCall.responseBody ?? null, null, 2)}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={() => navigate('/invoices')}>Annuler</Button>
+        {isDirectMode && (
+          <Button variant="outline" onClick={handleViewTreatmentDetails} disabled={!hasTreatmentDetails}>
+            Voir les détails du traitement
+          </Button>
+        )}
         <Button onClick={() => void handleSubmit()} disabled={isSubmissionBlocked}>
           {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
           {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Envoyer à Chorus' : 'Déposer la facture'}

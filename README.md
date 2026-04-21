@@ -19,6 +19,85 @@ npm test
 npm run build
 ```
 
+## Flux Python minimal Chorus
+
+Le dépôt contient maintenant une couche Python minimale pour préparer puis soumettre une facture Chorus Pro en `SAISIE_API`, avec upload PDF optionnel via `POST /cpro/transverses/v1/ajouter/fichier`.
+
+Fichiers principaux :
+
+- [chorus_python/config.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/config.py)
+  charge `.env.local` / `.env.example`, centralise les constantes fixes et lit `CHORUS_BASE_URL`, `CHORUS_API_KEY`, `CHORUS_CPRO_ACCOUNT`
+- [chorus_python/client.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/client.py)
+  gère les appels `requests` vers `recuperer/tauxtva`, `rechercher/destinataire`, `rechercher/serviceexecutant`, `recuperer/coordbanc/valides`, `ajouter/fichier`, `soumettre`
+- [chorus_python/payload.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/payload.py)
+  construit le payload minimal Chorus avec des montants cohérents
+- [chorus_python/service.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/service.py)
+  orchestre `résolution -> upload optionnel -> build payload -> soumission`
+- [scripts/submit_chorus_invoice.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/scripts/submit_chorus_invoice.py)
+  point d’entrée CLI simple
+
+Préparation :
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Variables minimales à renseigner :
+
+- `CHORUS_BASE_URL`
+- `CHORUS_CPRO_ACCOUNT`
+
+Authentification API :
+
+- soit `CHORUS_API_KEY` si tu as déjà un bearer token
+- soit `CHORUS_TOKEN_URL` + `CHORUS_CLIENT_ID` + `CHORUS_CLIENT_SECRET`
+- si ces variables `CHORUS_*` ne sont pas définies, le script réutilise automatiquement `VITE_CHORUS_TOKEN_URL`, `VITE_CHORUS_CLIENT_ID`, `VITE_CHORUS_CLIENT_SECRET` et `VITE_CHORUS_SCOPE` depuis `.env.local`
+
+Variables utiles pour éviter de ressaisir le contexte :
+
+- `CHORUS_SUPPLIER_ID`
+- `CHORUS_DESTINATAIRE_CODE`
+- `CHORUS_SERVICE_EXECUTANT_CODE`
+- `CHORUS_BANK_ACCOUNT_CODE`
+
+`CHORUS_CURRENT_USER_ID` reste utile uniquement si tu fais un upload PDF via `POST /cpro/transverses/v1/ajouter/fichier`. Il n'est plus injecté dans le payload minimal `/factures/v1/soumettre`.
+
+Exemple de dry-run :
+
+```bash
+python scripts/submit_chorus_invoice.py \
+  --invoice-number TEST-001 \
+  --unit-price-ht 20.00 \
+  --quantity 1 \
+  --vat-rate 20 \
+  --dry-run
+```
+
+Exemple avec upload PDF puis soumission :
+
+```bash
+python scripts/submit_chorus_invoice.py \
+  --invoice-number TEST-001 \
+  --recipient-code 00000000113495 \
+  --service-code SERVICE_DESTINATAIRE25969476 \
+  --supplier-id 26359578 \
+  --current-user-id 331 \
+  --pdf 2026-003-00565.pdf
+```
+
+Dans ce cas, la sortie JSON inclut aussi :
+
+- `upload.piece_jointe_id` : identifiant extrait de `POST /cpro/transverses/v1/ajouter/fichier`
+- `upload.response` : réponse brute de cette API
+
+TODO métier restant côté Python :
+
+- confirmer la règle de choix quand plusieurs `coordonnees bancaires` existent
+- brancher une vraie règle de sélection si plusieurs services exécutants existent pour un même destinataire
+- remplacer le fallback `20% -> TV12` par une résolution 100% API dès que le référentiel TVA sandbox est fiable
+
 ## Configuration
 
 1. Copier `.env.example` vers `.env.local`

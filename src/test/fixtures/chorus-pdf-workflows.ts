@@ -14,14 +14,14 @@ import type { ChorusSubmissionPayload } from '@/lib/chorus/types';
 export const MOCK_PDF_BASE64 = 'JVBERi0xLjQKJeLjz9CNaIHDrVjoN2V2dChkYXRhKQoxIDAgb2JqCjw8L1R5cGUvQ2F0YWxvZy9QYWdlcyAyIDAgUj4+CmVuZG9iagoyIDAgb2JqCjw8L1R5cGUvUGFnZXMvS2lkc1szIDAgUl0vQ291bnQgMT4+CmVuZG9iagozIDAgb2JqCjw8L1R5cGUvUGFnZS9QYXJlbnQgMiAwIFIvTWVkaWFCb3hbMCAwIDYxMiA3OTJdL0NvbnRlbnRzIDQgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUIC9GMSAxMiBUZiAxMDAgNzUwIFRkIChIZWxsbyB3b3JsZCkgVGoKRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyMTcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDUvUm9vdCAxIDAgUj4+CnN0YXJ0eHJlZgozMTAKJSVFT0Y=';
 
 /**
- * Fixture: Upload PDF Payload
- * Used for testing the /deposer/pdf endpoint
+ * Fixture: Upload attachment payload
+ * Used for testing the /ajouter/fichier endpoint
  */
 export const uploadPdfPayloadFixture: UploadPdfPayload = {
-  idUtilisateurCourant: 331,
-  fichierFacture: MOCK_PDF_BASE64,
-  formatDepot: 'PDF_NON_SIGNE',
-  nomFichier: 'facture-test-2026-001.pdf',
+  pieceJointeExtension: 'pdf',
+  pieceJointeFichier: MOCK_PDF_BASE64,
+  pieceJointeNom: 'facture-test-2026-001.pdf',
+  pieceJointeTypeMime: 'application/pdf',
 };
 
 /**
@@ -154,7 +154,7 @@ export const submitInvoiceSaisieApiPayloadFixture: ChorusSubmissionPayload = {
 
 /**
  * Fixture: Upload response (mock)
- * What the /deposer/pdf endpoint should return
+ * What the /ajouter/fichier endpoint should return
  */
 export const uploadPdfResponseFixture = {
   pieceJointeId: 'pie-abc123-xyz789-test',

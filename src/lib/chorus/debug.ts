@@ -1,3 +1,4 @@
+import { attachMainFileToChorusSubmissionPayload } from '@/lib/chorus/buildSubmissionPayload';
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
 import type { ChorusConfig } from '@/types/chorus';
 import type { ChorusSubmissionPayload, ChorusSubmissionValidationResult } from '@/lib/chorus/types';
@@ -37,12 +38,22 @@ function buildSubmitDebugPayload(
   routes: PisteChorusRoutes,
   mainFileName?: string,
 ): unknown {
+  const { idUtilisateurCourant: _ignoredCurrentUserId, ...payloadWithoutCurrentUserId } = payload;
+
+  if (routes.isAttachmentUpload()) {
+    return attachMainFileToChorusSubmissionPayload(payloadWithoutCurrentUserId, {
+      mainFileId: '<PIECE_JOINTE_ID_FROM_UPLOAD>',
+      mainFileName,
+      modeDepot: 'SAISIE_API',
+    });
+  }
+
   if (!routes.isPdfDepositUpload()) {
-    return payload;
+    return payloadWithoutCurrentUserId;
   }
 
   return {
-    ...payload,
+    ...payloadWithoutCurrentUserId,
     modeDepot: 'DEPOT_PDF_API',
     pieceJointePrincipale: [{
       pieceJointePrincipaleDesignation: mainFileName || 'Facture principale',
@@ -112,12 +123,12 @@ export async function buildChorusDebugFile(input: {
   if (input.mainFile && routes.uploadFilePath) {
     lines.push('## 3. Upload de la facture principale');
 
-    if (routes.isPdfDepositUpload()) {
+    if (routes.isAttachmentUpload() || routes.isPdfDepositUpload()) {
       const uploadPayload = {
-        idUtilisateurCourant: input.payload.idUtilisateurCourant,
-        fichierFacture: await fileToBase64(input.mainFile),
-        formatDepot: 'PDF_NON_SIGNE',
-        nomFichier: input.mainFile.name,
+        pieceJointeExtension: 'pdf',
+        pieceJointeFichier: await fileToBase64(input.mainFile),
+        pieceJointeNom: input.mainFile.name,
+        pieceJointeTypeMime: input.mainFile.type || 'application/pdf',
       };
 
       lines.push(buildCurlCommand(routes.uploadFileUrl(), {

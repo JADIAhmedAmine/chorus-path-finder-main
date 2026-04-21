@@ -129,10 +129,13 @@ function normalizeVatRates(body: unknown): ChorusTransverseVatRate[] {
     .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
     .map((item) => {
       const label = typeof item.libelleTauxTva === 'string' ? item.libelleTauxTva : undefined;
+      const explicitRate = asNumber(item.valeurTauxTva);
       return {
         code: typeof item.codeTauxTva === 'string' ? item.codeTauxTva : '',
         label,
-        rate: parseRateFromLabel(label),
+        rate: explicitRate !== undefined
+          ? (explicitRate > 1 ? explicitRate / 100 : explicitRate)
+          : parseRateFromLabel(label),
       };
     })
     .filter((item) => Boolean(item.code));
@@ -192,6 +195,11 @@ function normalizeRecipients(body: unknown): ChorusTransverseRecipient[] {
         ? item.adresseCodePostal
         : (typeof item.adresseCodePostal === 'number' ? String(item.adresseCodePostal) : undefined),
       adresseVille: typeof item.adresseVille === 'string' ? item.adresseVille : undefined,
+      codeDestinataire: cleanDigits(
+        typeof item.codeDestinataire === 'string'
+          ? item.codeDestinataire
+          : (typeof item.identifiant === 'string' ? item.identifiant : undefined),
+      ),
       idStructureCPP: asNumber(item.idStructureCPP),
       nomDestinataire: typeof item.nomDestinataire === 'string' ? item.nomDestinataire : undefined,
       siret: cleanDigits(typeof item.siret === 'string' ? item.siret : undefined),
@@ -219,6 +227,30 @@ function normalizeOperatingServices(body: unknown): ChorusTransverseOperatingSer
 
 function nearlyEqual(left: number, right: number, tolerance = 0.0001): boolean {
   return Math.abs(left - right) <= tolerance;
+}
+
+function resolveSupplierStructureId(
+  structures: ChorusTransverseStructure[],
+  currentSupplierId: number | undefined,
+  supplierSiret?: string,
+): number | undefined {
+  if (currentSupplierId !== undefined && structures.some((item) => item.idStructureCPP === currentSupplierId)) {
+    return currentSupplierId;
+  }
+
+  const normalizedSupplierSiret = cleanDigits(supplierSiret);
+  if (normalizedSupplierSiret) {
+    const matchedStructure = structures.find((item) => item.identifiant === normalizedSupplierSiret);
+    if (matchedStructure?.idStructureCPP !== undefined) {
+      return matchedStructure.idStructureCPP;
+    }
+  }
+
+  if (structures.length === 1 && structures[0]?.idStructureCPP !== undefined) {
+    return structures[0].idStructureCPP;
+  }
+
+  return currentSupplierId;
 }
 
 export class ChorusTransversesClient {
@@ -461,13 +493,23 @@ export class ChorusTransversesClient {
       this.fetchStructuresActivesFournisseur(),
     ]);
 
-    const coordonneesBancaires = payload.fournisseur.idFournisseur !== undefined
-      ? await this.fetchCoordonneesBancairesValides(payload.fournisseur.idFournisseur)
+    const resolvedSupplierStructureId = resolveSupplierStructureId(
+      structuresFournisseur,
+      payload.fournisseur.idFournisseur,
+      input.supplierSiret,
+    );
+
+    const coordonneesBancaires = resolvedSupplierStructureId !== undefined
+      ? await this.fetchCoordonneesBancairesValides(resolvedSupplierStructureId)
       : [];
 
-    const destinataires = await this.searchDestinataires(payload.destinataire.codeDestinataire);
-    const matchedDestinataire = payload.destinataire.codeDestinataire
-      ? destinataires.find((item) => item.siret === cleanDigits(payload.destinataire.codeDestinataire))
+    const recipientLookup = cleanDigits(payload.destinataire.codeDestinataire)
+      || cleanDigits(input.recipientCode)
+      || cleanDigits(input.recipientSiret);
+    const destinataires = await this.searchDestinataires(recipientLookup);
+    const normalizedRecipientCode = cleanDigits(payload.destinataire.codeDestinataire);
+    const matchedDestinataire = normalizedRecipientCode
+      ? destinataires.find((item) => item.codeDestinataire === normalizedRecipientCode || item.siret === normalizedRecipientCode)
       : undefined;
 
     const servicesExecutants = matchedDestinataire?.idStructureCPP !== undefined
@@ -496,10 +538,10 @@ export class ChorusTransversesClient {
       warnings.push('Le mode de dépôt du payload n’apparaît pas dans le référentiel Transverses.');
     }
 
-    const fournisseurStructureValid = payload.fournisseur.idFournisseur === undefined
-      ? true
-      : structuresFournisseur.some((item) => item.idStructureCPP === payload.fournisseur.idFournisseur);
-    if (payload.fournisseur.idFournisseur !== undefined && !fournisseurStructureValid) {
+    const fournisseurStructureValid = resolvedSupplierStructureId !== undefined
+      ? structuresFournisseur.some((item) => item.idStructureCPP === resolvedSupplierStructureId)
+      : payload.fournisseur.idFournisseur === undefined;
+    if (resolvedSupplierStructureId !== undefined && !fournisseurStructureValid) {
       warnings.push('L’idFournisseur courant n’apparaît pas dans les structures actives fournisseur.');
     }
 
@@ -526,6 +568,11 @@ export class ChorusTransversesClient {
       .map((item) => {
         if (!item.ligneTvaTaux) {
           return undefined;
+        }
+
+        const matchingCode = tauxTva.find((rate) => rate.code === item.ligneTvaTaux);
+        if (matchingCode?.rate !== undefined) {
+          return matchingCode.rate;
         }
 
         const parsed = Number(item.ligneTvaTaux);

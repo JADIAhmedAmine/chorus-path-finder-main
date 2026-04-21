@@ -147,13 +147,13 @@ describe('chorus submission payload', () => {
       lignePosteDenomination: 'Abonnement reseau',
       lignePosteQuantite: 2,
       lignePosteMontantUnitaireHT: 100,
-      lignePosteTauxTva: '0.2',
+      lignePosteTauxTva: 'TV12',
     });
     expect(payload.ligneTva).toEqual([
       expect.objectContaining({
         ligneTvaMontantBaseHtParTaux: 250,
         ligneTvaMontantTvaParTaux: 50,
-        ligneTvaTaux: '0.2',
+        ligneTvaTaux: 'TV12',
       }),
     ]);
 
@@ -210,7 +210,6 @@ describe('chorus submission payload', () => {
     const validation = validateChorusSubmissionPayload(payload);
 
     expect(validation.valid).toBe(false);
-    expect(validation.errors.some((error) => error.code === 'CURRENT_USER_ID_REQUIRED')).toBe(true);
     expect(validation.errors.some((error) => error.code === 'FOURNISSEUR_ID_REQUIRED')).toBe(true);
   });
 });

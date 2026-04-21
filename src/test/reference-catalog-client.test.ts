@@ -105,4 +105,26 @@ describe('ReferenceCatalogClient', () => {
     expect(catalog.metadata.annuaireStructureCount).toBe(1);
     expect(catalog.metadata.annuaireServiceCount).toBe(1);
   });
+
+  it('reuses the cached catalog on subsequent loads with the same configuration', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse([{ id: 's1', legalName: 'Gigalis', siret: '25440253000011', active: true }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'pc1', legalName: 'Region', codeDestinataire: '23440003400026', siret: '23440003400026', active: true }]))
+      .mockResolvedValueOnce(jsonResponse([{ id: 'ps1', publicCustomerId: 'pc1', codeServiceExecutant: 'SE001', label: 'Comptabilite fournisseurs', active: true }]));
+
+    const client = new ReferenceCatalogClient({
+      ...getDefaultChorusConfig(),
+      referenceApiBaseUrl: 'https://backend.example.test/api',
+      referenceSuppliersPath: '/suppliers',
+      referencePublicCustomersPath: '/public-customers',
+      referencePublicServicesPath: '/public-services',
+    }, fetchMock);
+
+    const firstCatalog = await client.fetchCatalog();
+    const secondCatalog = await client.fetchCatalog();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(secondCatalog).toBe(firstCatalog);
+    expect(client.getCachedCatalog()).toBe(firstCatalog);
+  });
 });

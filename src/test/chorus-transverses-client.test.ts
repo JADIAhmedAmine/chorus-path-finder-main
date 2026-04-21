@@ -106,4 +106,44 @@ describe('ChorusTransversesClient', () => {
     expect(snapshot.checks.warnings).toHaveLength(0);
     expect(snapshot.destinataires[0]?.siret).toBe('23440003400026');
   });
+
+  it('resolves supplier bank references from structures actives fournisseur using the supplier SIRET', async () => {
+    const payload = createPayload();
+    payload.fournisseur.idFournisseur = undefined;
+    payload.fournisseur.codeCoordonneesBancairesFournisseur = 132;
+
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-1' }))
+      .mockResolvedValueOnce(jsonResponse({ listeCadreFacturation: [{ codeCadreFacturation: 'A1_FACTURE_FOURNISSEUR' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeDevises: [{ codeDevise: 'EUR', libelleDevise: 'Euro' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeTauxTva: [{ codeTauxTva: 'TVA20', libelleTauxTva: 'TVA 20%' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeModePaiement: [{ modePaiement: 'CHEQUE' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeModeDepot: [{ modeDepot: 'DEPOT_PDF_API' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeStructures: [{ idStructureCPP: 26359578, identifiant: '32242033407300', designationStructure: 'Destinataire 32242033407300' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeCoordonneeBancaire: [{ idCoordonneeBancaire: 132, nomCoordonneeBancaire: 'IBAN principal' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeDestinataires: [{ idStructureCPP: 998, nomDestinataire: 'Region Pays de la Loire', siret: '23440003400026' }] }))
+      .mockResolvedValueOnce(jsonResponse({ listeServices: [{ idServicesCPP: 123, codeServiceExecutant: 'SE001', nomServiceExecutant: 'Comptabilite fournisseurs' }] }));
+
+    const client = new ChorusTransversesClient({
+      ...getDefaultChorusConfig(),
+      mode: 'direct',
+      enabled: true,
+      tokenUrl: 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token',
+      apiBaseUrl: 'https://sandbox-api.piste.gouv.fr/cpro/factures',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      technicalLogin: 'tech-user',
+      technicalPassword: 'tech-pass',
+    }, fetchMock);
+
+    const snapshot = await client.resolveSubmissionReferences({
+      payload,
+      supplierSiret: '32242033407300',
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(10);
+    expect(snapshot.structuresFournisseur[0]?.idStructureCPP).toBe(26359578);
+    expect(snapshot.coordonneesBancaires[0]?.idCoordonneeBancaire).toBe(132);
+    expect(snapshot.checks.coordonneeBancaireValide).toBe(true);
+  });
 });

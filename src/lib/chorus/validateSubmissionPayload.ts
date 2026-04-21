@@ -23,28 +23,12 @@ export function validateChorusSubmissionPayload(payload: ChorusSubmissionPayload
   const errors: ChorusSubmissionValidationIssue[] = [];
   const warnings: ChorusSubmissionValidationIssue[] = [];
 
-  if (!payload.dateFacture) {
-    pushIssue(errors, 'dateFacture', 'DATE_FACTURE_REQUIRED', 'La date de facture est obligatoire.');
-  }
-
   if (!payload.numeroFactureSaisi) {
     pushIssue(errors, 'numeroFactureSaisi', 'NUMERO_FACTURE_REQUIRED', 'Le numero de facture saisi est obligatoire.');
   }
 
   if (!payload.destinataire.codeDestinataire) {
     pushIssue(errors, 'destinataire.codeDestinataire', 'DESTINATAIRE_REQUIRED', 'Le code destinataire est obligatoire.');
-  }
-
-  if (payload.idUtilisateurCourant === undefined) {
-    pushIssue(errors, 'idUtilisateurCourant', 'CURRENT_USER_ID_REQUIRED', 'L idUtilisateurCourant doit venir du contexte Chorus et ne peut pas etre invente.');
-  }
-
-  if (payload.fournisseur.idFournisseur === undefined) {
-    pushIssue(errors, 'fournisseur.idFournisseur', 'FOURNISSEUR_ID_REQUIRED', 'Le fournisseur Chorus (idFournisseur) doit venir du contexte applicatif ou du backend.');
-  }
-
-  if (payload.fournisseur.idServiceFournisseur === undefined) {
-    pushIssue(warnings, 'fournisseur.idServiceFournisseur', 'FOURNISSEUR_SERVICE_ID_RECOMMENDED', 'Le service fournisseur Chorus n est pas renseigne.');
   }
 
   if (!payload.destinataire.codeServiceExecutant) {

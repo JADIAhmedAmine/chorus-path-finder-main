@@ -57,7 +57,12 @@ export default function SettingsPage() {
   const [lastTechnicalContextResult, setLastTechnicalContextResult] = useState<ChorusTechnicalContextResolutionResult | null>(null);
   const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? '');
   const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState('');
-  const { suppliers, loading: loadingReferenceSuppliers, error: referenceSuppliersError } = useReferenceCatalog(config);
+  const { suppliers, loading: loadingReferenceSuppliers, error: referenceSuppliersError } = useReferenceCatalog(config, {
+    includeSuppliers: true,
+    includePublicCustomers: false,
+    includePublicServices: false,
+    includeAnnuaire: false,
+  });
 
   const connectorStatus = useMemo(() => {
     if (!config.enabled) {
@@ -255,7 +260,7 @@ export default function SettingsPage() {
 
             <div className="space-y-2">
               <Label htmlFor="upload-file-path">Endpoint upload fichier</Label>
-              <Input id="upload-file-path" value={config.uploadFilePath} onChange={(e) => handleFieldChange('uploadFilePath', e.target.value)} placeholder="/transverses/fichiers" />
+              <Input id="upload-file-path" value={config.uploadFilePath} onChange={(e) => handleFieldChange('uploadFilePath', e.target.value)} placeholder="/v1/ajouter/fichier" />
             </div>
 
             <div className="space-y-2">
@@ -336,7 +341,7 @@ export default function SettingsPage() {
             <div>
               <h3 className="text-sm font-medium">Contexte technique Chorus</h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Ces identifiants ne viennent pas du PDF. Ils servent a construire le JSON exact pour `deposer/pdf` et `soumettre`.
+                Ces identifiants ne viennent pas du PDF. Ils servent a construire le JSON minimal exact pour `ajouter/fichier` puis `soumettre`.
               </p>
             </div>
 

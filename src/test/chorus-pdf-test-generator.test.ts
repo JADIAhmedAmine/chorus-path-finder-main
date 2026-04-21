@@ -2,8 +2,8 @@
  * Test Payload Generator for Chorus PDF Upload and Invoice Submission
  * 
  * This test file demonstrates how to generate test payloads for:
- * 1. PDF upload to Chorus /deposer/pdf endpoint
- * 2. Invoice submission with PDF (DEPOT_PDF_API mode)
+ * 1. Main attachment upload to Chorus /ajouter/fichier endpoint
+ * 2. Invoice submission with uploaded pieceJointePrincipale in SAISIE_API mode
  * 3. Invoice submission without PDF (SAISIE_API mode)
  */
 
@@ -24,10 +24,11 @@ describe('Chorus PDF Test Payload Generation', () => {
 
     expect(validation.valid).toBe(true);
     expect(validation.errors).toHaveLength(0);
-    expect(mockPdfBase64.nomFichier).toBe('facture-test-2026-001.pdf');
-    expect(mockPdfBase64.formatDepot).toBe('PDF_NON_SIGNE');
-    expect(mockPdfBase64.fichierFacture).toBeTruthy();
-    expect(mockPdfBase64.fichierFacture.length).toBeGreaterThan(100);
+    expect(mockPdfBase64.pieceJointeNom).toBe('facture-test-2026-001.pdf');
+    expect(mockPdfBase64.pieceJointeExtension).toBe('pdf');
+    expect(mockPdfBase64.pieceJointeTypeMime).toBe('application/pdf');
+    expect(mockPdfBase64.pieceJointeFichier).toBeTruthy();
+    expect(mockPdfBase64.pieceJointeFichier.length).toBeGreaterThan(100);
 
     console.log('✓ Upload PDF Payload:', JSON.stringify(mockPdfBase64, null, 2));
   });
@@ -182,7 +183,7 @@ describe('Chorus PDF Test Payload Generation', () => {
     // Step 1: Generate upload PDF payload
     console.log('Step 1: Upload PDF to Chorus');
     const uploadPayload = createMockUploadPdfPayload('facture-2026-001-GIGALIS.pdf');
-    console.log('  POST /cpro/factures/v1/deposer/pdf');
+    console.log('  POST /cpro/transverses/v1/ajouter/fichier');
     console.log('  Body:', JSON.stringify(uploadPayload, null, 4).split('\n').slice(0, 10).join('\n') + '...');
     console.log('  Expected Response: { "pieceJointeId": "pie-abc123..." }\n');
 
