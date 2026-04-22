@@ -1,4 +1,5 @@
 import type {
+  ChorusPaymentMode,
   ExtractedInvoiceDraftData,
   InvoiceExtractionReferences,
   InvoiceSourceFormat,
@@ -24,6 +25,19 @@ interface ServiceReference {
   label: string;
 }
 
+interface ReferenceHintInput {
+  text: string;
+  fields: ExtractedInvoiceDraftData;
+  references: InvoiceExtractionReferences;
+}
+
+interface PositionedPdfTextFragment {
+  x: number;
+  y: number;
+  width: number;
+  text: string;
+}
+
 function compactWhitespace(value: string): string {
   return value
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ' ')
@@ -44,6 +58,28 @@ function cleanDigits(value: string): string {
 
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function collapseSequentialDuplicates(values: string[]): string[] {
+  const collapsed: string[] = [];
+
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+
+    if (collapsed[collapsed.length - 1] !== value) {
+      collapsed.push(value);
+    }
+  }
+
+  return collapsed;
+}
+
+function normalizeForTokenSearch(value: string): string[] {
+  return normalizeLookup(value)
+    .split(/[^a-z0-9]+/g)
+    .filter((token) => token.length >= 4);
 }
 
 function scoreReadableText(value: string): number {
@@ -80,6 +116,36 @@ function decodePdfLiteralString(value: string): string {
       }
     })
     .replace(/\\([0-7]{1,3})/g, (_, octal: string) => decodeOctalSequence(octal));
+}
+
+function normalizePdfFragment(value: string): string {
+  return value
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeStructuredPdfText(value: string): string {
+  return value
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function estimatePdfTextWidth(value: string): number {
+  const normalized = normalizePdfFragment(value);
+  if (!normalized) {
+    return 0;
+  }
+
+  const weightedLength = Array.from(normalized).reduce((count, character) => {
+    return count + (/[A-Z0-9€%]/.test(character) ? 1.15 : 1);
+  }, 0);
+
+  return Math.max(8, weightedLength * 4.6);
 }
 
 function extractPdfLiteralStrings(content: string): string[] {
@@ -149,6 +215,20 @@ function decodePdfHexString(value: string): string {
   return compactWhitespace(new TextDecoder('windows-1252').decode(bytes));
 }
 
+function decodePdfHexStringRaw(value: string): string {
+  const normalized = value.replace(/\s+/g, '');
+  if (!normalized || normalized.length % 2 !== 0) {
+    return '';
+  }
+
+  const bytes = new Uint8Array(normalized.length / 2);
+  for (let index = 0; index < normalized.length; index += 2) {
+    bytes[index / 2] = Number.parseInt(normalized.slice(index, index + 2), 16);
+  }
+
+  return normalizePdfFragment(new TextDecoder('windows-1252').decode(bytes));
+}
+
 function extractPdfHexStrings(content: string): string[] {
   return Array.from(content.matchAll(/<([0-9A-Fa-f\s]{6,})>\s*Tj/g))
     .map((match) => decodePdfHexString(match[1]))
@@ -159,6 +239,209 @@ function extractPrintableRuns(content: string): string[] {
   return Array.from(content.matchAll(/[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9@&/.,:;_#'’()\- ]{4,}/g))
     .map((match) => compactWhitespace(match[0]))
     .filter((value) => value.length >= 5);
+}
+
+function decodePdfTextArray(value: string): string {
+  const fragments: string[] = [];
+  let needsSpace = false;
+
+  for (const match of value.matchAll(/\(((?:\\.|[^\\)])*)\)|<([0-9A-Fa-f\s]{2,})>|(-?\d+(?:\.\d+)?)/g)) {
+    if (match[1]) {
+      const decoded = normalizePdfFragment(decodePdfLiteralString(match[1]));
+      if (decoded) {
+        fragments.push(needsSpace && fragments.length > 0 ? ` ${decoded}` : decoded);
+        needsSpace = false;
+      }
+      continue;
+    }
+
+    if (match[2]) {
+      const decoded = decodePdfHexStringRaw(match[2]);
+      if (decoded) {
+        fragments.push(needsSpace && fragments.length > 0 ? ` ${decoded}` : decoded);
+        needsSpace = false;
+      }
+      continue;
+    }
+
+    if (match[3]) {
+      const spacing = Number(match[3]);
+      if (Number.isFinite(spacing) && Math.abs(spacing) >= 120) {
+        needsSpace = true;
+      }
+    }
+  }
+
+  return normalizePdfFragment(fragments.join(''));
+}
+
+function extractPositionedPdfTextFragments(content: string): PositionedPdfTextFragment[] {
+  const fragments: PositionedPdfTextFragment[] = [];
+  const textBlocks = Array.from(content.matchAll(/BT([\s\S]*?)ET/g));
+
+  for (const block of textBlocks) {
+    const body = block[1] ?? '';
+    let currentX = 0;
+    let currentY = 0;
+    let lineStartX = 0;
+    let lineLeading = 12;
+
+    const tokenRegex = /(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+TD|(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Td|(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Tm|(-?\d+(?:\.\d+)?)\s+TL|T\*|\(((?:\\.|[^\\)])*)\)\s*'|(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+\(((?:\\.|[^\\)])*)\)\s*"|\(((?:\\.|[^\\)])*)\)\s*Tj|<([0-9A-Fa-f\s]{2,})>\s*Tj|\[((?:.|\r|\n)*?)\]\s*TJ/g;
+    let tokenMatch: RegExpExecArray | null;
+
+    while ((tokenMatch = tokenRegex.exec(body)) !== null) {
+      if (tokenMatch[1] && tokenMatch[2]) {
+        currentX += Number(tokenMatch[1]);
+        currentY += Number(tokenMatch[2]);
+        lineLeading = Math.abs(Number(tokenMatch[2])) || lineLeading;
+        lineStartX = currentX;
+        continue;
+      }
+
+      if (tokenMatch[3] && tokenMatch[4]) {
+        currentX += Number(tokenMatch[3]);
+        currentY += Number(tokenMatch[4]);
+        lineStartX = currentX;
+        continue;
+      }
+
+      if (tokenMatch[9] && tokenMatch[10]) {
+        currentX = Number(tokenMatch[9]);
+        currentY = Number(tokenMatch[10]);
+        lineStartX = currentX;
+        continue;
+      }
+
+      if (tokenMatch[11]) {
+        lineLeading = Math.abs(Number(tokenMatch[11])) || lineLeading;
+        continue;
+      }
+
+      if (tokenMatch[0] === 'T*') {
+        currentY -= lineLeading;
+        currentX = lineStartX;
+        continue;
+      }
+
+      if (tokenMatch[12]) {
+        currentY -= lineLeading;
+        currentX = lineStartX;
+      }
+
+      if (tokenMatch[13] && tokenMatch[14] && tokenMatch[15]) {
+        currentY -= lineLeading;
+        currentX = lineStartX;
+      }
+
+      const text = tokenMatch[12]
+        ? normalizePdfFragment(decodePdfLiteralString(tokenMatch[12]))
+        : tokenMatch[15]
+          ? normalizePdfFragment(decodePdfLiteralString(tokenMatch[15]))
+          : tokenMatch[16]
+            ? normalizePdfFragment(decodePdfLiteralString(tokenMatch[16]))
+            : tokenMatch[17]
+              ? decodePdfHexStringRaw(tokenMatch[17])
+              : tokenMatch[18]
+                ? decodePdfTextArray(tokenMatch[18])
+                : '';
+      const width = estimatePdfTextWidth(text);
+
+      if (!text || width <= 0) {
+        continue;
+      }
+
+      fragments.push({
+        x: Number.isFinite(currentX) ? currentX : 0,
+        y: Number.isFinite(currentY) ? currentY : 0,
+        width,
+        text,
+      });
+
+      currentX += width;
+    }
+  }
+
+  return fragments;
+}
+
+function renderPositionedPdfLine(parts: PositionedPdfTextFragment[]): string {
+  const sortedParts = [...parts].sort((left, right) => left.x - right.x);
+
+  return normalizePdfFragment(sortedParts.reduce((line, part, index) => {
+    if (index === 0) {
+      return part.text;
+    }
+
+    const previous = sortedParts[index - 1];
+    const gap = part.x - (previous.x + previous.width);
+    const separator = gap >= 60 ? '    ' : gap >= 18 ? '  ' : ' ';
+
+    return `${line}${separator}${part.text}`;
+  }, ''));
+}
+
+function buildPositionedPdfReadingView(fragments: PositionedPdfTextFragment[]): string {
+  if (fragments.length === 0) {
+    return '';
+  }
+
+  const sortedFragments = [...fragments].sort((left, right) => {
+    if (Math.abs(left.y - right.y) > 1.5) {
+      return right.y - left.y;
+    }
+
+    return left.x - right.x;
+  });
+
+  const lines: Array<{ y: number; parts: PositionedPdfTextFragment[] }> = [];
+  for (const fragment of sortedFragments) {
+    const targetLine = lines.find((line) => Math.abs(line.y - fragment.y) <= 2.8);
+    if (targetLine) {
+      targetLine.parts.push(fragment);
+    } else {
+      lines.push({ y: fragment.y, parts: [fragment] });
+    }
+  }
+
+  return normalizeStructuredPdfText(
+    collapseSequentialDuplicates(
+      lines
+        .map((line) => renderPositionedPdfLine(line.parts))
+        .filter((line) => line.length >= 2),
+    ).join('\n'),
+  );
+}
+
+function mergePdfTextViews(structuredText: string, fragments: string[]): string {
+  const normalizedStructured = normalizeStructuredPdfText(structuredText);
+  const looseLines = collapseSequentialDuplicates(
+    fragments
+      .map((fragment) => normalizePdfFragment(fragment))
+      .filter((fragment) => fragment.length >= 2),
+  );
+  const looseText = normalizeStructuredPdfText(looseLines.join('\n'));
+
+  if (!normalizedStructured) {
+    return looseText;
+  }
+
+  if (!looseText) {
+    return normalizedStructured;
+  }
+
+  const structuredLength = normalizedStructured.replace(/\s+/g, '').length;
+  const looseLength = looseText.replace(/\s+/g, '').length;
+  const shouldPreferStructured = structuredLength >= 180 || structuredLength >= looseLength * 0.45;
+
+  const primaryText = shouldPreferStructured ? normalizedStructured : looseText;
+  const secondaryLines = shouldPreferStructured
+    ? looseLines.filter((line) => !normalizedStructured.includes(line))
+    : [];
+
+  return normalizeStructuredPdfText([
+    primaryText,
+    ...secondaryLines,
+  ].filter(Boolean).join('\n'));
 }
 
 function latin1BytesToString(bytes: Uint8Array): string {
@@ -211,17 +494,20 @@ async function decodePdfBufferToText(buffer: ArrayBuffer): Promise<string> {
     }
   }
 
+  const positionedReadingView = buildPositionedPdfReadingView(
+    contents.flatMap((content) => extractPositionedPdfTextFragments(content)),
+  );
   const fragments = uniqueValues(contents.flatMap((content) => [
     ...extractPdfLiteralStrings(content),
     ...extractPdfHexStrings(content),
     ...extractPrintableRuns(content),
   ]));
 
-  if (fragments.length > 0) {
-    return compactWhitespace(fragments.join(' '));
+  if (positionedReadingView || fragments.length > 0) {
+    return mergePdfTextViews(positionedReadingView, fragments);
   }
 
-  return compactWhitespace(latin1BytesToString(bytes));
+  return normalizeStructuredPdfText(latin1BytesToString(bytes));
 }
 
 async function decodeFileToText(file: File): Promise<string> {
@@ -390,6 +676,49 @@ function parseAmount(value: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function normalizePaymentMode(value: string | undefined): ChorusPaymentMode | undefined {
+  const trimmed = sanitizeToken(value ?? '');
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const upperValue = trimmed.toUpperCase() as ChorusPaymentMode;
+  if (['CHEQUE', 'ESPECE', 'VIREMENT', 'PRELEVEMENT', 'AUTRE', 'REPORT'].includes(upperValue)) {
+    return upperValue;
+  }
+
+  const normalized = trimmed
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (/(virement|transfer|wire|sepa)/.test(normalized)) {
+    return 'VIREMENT';
+  }
+
+  if (/(cheque|check)/.test(normalized)) {
+    return 'CHEQUE';
+  }
+
+  if (/(prelevement|direct debit|sepa debit)/.test(normalized)) {
+    return 'PRELEVEMENT';
+  }
+
+  if (/(espece|cash)/.test(normalized)) {
+    return 'ESPECE';
+  }
+
+  if (/report/.test(normalized)) {
+    return 'REPORT';
+  }
+
+  if (/(autre|other)/.test(normalized)) {
+    return 'AUTRE';
+  }
+
+  return undefined;
+}
+
 function detectCurrency(text: string, rawText: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
   const xmlCurrency = sourceFormat === 'XML'
     ? extractXmlTagValue(rawText, ['Currency', 'InvoiceCurrencyCode', 'DocumentCurrencyCode'])
@@ -427,6 +756,39 @@ function detectCurrency(text: string, rawText: string, sourceFormat: InvoiceSour
   }
 
   return {};
+}
+
+function extractPaymentMode(text: string, rawText: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<ChorusPaymentMode> {
+  const xmlValue = sourceFormat === 'XML'
+    ? extractXmlTagValue(rawText, ['PaymentMeansCode', 'PaymentMeans', 'PaymentMethod', 'ModePaiement', 'ModeReglement'])
+    : undefined;
+  const normalizedXmlMode = normalizePaymentMode(xmlValue);
+  if (normalizedXmlMode) {
+    return {
+      value: normalizedXmlMode,
+      confidence: 0.9,
+    };
+  }
+
+  const regexMatch = pickFirstMatch(text, [
+    {
+      regex: /\b(?:reglement|règlement)[^A-Za-z]{0,30}(?:est\s+)?payable\s+par\s+(virement(?:\s+bancaire)?|cheque(?:\s+bancaire)?|chèque(?:\s+bancaire)?|prelevement(?:\s+sepa)?|prélèvement(?:\s+sepa)?|especes|espèces|cash)\b/i,
+      confidence: 0.95,
+    },
+    {
+      regex: /\b(?:mode\s+de\s+(?:paiement|reglement|règlement)|payment\s+method)\s*[:#-]?\s*([A-Za-zÀ-ÿ /-]{3,40})/i,
+      confidence: 0.9,
+    },
+    {
+      regex: /\b(?:paiement|reglement|règlement)\s+par\s+(virement(?:\s+bancaire)?|cheque|chèque|prelevement(?:\s+sepa)?|prélèvement(?:\s+sepa)?|especes|espèces|cash)\b/i,
+      confidence: 0.88,
+    },
+  ]);
+
+  const normalizedMode = normalizePaymentMode(regexMatch.value);
+  return normalizedMode
+    ? { value: normalizedMode, confidence: regexMatch.confidence ?? 0.86 }
+    : {};
 }
 
 function extractInvoiceNumber(text: string, rawText: string, filename: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
@@ -667,6 +1029,155 @@ function findMatchByName<T extends { id: string; legalName: string }>(text: stri
     .sort((left, right) => right.normalizedName.length - left.normalizedName.length)[0]?.item;
 }
 
+function rankNamedCandidates<T extends { id: string; legalName: string; siret: string }>(
+  text: string,
+  refs: T[],
+  explicitSiret?: string,
+): T[] {
+  const normalizedText = normalizeLookup(text);
+  const textTokens = new Set(normalizeForTokenSearch(text));
+
+  return refs
+    .map((item) => {
+      let score = 0;
+      if (explicitSiret && item.siret === explicitSiret) {
+        score += 10;
+      }
+      if (item.siret && normalizedText.includes(item.siret)) {
+        score += 6;
+      }
+      const normalizedName = normalizeLookup(item.legalName);
+      if (normalizedName && normalizedText.includes(normalizedName)) {
+        score += 8;
+      }
+
+      const itemTokens = normalizeForTokenSearch(item.legalName);
+      score += itemTokens.filter((token) => textTokens.has(token)).length;
+
+      return { item, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 5)
+    .map(({ item }) => item);
+}
+
+function rankServiceCandidates(
+  text: string,
+  refs: ServiceReference[],
+  currentCustomerId?: string,
+  explicitServiceCode?: string,
+): ServiceReference[] {
+  const normalizedText = normalizeLookup(text);
+  const textTokens = new Set(normalizeForTokenSearch(text));
+
+  return refs
+    .map((item) => {
+      let score = 0;
+      if (currentCustomerId && item.publicCustomerId === currentCustomerId) {
+        score += 4;
+      }
+      if (explicitServiceCode && item.codeServiceExecutant.toLowerCase() === explicitServiceCode.toLowerCase()) {
+        score += 10;
+      }
+      if (normalizedText.includes(normalizeLookup(item.codeServiceExecutant))) {
+        score += 7;
+      }
+      if (normalizedText.includes(normalizeLookup(item.label))) {
+        score += 8;
+      }
+      const itemTokens = normalizeForTokenSearch(item.label);
+      score += itemTokens.filter((token) => textTokens.has(token)).length;
+      return { item, score };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 5)
+    .map(({ item }) => item);
+}
+
+function buildKeywordEvidence(text: string): string {
+  const patterns = [
+    'facture',
+    'invoice',
+    'siret',
+    'tva',
+    'montant',
+    'total',
+    'engagement',
+    'marche',
+    'commande',
+    'echeance',
+    'reglement',
+    'règlement',
+    'paiement',
+    'virement',
+    'cheque',
+    'chèque',
+    'prelevement',
+    'prélèvement',
+    'service',
+    'destinataire',
+  ];
+  const snippets: string[] = [];
+
+  for (const pattern of patterns) {
+    const regex = new RegExp(pattern, 'ig');
+    let match: RegExpExecArray | null;
+    let count = 0;
+
+    while ((match = regex.exec(text)) !== null && count < 2) {
+      const start = Math.max(0, match.index - 120);
+      const end = Math.min(text.length, match.index + pattern.length + 180);
+      const snippet = compactWhitespace(text.slice(start, end));
+      if (snippet.length >= 20) {
+        snippets.push(snippet);
+      }
+      count += 1;
+    }
+  }
+
+  return uniqueValues(snippets).slice(0, 20).join('\n');
+}
+
+function buildReferenceHints(input: ReferenceHintInput): string {
+  const { text, fields, references } = input;
+  const supplierCandidates = rankNamedCandidates(text, references.suppliers as NamedReference[], fields.supplierSiret);
+  const customerCandidates = rankNamedCandidates(text, references.publicCustomers as NamedReference[], fields.publicCustomerSiret);
+  const serviceCandidates = rankServiceCandidates(
+    text,
+    references.publicServices as ServiceReference[],
+    fields.publicCustomerId,
+    fields.publicServiceCode,
+  );
+
+  const lines: string[] = [];
+
+  if (supplierCandidates.length > 0) {
+    lines.push('Suppliers:');
+    supplierCandidates.forEach((supplier) => {
+      lines.push(`- supplierOrganizationId=${supplier.id}; legalName=${supplier.legalName}; siret=${supplier.siret}`);
+    });
+  }
+
+  if (customerCandidates.length > 0) {
+    lines.push('Public customers:');
+    customerCandidates.forEach((customer) => {
+      const codeDestinataire = references.publicCustomers.find((item) => item.id === customer.id)?.codeDestinataire ?? '';
+      lines.push(`- publicCustomerId=${customer.id}; legalName=${customer.legalName}; siret=${customer.siret}; codeDestinataire=${codeDestinataire}`);
+    });
+  }
+
+  if (serviceCandidates.length > 0) {
+    lines.push('Public services:');
+    serviceCandidates.forEach((service) => {
+      lines.push(`- publicServiceId=${service.id}; publicCustomerId=${service.publicCustomerId}; codeServiceExecutant=${service.codeServiceExecutant}; label=${service.label}`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
 function findLabelledSiret(text: string, labels: string[]): string | undefined {
   const escapedLabels = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const regex = new RegExp(`(?:${escapedLabels.join('|')})[^\\d]{0,30}((?:\\d[\\s.-]?){14,20})`, 'i');
@@ -746,6 +1257,12 @@ export async function extractInvoiceData(
     fieldConfidences.push(currency.confidence ?? 0.6);
   }
 
+  const paymentMode = extractPaymentMode(text, rawText, sourceFormat);
+  if (paymentMode.value) {
+    fields.paymentMode = paymentMode.value;
+    fieldConfidences.push(paymentMode.confidence ?? 0.6);
+  }
+
   const totalAmountHt = extractAmount(text, rawText, sourceFormat, 'ht');
   if (totalAmountHt.value !== undefined) {
     fields.totalAmountHt = totalAmountHt.value;
@@ -776,7 +1293,14 @@ export async function extractInvoiceData(
     fieldConfidences.push(supplierVatNumber.confidence ?? 0.6);
   }
 
-  const llmEnrichedFields = await extractInvoiceDataWithOllama(text, sourceFormat, file.name, fields);
+  const llmEnrichedFields = await extractInvoiceDataWithOllama(rawText || text, sourceFormat, file.name, fields, {
+    evidenceText: buildKeywordEvidence(rawText || text),
+    referenceHints: buildReferenceHints({
+      text: rawText || text,
+      fields,
+      references,
+    }),
+  });
   Object.assign(fields, llmEnrichedFields);
 
   const candidateSirets = extractSiretCandidates(rawText);
@@ -952,7 +1476,7 @@ export async function extractInvoiceData(
     confidence,
     requiresReview,
     warnings: uniqueValues(warnings),
-    rawText: text,
-    rawTextPreview: text.slice(0, 240),
+    rawText,
+    rawTextPreview: normalizeStructuredPdfText(rawText).slice(0, 320),
   };
 }

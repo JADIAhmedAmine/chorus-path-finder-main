@@ -72,7 +72,9 @@ describe('chorus normalization', () => {
         warnings: [],
         rawText: 'Facture FAC-2026-001',
         rawTextPreview: 'Facture FAC-2026-001',
-        fields: {},
+        fields: {
+          paymentMode: 'VIREMENT',
+        },
       },
     });
 
@@ -83,6 +85,7 @@ describe('chorus normalization', () => {
     expect(normalized.supplierSiret).toBe('12345678901234');
     expect(normalized.publicCustomerCode).toBe('99001');
     expect(normalized.publicServiceCode).toBe('SE001');
+    expect(normalized.paymentMode).toBe('VIREMENT');
     expect(normalized.sourceFormat).toBe('PDF');
   });
 

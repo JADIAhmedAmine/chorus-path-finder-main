@@ -46,6 +46,7 @@ export interface ExtractedInvoiceDraftData {
   supplierOrganizationId?: string;
   supplierInvoiceNumber?: string;
   supplierName?: string;
+  paymentMode?: ChorusPaymentMode;
   publicCustomerId?: string;
   publicCustomerName?: string;
   publicServiceId?: string;
@@ -90,6 +91,7 @@ export interface NormalizedInvoiceDraftData {
   supplierOrganizationId?: string;
   supplierInvoiceNumber?: string;
   supplierName?: string;
+  paymentMode?: ChorusPaymentMode;
   publicCustomerId?: string;
   publicServiceId?: string;
   engagementNumber?: string;

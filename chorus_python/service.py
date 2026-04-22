@@ -75,13 +75,15 @@ class ChorusSubmissionService:
         payload: dict[str, Any],
         *,
         main_file: dict[str, Any] | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         self.client.reset_api_calls()
         final_payload = deepcopy(payload)
-        upload_result: ChorusUploadAttachmentResult | None = None
+        main_upload_result: ChorusUploadAttachmentResult | None = None
+        additional_uploads: list[tuple[dict[str, Any], ChorusUploadAttachmentResult]] = []
 
         if main_file is not None:
-            upload_result = self.client.upload_attachment_content(
+            main_upload_result = self.client.upload_attachment_content(
                 file_name=str(main_file["name"]),
                 file_base64=str(main_file["base64"]),
                 mime_type=str(main_file.get("mimeType") or "application/pdf"),
@@ -89,30 +91,61 @@ class ChorusSubmissionService:
             final_payload["pieceJointePrincipale"] = [
                 {
                     "pieceJointePrincipaleDesignation": str(main_file["name"]),
-                    "pieceJointePrincipaleId": upload_result.piece_jointe_id,
+                    "pieceJointePrincipaleId": main_upload_result.piece_jointe_id,
                 }
             ]
 
+        existing_additional_attachments = final_payload.get("pieceJointeComplementaire")
+        if not isinstance(existing_additional_attachments, list):
+            existing_additional_attachments = []
+
+        for attachment in attachments or []:
+            upload_result = self.client.upload_attachment_content(
+                file_name=str(attachment["name"]),
+                file_base64=str(attachment["base64"]),
+                mime_type=str(attachment.get("mimeType") or "application/octet-stream"),
+            )
+            existing_additional_attachments.append(
+                {
+                    "pieceJointeComplementaireDesignation": str(attachment["name"]),
+                    "pieceJointeComplementaireId": upload_result.piece_jointe_id,
+                }
+            )
+            additional_uploads.append((attachment, upload_result))
+
+        final_payload["pieceJointeComplementaire"] = existing_additional_attachments
+
         response = self.client.submit_invoice(final_payload)
+        uploaded_files: list[dict[str, Any]] = []
+        if main_upload_result is not None and main_file is not None:
+            uploaded_files.append(
+                {
+                    "id": str(main_upload_result.piece_jointe_id),
+                    "filename": str(main_file["name"]),
+                    "response": main_upload_result.response,
+                }
+            )
+        for attachment, upload_result in additional_uploads:
+            uploaded_files.append(
+                {
+                    "id": str(upload_result.piece_jointe_id),
+                    "filename": str(attachment["name"]),
+                    "response": upload_result.response,
+                }
+            )
+
         result = {
             "ok": True,
             "payload": final_payload,
             "response": response,
             "apiCalls": list(self.client.api_calls),
-            "uploadedFiles": [],
+            "uploadedFiles": uploaded_files,
         }
-        if upload_result is not None:
+        if main_upload_result is not None:
             result["upload"] = {
-                "piece_jointe_id": upload_result.piece_jointe_id,
-                "response": upload_result.response,
+                "piece_jointe_id": main_upload_result.piece_jointe_id,
+                "response": main_upload_result.response,
             }
-            result["uploadedFiles"] = [
-                {
-                    "id": str(upload_result.piece_jointe_id),
-                    "filename": str(main_file["name"]),
-                    "response": upload_result.response,
-                }
-            ]
         return result
 
     def submit_invoice(self, invoice: ChorusMinimalInvoiceInput) -> dict[str, Any]:

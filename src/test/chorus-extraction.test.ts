@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { extractInvoiceData } from '@/lib/chorus/extraction';
 import { publicCustomersFixture, publicServicesFixture, suppliersFixture } from '@/test/fixtures/reference-data';
@@ -113,6 +114,64 @@ describe('chorus extraction', () => {
     expect(result.fields.totalAmountTtc).toBe(244242);
   }, 10000);
 
+  it('extracts the payment mode when it is explicitly labelled', async () => {
+    const file = new File([`
+      Facture numéro : FAC-PM-2026-01
+      Date facture : 15/04/2026
+      Mode de règlement : Virement bancaire
+      Total HT : 100,00 EUR
+      Total TTC : 120,00 EUR
+    `], 'invoice-payment-mode.pdf', { type: 'application/pdf' });
+
+    const result = await extractInvoiceData(file, {
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
+    });
+
+    expect(result.fields.paymentMode).toBe('VIREMENT');
+  }, 10000);
+
+  it('rebuilds a better reading order from positioned pdf text operators', async () => {
+    const file = new File([`
+      %PDF-1.4
+      1 0 obj
+      <<
+      /Length 256
+      >>
+      stream
+      BT
+      72 720 Tm
+      (Facture N° : FAC-STRUCT-2026-01) Tj
+      T*
+      (Date facture : 15/04/2026) Tj
+      T*
+      (Mode de règlement : Virement bancaire) '
+      T*
+      (Total HT : 100,00 EUR) Tj
+      T*
+      (Total TTC : 120,00 EUR) Tj
+      ET
+      endstream
+      endobj
+    `], 'structured-layout.pdf', { type: 'application/pdf' });
+
+    const result = await extractInvoiceData(file, {
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
+    });
+
+    expect(result.rawText).toContain('Facture N° : FAC-STRUCT-2026-01');
+    expect(result.rawText).toContain('Date facture : 15/04/2026');
+    expect(result.rawText).toContain('Mode de règlement : Virement bancaire');
+    expect(result.fields.supplierInvoiceNumber).toBe('FAC-STRUCT-2026-01');
+    expect(result.fields.invoiceDate).toBe('2026-04-15');
+    expect(result.fields.paymentMode).toBe('VIREMENT');
+    expect(result.fields.totalAmountHt).toBe(100);
+    expect(result.fields.totalAmountTtc).toBe(120);
+  }, 10000);
+
   it('extracts the key metadata from the Gigalis invoice layout', async () => {
     const file = new File([`
       gigalis
@@ -169,4 +228,32 @@ describe('chorus extraction', () => {
     expect(result.warnings).toContain('Destinataire extrait mais non rapproché des références locales.');
     expect(result.warnings).toContain('Service destinataire extrait mais non rapproché des références locales.');
   }, 10000);
+
+  it('extracts the relevant metadata from the real pdf sample 2026-003-00565.pdf', async () => {
+    const buffer = await readFile(new URL('../../2026-003-00565.pdf', import.meta.url));
+    const file = new File([buffer], '2026-003-00565.pdf', { type: 'application/pdf' });
+
+    const result = await extractInvoiceData(file, {
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
+    });
+
+    expect(result.fields.supplierName).toBe('GIP Gigalis');
+    expect(result.fields.supplierInvoiceNumber).toBe('2026-003-00565');
+    expect(result.fields.customerReference).toBe('1903');
+    expect(result.fields.invoiceDate).toBe('2026-03-16');
+    expect(result.fields.dueDate).toBe('2026-04-15');
+    expect(result.fields.supplierSiret).toBe('25440253000011');
+    expect(result.fields.supplierVatNumber).toBe('FR59254402530');
+    expect(result.fields.publicCustomerName).toBe('REGION DES PAYS DE LA LOIRE - SI EPLE');
+    expect(result.fields.publicCustomerSiret).toBe('23440003400026');
+    expect(result.fields.publicServiceLabel).toBe('Comptabilité fournisseurs');
+    expect(result.fields.engagementNumber).toBe('BC2025/25-007915');
+    expect(result.fields.currencyCode).toBe('EUR');
+    expect(result.fields.paymentMode).toBe('CHEQUE');
+    expect(result.fields.totalAmountHt).toBe(45903.52);
+    expect(result.fields.totalVat).toBe(9180.7);
+    expect(result.fields.totalAmountTtc).toBe(55084.22);
+  }, 15000);
 });
