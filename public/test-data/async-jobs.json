@@ -1,0 +1,96 @@
+{
+  "asyncJobs": [
+    {
+      "id": "job-invoice-test-0001",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0001",
+      "jobType": "CHORUS_STATUS_SYNC",
+      "status": "DONE",
+      "attemptCount": 0,
+      "maxAttempts": 5,
+      "payload": {
+        "invoiceId": "invoice-test-0001",
+        "supplierInvoiceNumber": "2025-006-01012"
+      },
+      "createdAt": "2025-06-03T08:00:00.000Z",
+      "updatedAt": "2025-06-03T12:00:00.000Z"
+    },
+    {
+      "id": "job-invoice-test-0002",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0002",
+      "jobType": "SUBMISSION_RETRY_GUARD",
+      "status": "RUNNING",
+      "attemptCount": 1,
+      "maxAttempts": 5,
+      "payload": {
+        "invoiceId": "invoice-test-0002",
+        "supplierInvoiceNumber": "2025-006-01013"
+      },
+      "createdAt": "2025-06-03T10:00:00.000Z",
+      "updatedAt": "2025-06-03T14:00:00.000Z"
+    },
+    {
+      "id": "job-invoice-test-0003",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0003",
+      "jobType": "CHORUS_STATUS_SYNC",
+      "status": "PENDING",
+      "attemptCount": 2,
+      "maxAttempts": 5,
+      "nextAttemptAt": "2026-04-22T08:38:20.345Z",
+      "payload": {
+        "invoiceId": "invoice-test-0003",
+        "supplierInvoiceNumber": "2025-006-01014"
+      },
+      "createdAt": "2025-06-03T12:00:00.000Z",
+      "updatedAt": "2025-06-03T16:00:00.000Z"
+    },
+    {
+      "id": "job-invoice-test-0004",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0004",
+      "jobType": "SUBMISSION_RETRY_GUARD",
+      "status": "DONE",
+      "attemptCount": 0,
+      "maxAttempts": 5,
+      "payload": {
+        "invoiceId": "invoice-test-0004",
+        "supplierInvoiceNumber": "2025-006-01015"
+      },
+      "createdAt": "2025-06-03T14:00:00.000Z",
+      "updatedAt": "2025-06-03T18:00:00.000Z"
+    },
+    {
+      "id": "job-invoice-test-0005",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "jobType": "CHORUS_STATUS_SYNC",
+      "status": "RUNNING",
+      "attemptCount": 1,
+      "maxAttempts": 5,
+      "payload": {
+        "invoiceId": "invoice-test-0005",
+        "supplierInvoiceNumber": "2025-006-01016"
+      },
+      "createdAt": "2025-06-03T16:00:00.000Z",
+      "updatedAt": "2025-06-03T20:00:00.000Z"
+    },
+    {
+      "id": "job-invoice-test-0006",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0006",
+      "jobType": "SUBMISSION_RETRY_GUARD",
+      "status": "PENDING",
+      "attemptCount": 2,
+      "maxAttempts": 5,
+      "nextAttemptAt": "2026-04-22T08:38:20.346Z",
+      "payload": {
+        "invoiceId": "invoice-test-0006",
+        "supplierInvoiceNumber": "2025-006-01017"
+      },
+      "createdAt": "2025-06-03T18:00:00.000Z",
+      "updatedAt": "2025-06-03T22:00:00.000Z"
+    }
+  ]
+}

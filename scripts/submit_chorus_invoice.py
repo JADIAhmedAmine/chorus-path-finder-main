@@ -21,7 +21,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--recipient-code", help="codeDestinataire Chorus.")
     parser.add_argument("--service-code", help="codeServiceExecutant Chorus.")
     parser.add_argument("--supplier-id", type=int, help="idFournisseur Chorus.")
-    parser.add_argument("--current-user-id", type=int, help="idUtilisateurCourant Chorus, requis si upload PDF.")
     parser.add_argument("--bank-account-code", type=int, help="codeCoordonneesBancairesFournisseur.")
     parser.add_argument("--invoice-date", help="Date facture au format ISO (YYYY-MM-DD).")
     parser.add_argument("--comment", help="Commentaire libre ajouté au payload.")
@@ -47,7 +46,6 @@ def main() -> int:
         recipient_code=args.recipient_code,
         service_executant_code=args.service_code,
         supplier_id=args.supplier_id,
-        current_user_id=args.current_user_id,
         bank_account_code=args.bank_account_code,
         invoice_date=args.invoice_date,
         comment=args.comment,

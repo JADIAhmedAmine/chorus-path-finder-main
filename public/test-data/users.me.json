@@ -1,0 +1,13 @@
+{
+  "user": {
+    "id": "user-marie-dupont",
+    "tenantId": "tenant-gigalis-test",
+    "email": "marie.dupont@acme-solutions.fr",
+    "firstName": "Marie",
+    "lastName": "Dupont",
+    "roleCode": "GESTIONNAIRE",
+    "active": true,
+    "createdAt": "2025-06-03T08:00:00.000Z",
+    "updatedAt": "2025-06-03T08:00:00.000Z"
+  }
+}

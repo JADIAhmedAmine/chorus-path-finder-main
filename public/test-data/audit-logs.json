@@ -1,0 +1,376 @@
+{
+  "auditLogs": [
+    {
+      "id": "audit-create-invoice-test-0001",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0001",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01012",
+        "statusInternal": "DRAFT_STRUCTURED"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T08:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0001",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0001",
+      "diff": {
+        "statusInternal": "DRAFT_STRUCTURED",
+        "statusChorus": null
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T12:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0002",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0002",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01013",
+        "statusInternal": "READY_FOR_SUBMISSION"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T10:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0002",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0002",
+      "diff": {
+        "statusInternal": "READY_FOR_SUBMISSION",
+        "statusChorus": null
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T14:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0003",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0003",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01014",
+        "statusInternal": "SUBMITTED_TO_CHORUS"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T12:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0003",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0003",
+      "diff": {
+        "statusInternal": "SUBMITTED_TO_CHORUS",
+        "statusChorus": "DEPOSEE"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T16:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0004",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0004",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01015",
+        "statusInternal": "ACCEPTED_BY_CHORUS"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T14:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0004",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0004",
+      "diff": {
+        "statusInternal": "ACCEPTED_BY_CHORUS",
+        "statusChorus": "MISE_A_DISPOSITION"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T18:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0005",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0005",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01016",
+        "statusInternal": "PAID"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T16:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0005",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0005",
+      "diff": {
+        "statusInternal": "PAID",
+        "statusChorus": "MISE_EN_PAIEMENT"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T20:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0006",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0006",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01017",
+        "statusInternal": "PENDING_HUMAN_REVIEW"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T18:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0006",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0006",
+      "diff": {
+        "statusInternal": "PENDING_HUMAN_REVIEW",
+        "statusChorus": null
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T22:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0007",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0007",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01018",
+        "statusInternal": "REJECTED_BUSINESS"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T20:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0007",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0007",
+      "diff": {
+        "statusInternal": "REJECTED_BUSINESS",
+        "statusChorus": "REJETEE"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T00:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0008",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0008",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01019",
+        "statusInternal": "DRAFT_STRUCTURED"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-03T22:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0008",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0008",
+      "diff": {
+        "statusInternal": "DRAFT_STRUCTURED",
+        "statusChorus": null
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T02:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0009",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0009",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01020",
+        "statusInternal": "READY_FOR_SUBMISSION"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T00:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0009",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0009",
+      "diff": {
+        "statusInternal": "READY_FOR_SUBMISSION",
+        "statusChorus": null
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T04:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0010",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0010",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01021",
+        "statusInternal": "SUBMITTED_TO_CHORUS"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T02:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0010",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0010",
+      "diff": {
+        "statusInternal": "SUBMITTED_TO_CHORUS",
+        "statusChorus": "DEPOSEE"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T06:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0011",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0011",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01022",
+        "statusInternal": "ACCEPTED_BY_CHORUS"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T04:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0011",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0011",
+      "diff": {
+        "statusInternal": "ACCEPTED_BY_CHORUS",
+        "statusChorus": "MISE_A_DISPOSITION"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T08:00:00.000Z"
+    },
+    {
+      "id": "audit-create-invoice-test-0012",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "USER",
+      "actorId": "user-marie-dupont",
+      "actionCode": "INVOICE_CREATED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0012",
+      "diff": {
+        "supplierInvoiceNumber": "2025-006-01023",
+        "statusInternal": "PAID"
+      },
+      "ipAddress": "127.0.0.1",
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T06:00:00.000Z"
+    },
+    {
+      "id": "audit-update-invoice-test-0012",
+      "tenantId": "tenant-gigalis-test",
+      "actorType": "SYSTEM",
+      "actorId": "chorus-sync",
+      "actionCode": "INVOICE_STATUS_SYNCED",
+      "entityType": "INVOICE",
+      "entityId": "invoice-test-0012",
+      "diff": {
+        "statusInternal": "PAID",
+        "statusChorus": "MISE_EN_PAIEMENT"
+      },
+      "userAgent": "FacturX Pro Test Data Generator",
+      "createdAt": "2025-06-04T10:00:00.000Z"
+    }
+  ]
+}

@@ -268,6 +268,19 @@ export default function SettingsPage() {
               <Input id="submit-invoice-path" value={config.submitInvoicePath} onChange={(e) => handleFieldChange('submitInvoicePath', e.target.value)} placeholder="/factures/soumettre" />
             </div>
 
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="submission-bridge-url">Endpoint backend Python de soumission</Label>
+              <Input
+                id="submission-bridge-url"
+                value={config.submissionBridgeUrl}
+                onChange={(e) => handleFieldChange('submissionBridgeUrl', e.target.value)}
+                placeholder="http://127.0.0.1:8008/api/chorus/submit"
+              />
+              <p className="text-xs text-muted-foreground">
+                Si renseigné, l&apos;interface délègue l&apos;upload PDF et la soumission à `chorus_python` au lieu d&apos;appeler Chorus directement depuis le navigateur.
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="reference-api-base-url">Base API référentiels</Label>
               <Input

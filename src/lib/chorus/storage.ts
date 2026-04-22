@@ -118,6 +118,7 @@ export function getDefaultChorusConfig(): ChorusConfig {
     submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', ''),
     userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', DEFAULT_USER_ACCOUNT_PATH),
     userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', DEFAULT_USER_CONNECTIONS_PATH),
+    submissionBridgeUrl: envValue('VITE_CHORUS_SUBMISSION_BRIDGE_URL', ''),
     submissionCurrentUserId: envValue('VITE_CHORUS_SUBMISSION_CURRENT_USER_ID', ''),
     submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', '26359578'),
     submissionSupplierServiceId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID', ''),

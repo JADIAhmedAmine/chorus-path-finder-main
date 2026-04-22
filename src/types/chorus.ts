@@ -30,6 +30,7 @@ export interface ChorusConfig {
   submitInvoicePath: string;
   userAccountPath: string;
   userConnectionsPath: string;
+  submissionBridgeUrl: string;
   submissionCurrentUserId: string;
   submissionSupplierId: string;
   submissionSupplierServiceId: string;
@@ -118,6 +119,7 @@ export interface ChorusSubmitInvoiceResult {
   ok: boolean;
   externalId?: string;
   uploadedFiles: ChorusUploadedFile[];
+  submittedPayload?: unknown;
   response?: unknown;
   apiCalls: ChorusApiDebugEntry[];
 }

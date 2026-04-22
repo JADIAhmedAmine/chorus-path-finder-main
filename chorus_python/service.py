@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from decimal import Decimal
 from typing import Any
 
@@ -49,14 +50,9 @@ class ChorusSubmissionService:
             if rate not in tva_code_by_rate:
                 tva_code_by_rate[rate] = self.client.resolve_tva_code(rate)
 
-        current_user_id = invoice.current_user_id or self.settings.default_current_user_id
         upload_result: ChorusUploadAttachmentResult | None = None
         if invoice.pdf_path is not None:
-            if current_user_id is None:
-                raise ValueError(
-                    "idUtilisateurCourant est requis pour l'upload de la pièce jointe via /transverses/v1/ajouter/fichier."
-                )
-            upload_result = self.client.upload_attachment(invoice.pdf_path, current_user_id)
+            upload_result = self.client.upload_attachment(invoice.pdf_path)
 
         payload = build_minimal_submission_payload(
             invoice,
@@ -74,16 +70,72 @@ class ChorusSubmissionService:
         payload, _upload_result = self._prepare_submission(invoice)
         return payload
 
-    def submit_invoice(self, invoice: ChorusMinimalInvoiceInput) -> dict[str, Any]:
-        payload, upload_result = self._prepare_submission(invoice)
-        response = self.client.submit_invoice(payload)
+    def submit_prepared_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        main_file: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self.client.reset_api_calls()
+        final_payload = deepcopy(payload)
+        upload_result: ChorusUploadAttachmentResult | None = None
+
+        if main_file is not None:
+            upload_result = self.client.upload_attachment_content(
+                file_name=str(main_file["name"]),
+                file_base64=str(main_file["base64"]),
+                mime_type=str(main_file.get("mimeType") or "application/pdf"),
+            )
+            final_payload["pieceJointePrincipale"] = [
+                {
+                    "pieceJointePrincipaleDesignation": str(main_file["name"]),
+                    "pieceJointePrincipaleId": upload_result.piece_jointe_id,
+                }
+            ]
+
+        response = self.client.submit_invoice(final_payload)
         result = {
-            "payload": payload,
+            "ok": True,
+            "payload": final_payload,
             "response": response,
+            "apiCalls": list(self.client.api_calls),
+            "uploadedFiles": [],
         }
         if upload_result is not None:
             result["upload"] = {
                 "piece_jointe_id": upload_result.piece_jointe_id,
                 "response": upload_result.response,
             }
+            result["uploadedFiles"] = [
+                {
+                    "id": str(upload_result.piece_jointe_id),
+                    "filename": str(main_file["name"]),
+                    "response": upload_result.response,
+                }
+            ]
+        return result
+
+    def submit_invoice(self, invoice: ChorusMinimalInvoiceInput) -> dict[str, Any]:
+        self.client.reset_api_calls()
+        payload, upload_result = self._prepare_submission(invoice)
+        response = self.client.submit_invoice(payload)
+        result = {
+            "ok": True,
+            "payload": payload,
+            "response": response,
+            "apiCalls": list(self.client.api_calls),
+            "uploadedFiles": [],
+        }
+        if upload_result is not None:
+            result["upload"] = {
+                "piece_jointe_id": upload_result.piece_jointe_id,
+                "response": upload_result.response,
+            }
+            result["uploadedFiles"] = [
+                {
+                    "id": str(upload_result.piece_jointe_id),
+                    "filename": invoice.pdf_path.name if invoice.pdf_path is not None else (invoice.pdf_designation or "facture.pdf"),
+                    "response": upload_result.response,
+                }
+            ]
         return result

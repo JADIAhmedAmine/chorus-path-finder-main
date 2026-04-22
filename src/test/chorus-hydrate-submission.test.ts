@@ -10,7 +10,9 @@ function createPayload(): ChorusSubmissionPayload {
     },
     dateFacture: '2026-03-16',
     destinataire: {},
-    fournisseur: {},
+    fournisseur: {
+      idFournisseur: 26359578,
+    },
     lignePoste: [{
       lignePosteDenomination: 'Facture 2026-003-00565',
       lignePosteMontantUnitaireHT: 45903.52,
@@ -107,14 +109,13 @@ describe('hydrateChorusSubmissionPayloadWithSnapshot', () => {
       createNormalized(),
     );
 
-    expect(result.payload.fournisseur.idFournisseur).toBe(32242033407300);
+    expect(result.payload.fournisseur.idFournisseur).toBe(26359578);
     expect(result.payload.fournisseur.codeCoordonneesBancairesFournisseur).toBe(132);
     expect(result.payload.destinataire.codeDestinataire).toBe('23440003400026');
     expect(result.payload.destinataire.codeServiceExecutant).toBe('SE001');
     expect(result.payload.lignePoste[0]?.lignePosteTauxTva).toBe('TVA20');
     expect(result.payload.ligneTva[0]?.ligneTvaTaux).toBe('TVA20');
     expect(result.changes.map((change) => change.path)).toEqual(expect.arrayContaining([
-      'fournisseur.idFournisseur',
       'fournisseur.codeCoordonneesBancairesFournisseur',
       'destinataire.codeDestinataire',
       'destinataire.codeServiceExecutant',

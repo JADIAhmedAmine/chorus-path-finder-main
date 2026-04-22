@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import Decimal
+import json
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +89,19 @@ class ChorusClient:
         self.settings = settings
         self.session = session or requests.Session()
         self._access_token: str | None = None
+        self.api_calls: list[dict[str, Any]] = []
+
+    def reset_api_calls(self) -> None:
+        self.api_calls = []
+
+    def _sanitize_debug_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        sanitized = dict(payload)
+        for key in ("pieceJointeFichier", "fichierFacture"):
+            value = sanitized.get(key)
+            if isinstance(value, str) and value:
+                preview = value[:80]
+                sanitized[key] = f"[base64 masque, {len(value)} caracteres, apercu: {preview}...]"
+        return sanitized
 
     def _fetch_oauth_token(self) -> str:
         if self._access_token:
@@ -137,9 +151,10 @@ class ChorusClient:
             "cpro-account": self.settings.cpro_account,
         }
 
-    def _post_json(self, path: str, payload: dict[str, Any], label: str) -> Any:
+    def _post_json_raw(self, path: str, payload: dict[str, Any], label: str) -> tuple[int, Any]:
+        url = join_url(self.settings.base_url, path)
         response = self.session.post(
-            join_url(self.settings.base_url, path),
+            url,
             json=payload,
             headers=self._headers(),
             timeout=self.settings.timeout_seconds,
@@ -150,10 +165,30 @@ class ChorusClient:
         except ValueError:
             body = response.text.strip()
 
-        if not response.ok:
-            raise ChorusApiError(f"{label} échoué ({response.status_code}): {body}")
+        self.api_calls.append(
+            {
+                "label": label,
+                "method": "POST",
+                "url": url,
+                "requestBody": self._sanitize_debug_payload(payload),
+                "responseStatus": response.status_code,
+                "responseBody": body,
+            }
+        )
+
+        return response.status_code, body
+
+    def _post_json(self, path: str, payload: dict[str, Any], label: str) -> Any:
+        status_code, body = self._post_json_raw(path, payload, label)
+
+        if status_code >= 400:
+            raise ChorusApiError(f"{label} échoué ({status_code}): {body}")
 
         return body
+
+    def _should_retry_with_modern_upload_schema(self, body: Any) -> bool:
+        raw_text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+        return all(keyword in raw_text for keyword in ("fichierFacture", "formatDepot", "nomFichier"))
 
     def fetch_tva_rates(self, code_langue: str = "FR") -> list[dict[str, Any]]:
         body = self._post_json(
@@ -310,19 +345,40 @@ class ChorusClient:
         # TODO: if several accounts exist, branch a real business selection rule.
         return None
 
-    def upload_attachment(self, pdf_path: Path, current_user_id: int) -> ChorusUploadAttachmentResult:
-        payload = {
-            "idUtilisateurCourant": current_user_id,
-            "pieceJointeExtension": detect_extension(pdf_path),
-            "pieceJointeFichier": pdf_to_base64(pdf_path),
-            "pieceJointeNom": pdf_path.name,
-            "pieceJointeTypeMime": detect_mime_type(pdf_path),
+    def upload_attachment_content(
+        self,
+        *,
+        file_name: str,
+        file_base64: str,
+        mime_type: str,
+    ) -> ChorusUploadAttachmentResult:
+        legacy_payload: dict[str, Any] = {
+            "pieceJointeExtension": detect_extension(Path(file_name)),
+            "pieceJointeFichier": file_base64,
+            "pieceJointeNom": file_name,
+            "pieceJointeTypeMime": mime_type,
         }
-        body = self._post_json(
+
+        status_code, body = self._post_json_raw(
             "/transverses/v1/ajouter/fichier",
-            payload,
+            legacy_payload,
             "Upload de la pièce jointe principale",
         )
+
+        if status_code >= 400 and self._should_retry_with_modern_upload_schema(body):
+            modern_payload: dict[str, Any] = {
+                "fichierFacture": file_base64,
+                "formatDepot": "PDF_NON_SIGNE",
+                "nomFichier": file_name,
+            }
+            status_code, body = self._post_json_raw(
+                "/transverses/v1/ajouter/fichier",
+                modern_payload,
+                "Upload de la pièce jointe principale (fallback formatDepot)",
+            )
+
+        if status_code >= 400:
+            raise ChorusApiError(f"Upload de la pièce jointe principale échoué ({status_code}): {body}")
 
         piece_jointe_id = find_first_integer(
             body,
@@ -343,6 +399,13 @@ class ChorusClient:
         return ChorusUploadAttachmentResult(
             piece_jointe_id=piece_jointe_id,
             response=body,
+        )
+
+    def upload_attachment(self, pdf_path: Path) -> ChorusUploadAttachmentResult:
+        return self.upload_attachment_content(
+            file_name=pdf_path.name,
+            file_base64=pdf_to_base64(pdf_path),
+            mime_type=detect_mime_type(pdf_path),
         )
 
     def submit_invoice(self, payload: dict[str, Any]) -> Any:

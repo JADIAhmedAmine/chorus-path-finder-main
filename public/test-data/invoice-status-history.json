@@ -1,0 +1,712 @@
+{
+  "statusHistory": [
+    {
+      "id": "history-invoice-test-0001-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0001",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0001",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T08:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0001-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0001",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0001",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T08:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0002-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0002",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0002",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T10:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0002-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0002",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0002",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T10:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0002-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0002",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "READY_FOR_SUBMISSION",
+      "eventCode": "PAYLOAD_READY",
+      "eventLabel": "Payload Chorus pret",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0002",
+        "status": "READY_FOR_SUBMISSION"
+      },
+      "occurredAt": "2025-06-03T10:30:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0003-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0003",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0003",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T12:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0003-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0003",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0003",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T12:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0003-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0003",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0003",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-03T12:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0003-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0003",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0003",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-03T13:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0004-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0004",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0004",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T14:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0004-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0004",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0004",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T14:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0004-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0004",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0004",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-03T14:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0004-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0004",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0004",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-03T15:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0004-5",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0004",
+      "source": "CHORUS",
+      "previousStatus": "SUBMITTED_TO_CHORUS",
+      "newStatus": "ACCEPTED_BY_CHORUS",
+      "eventCode": "CHORUS_ACCEPTED",
+      "eventLabel": "Facture acceptee par Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0004",
+        "status": "ACCEPTED_BY_CHORUS"
+      },
+      "occurredAt": "2025-06-04T14:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0005-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0005",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T16:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0005-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0005",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T16:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0005-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0005",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-03T16:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0005-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0005",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-03T17:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0005-5",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "source": "CHORUS",
+      "previousStatus": "SUBMITTED_TO_CHORUS",
+      "newStatus": "ACCEPTED_BY_CHORUS",
+      "eventCode": "CHORUS_ACCEPTED",
+      "eventLabel": "Facture acceptee par Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0005",
+        "status": "ACCEPTED_BY_CHORUS"
+      },
+      "occurredAt": "2025-06-04T16:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0005-6",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0005",
+      "source": "CHORUS",
+      "previousStatus": "ACCEPTED_BY_CHORUS",
+      "newStatus": "PAID",
+      "eventCode": "CHORUS_PAID",
+      "eventLabel": "Facture payee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0005",
+        "status": "PAID"
+      },
+      "occurredAt": "2025-06-17T16:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0006-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0006",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0006",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T18:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0006-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0006",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0006",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T18:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0006-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0006",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "PENDING_HUMAN_REVIEW",
+      "eventCode": "REVIEW_REQUIRED",
+      "eventLabel": "Controle humain demande",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0006",
+        "status": "PENDING_HUMAN_REVIEW"
+      },
+      "occurredAt": "2025-06-03T18:30:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0007-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0007",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0007",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T20:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0007-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0007",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0007",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T20:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0007-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0007",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0007",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-03T20:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0007-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0007",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0007",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-03T21:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0007-5",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0007",
+      "source": "CHORUS",
+      "previousStatus": "SUBMITTED_TO_CHORUS",
+      "newStatus": "REJECTED_BUSINESS",
+      "eventCode": "CHORUS_REJECTED",
+      "eventLabel": "Facture rejetee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0007",
+        "status": "REJECTED_BUSINESS"
+      },
+      "occurredAt": "2025-06-05T20:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0008-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0008",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0008",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-03T22:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0008-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0008",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0008",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-03T22:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0009-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0009",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0009",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-04T00:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0009-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0009",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0009",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-04T00:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0009-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0009",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "READY_FOR_SUBMISSION",
+      "eventCode": "PAYLOAD_READY",
+      "eventLabel": "Payload Chorus pret",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0009",
+        "status": "READY_FOR_SUBMISSION"
+      },
+      "occurredAt": "2025-06-04T00:30:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0010-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0010",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0010",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-04T02:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0010-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0010",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0010",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-04T02:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0010-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0010",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0010",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-04T02:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0010-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0010",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0010",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-04T03:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0011-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0011",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0011",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-04T04:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0011-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0011",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0011",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-04T04:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0011-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0011",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0011",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-04T04:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0011-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0011",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0011",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-04T05:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0011-5",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0011",
+      "source": "CHORUS",
+      "previousStatus": "SUBMITTED_TO_CHORUS",
+      "newStatus": "ACCEPTED_BY_CHORUS",
+      "eventCode": "CHORUS_ACCEPTED",
+      "eventLabel": "Facture acceptee par Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0011",
+        "status": "ACCEPTED_BY_CHORUS"
+      },
+      "occurredAt": "2025-06-05T04:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0012-1",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0012",
+      "source": "USER",
+      "newStatus": "DRAFT_UPLOADED",
+      "eventCode": "UPLOAD_RECEIVED",
+      "eventLabel": "Facture chargee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0012",
+        "status": "DRAFT_UPLOADED"
+      },
+      "occurredAt": "2025-06-04T06:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0012-2",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0012",
+      "source": "SYSTEM",
+      "previousStatus": "DRAFT_UPLOADED",
+      "newStatus": "DRAFT_STRUCTURED",
+      "eventCode": "EXTRACTION_DONE",
+      "eventLabel": "Extraction locale terminee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0012",
+        "status": "DRAFT_STRUCTURED"
+      },
+      "occurredAt": "2025-06-04T06:10:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0012-3",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0012",
+      "source": "USER",
+      "previousStatus": "DRAFT_STRUCTURED",
+      "newStatus": "SUBMISSION_REQUESTED",
+      "eventCode": "SUBMISSION_REQUESTED",
+      "eventLabel": "Soumission demandee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0012",
+        "status": "SUBMISSION_REQUESTED"
+      },
+      "occurredAt": "2025-06-04T06:45:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0012-4",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0012",
+      "source": "CHORUS",
+      "previousStatus": "SUBMISSION_REQUESTED",
+      "newStatus": "SUBMITTED_TO_CHORUS",
+      "eventCode": "SUBMITTED_TO_CHORUS",
+      "eventLabel": "Facture transmise a Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0012",
+        "status": "SUBMITTED_TO_CHORUS"
+      },
+      "occurredAt": "2025-06-04T07:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0012-5",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0012",
+      "source": "CHORUS",
+      "previousStatus": "SUBMITTED_TO_CHORUS",
+      "newStatus": "ACCEPTED_BY_CHORUS",
+      "eventCode": "CHORUS_ACCEPTED",
+      "eventLabel": "Facture acceptee par Chorus",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0012",
+        "status": "ACCEPTED_BY_CHORUS"
+      },
+      "occurredAt": "2025-06-05T06:00:00.000Z"
+    },
+    {
+      "id": "history-invoice-test-0012-6",
+      "tenantId": "tenant-gigalis-test",
+      "invoiceId": "invoice-test-0012",
+      "source": "CHORUS",
+      "previousStatus": "ACCEPTED_BY_CHORUS",
+      "newStatus": "PAID",
+      "eventCode": "CHORUS_PAID",
+      "eventLabel": "Facture payee",
+      "rawSnapshot": {
+        "invoiceId": "invoice-test-0012",
+        "status": "PAID"
+      },
+      "occurredAt": "2025-06-18T06:00:00.000Z"
+    }
+  ]
+}

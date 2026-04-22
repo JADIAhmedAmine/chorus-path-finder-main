@@ -1,0 +1,136 @@
+{
+  "publicCustomers": [
+    {
+      "id": "annuaire-00000000380342",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000380342",
+      "legalName": "26321024DESTINATAIRE2",
+      "siret": "00000000380342",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000380474",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000380474",
+      "legalName": "26321033MOA",
+      "siret": "00000000380474",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000380284",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000380284",
+      "legalName": "26321023DESTINATAIRE2",
+      "siret": "00000000380284",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000380499",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000380499",
+      "legalName": "26264382MOA",
+      "siret": "00000000380499",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000313995",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000313995",
+      "legalName": "26219329MOA",
+      "siret": "00000000313995",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000314201",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000314201",
+      "legalName": "26220150MOA",
+      "siret": "00000000314201",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000315967",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000315967",
+      "legalName": "26220941DESTINATAIRE2",
+      "siret": "00000000315967",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000335412",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000335412",
+      "legalName": "26256450MOA",
+      "siret": "00000000335412",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000335429",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000335429",
+      "legalName": "26256365MOA",
+      "siret": "00000000335429",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000335503",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000335503",
+      "legalName": "26256367DESTINATAIRE2",
+      "siret": "00000000335503",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000137412",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000137412",
+      "legalName": "26021612DESTINATAIRE2",
+      "siret": "00000000137412",
+      "structureType": "MOA",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000138014",
+      "tenantId": "tenant-gigalis-test",
+      "codeDestinataire": "00000000138014",
+      "legalName": "26021622DESTINATAIRE",
+      "siret": "00000000138014",
+      "structureType": "PUBLIC",
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    }
+  ]
+}

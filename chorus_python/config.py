@@ -86,7 +86,6 @@ class ChorusSettings:
     timeout_seconds: float = 30.0
     fixed: ChorusFixedValues = field(default_factory=ChorusFixedValues)
     default_supplier_id: int | None = None
-    default_current_user_id: int | None = None
     default_code_destinataire: str | None = None
     default_code_service_executant: str | None = None
     default_bank_account_code: int | None = None
@@ -152,7 +151,6 @@ def load_chorus_settings(env_files: Iterable[Path] | None = None) -> ChorusSetti
         scope=env.get("CHORUS_SCOPE", "").strip() or env.get("VITE_CHORUS_SCOPE", "").strip() or "openid",
         timeout_seconds=timeout_seconds,
         default_supplier_id=read_optional_int(env.get("CHORUS_SUPPLIER_ID")) or read_optional_int(env.get("VITE_CHORUS_SUBMISSION_SUPPLIER_ID")),
-        default_current_user_id=read_optional_int(env.get("CHORUS_CURRENT_USER_ID")) or read_optional_int(env.get("VITE_CHORUS_SUBMISSION_CURRENT_USER_ID")),
         default_code_destinataire=(env.get("CHORUS_DESTINATAIRE_CODE", "").strip() or None),
         default_code_service_executant=(env.get("CHORUS_SERVICE_EXECUTANT_CODE", "").strip() or None),
         default_bank_account_code=read_optional_int(env.get("CHORUS_BANK_ACCOUNT_CODE")) or read_optional_int(env.get("VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE")),

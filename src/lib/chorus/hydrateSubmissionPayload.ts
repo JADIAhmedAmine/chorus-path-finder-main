@@ -12,7 +12,6 @@ import type {
   ChorusTransverseCodeListItem,
   ChorusTransverseOperatingService,
   ChorusTransverseRecipient,
-  ChorusTransverseStructure,
   ChorusTransverseVatRate,
 } from '@/types/chorus';
 
@@ -93,36 +92,6 @@ function resolveCodeValue(
   }
 
   return currentCode;
-}
-
-function resolveFournisseurStructureId(
-  structures: ChorusTransverseStructure[],
-  currentId: number | undefined,
-  supplierSiret?: string,
-): { value?: number; reason?: string } {
-  if (currentId !== undefined) {
-    return { value: currentId };
-  }
-
-  const normalizedSupplierSiret = normalizeSiret(supplierSiret);
-  if (normalizedSupplierSiret) {
-    const matchedStructure = structures.find((structure) => structure.identifiant === normalizedSupplierSiret);
-    if (matchedStructure?.idStructureCPP !== undefined) {
-      return {
-        value: matchedStructure.idStructureCPP,
-        reason: 'Rapprochement automatique sur le SIRET fournisseur extrait du document.',
-      };
-    }
-  }
-
-  if (structures.length === 1 && structures[0]?.idStructureCPP !== undefined) {
-    return {
-      value: structures[0].idStructureCPP,
-      reason: 'Une seule structure fournisseur active a été retournée par Chorus Transverses.',
-    };
-  }
-
-  return { value: currentId };
 }
 
 function resolveBankAccountCode(
@@ -308,22 +277,6 @@ export function hydrateChorusSubmissionPayloadWithSnapshot(
       'Mode de paiement validé/résolu via le référentiel Chorus Transverses.',
     );
     nextPayload.references.modePaiement = nextModePaiement;
-  }
-
-  const fournisseurIdResolution = resolveFournisseurStructureId(
-    snapshot.structuresFournisseur,
-    nextPayload.fournisseur.idFournisseur,
-    normalized.supplierSiret,
-  );
-  if (fournisseurIdResolution.value !== undefined) {
-    addChange(
-      changes,
-      'fournisseur.idFournisseur',
-      nextPayload.fournisseur.idFournisseur,
-      fournisseurIdResolution.value,
-      fournisseurIdResolution.reason ?? 'Structure fournisseur validée via Chorus Transverses.',
-    );
-    nextPayload.fournisseur.idFournisseur = fournisseurIdResolution.value;
   }
 
   const bankAccountResolution = resolveBankAccountCode(

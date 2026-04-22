@@ -14,6 +14,12 @@ import type {
   User,
 } from '@/types';
 import { BackendDataClient } from '@/data/backend-client';
+import {
+  applyApiLogRuntimeEntries,
+  applyAuditLogRuntimeEntries,
+  applyInvoiceRuntimePatches,
+  applyStatusHistoryRuntimeEntries,
+} from '@/data/invoice-runtime-state';
 
 const client = new BackendDataClient();
 const cache = new Map<string, Promise<unknown>>();
@@ -64,7 +70,7 @@ export async function getPublicServices(): Promise<PublicService[]> {
 }
 
 export async function getInvoices(): Promise<Invoice[]> {
-  return withCache('invoices', () => client.fetchInvoices());
+  return withCache('invoices', async () => applyInvoiceRuntimePatches(await client.fetchInvoices()));
 }
 
 export async function getInvoiceLines(invoiceId?: string): Promise<InvoiceLine[]> {
@@ -76,11 +82,17 @@ export async function getInvoiceAttachments(invoiceId?: string): Promise<Invoice
 }
 
 export async function getStatusHistory(invoiceId?: string): Promise<InvoiceStatusHistory[]> {
-  return withCache(`statusHistory:${invoiceId ?? 'all'}`, () => client.fetchStatusHistory(invoiceId));
+  return withCache(
+    `statusHistory:${invoiceId ?? 'all'}`,
+    async () => applyStatusHistoryRuntimeEntries(await client.fetchStatusHistory(invoiceId), invoiceId),
+  );
 }
 
 export async function getApiExchangeLogs(invoiceId?: string): Promise<ApiExchangeLog[]> {
-  return withCache(`apiExchangeLogs:${invoiceId ?? 'all'}`, () => client.fetchApiExchangeLogs(invoiceId));
+  return withCache(
+    `apiExchangeLogs:${invoiceId ?? 'all'}`,
+    async () => applyApiLogRuntimeEntries(await client.fetchApiExchangeLogs(invoiceId), invoiceId),
+  );
 }
 
 export async function getAsyncJobs(): Promise<AsyncJob[]> {
@@ -88,7 +100,10 @@ export async function getAsyncJobs(): Promise<AsyncJob[]> {
 }
 
 export async function getAuditLogs(entityId?: string): Promise<AuditLog[]> {
-  return withCache(`auditLogs:${entityId ?? 'all'}`, () => client.fetchAuditLogs(entityId));
+  return withCache(
+    `auditLogs:${entityId ?? 'all'}`,
+    async () => applyAuditLogRuntimeEntries(await client.fetchAuditLogs(entityId), entityId),
+  );
 }
 
 export async function getExtractionResults(invoiceId?: string): Promise<InvoiceExtractionResult[]> {
