@@ -19,6 +19,51 @@ describe('chorus submission payload', () => {
     expect(normalizeFrenchDateToIsoDate('2026-03-16')).toBe('2026-03-16');
   });
 
+  it('derives VAT from HT and TTC when the explicit VAT amount is absent', () => {
+    const payload = buildInvoiceSubmissionPayload({
+      ...createEmptyInvoiceDraft(),
+      supplierInvoiceNumber: 'FAC-MIN-2026-01',
+      publicCustomerCode: '23440003400026',
+      publicServiceCode: 'SE-PDL',
+      invoiceDate: '17/04/2026',
+      currencyCode: 'EUR',
+      totalAmountHt: '100,00',
+      totalAmountTtc: '120,00',
+    }, {
+      extraction: {
+        ...gigalisExtractionResult,
+        fields: {
+          supplierInvoiceNumber: 'FAC-MIN-2026-01',
+          invoiceDate: '2026-04-17',
+          totalAmountHt: 100,
+          totalAmountTtc: 120,
+        },
+      },
+      publicCustomer: {
+        id: 'customer-pdl',
+        legalName: 'REGION DES PAYS DE LA LOIRE - SI EPLE',
+        siret: '23440003400026',
+        codeDestinataire: '23440003400026',
+      },
+      publicService: {
+        id: 'service-pdl',
+        publicCustomerId: 'customer-pdl',
+        codeServiceExecutant: 'SE-PDL',
+        label: 'Comptabilite fournisseurs',
+      },
+    });
+
+    expect(payload.montantTotal.montantHtTotal).toBe(100);
+    expect(payload.montantTotal.montantTVA).toBe(20);
+    expect(payload.montantTotal.montantTtcTotal).toBe(120);
+    expect(payload.lignePoste[0]?.lignePosteTauxTva).toBe('TV12');
+    expect(payload.ligneTva[0]).toMatchObject({
+      ligneTvaMontantBaseHtParTaux: 100,
+      ligneTvaMontantTvaParTaux: 20,
+      ligneTvaTaux: 'TV12',
+    });
+  });
+
   it('builds a Chorus payload from extracted invoice data with a single fallback line', () => {
     const payload = buildInvoiceSubmissionPayload(createEmptyInvoiceDraft(), {
       extraction: gigalisExtractionResult,
@@ -196,20 +241,14 @@ describe('chorus submission payload', () => {
     ]);
   });
 
-  it('reports missing mandatory context fields before POST', () => {
+  it('reports missing mandatory recipient fields before POST', () => {
     const payload = buildInvoiceSubmissionPayload(createEmptyInvoiceDraft(), {
       extraction: gigalisExtractionResult,
-      publicCustomer: {
-        id: 'customer-pdl',
-        legalName: 'REGION DES PAYS DE LA LOIRE - SI EPLE',
-        siret: '23440003400026',
-        codeDestinataire: '23440003400026',
-      },
     });
 
     const validation = validateChorusSubmissionPayload(payload);
 
     expect(validation.valid).toBe(false);
-    expect(validation.errors.some((error) => error.code === 'FOURNISSEUR_ID_REQUIRED')).toBe(true);
+    expect(validation.errors.some((error) => error.code === 'DESTINATAIRE_REQUIRED')).toBe(true);
   });
 });

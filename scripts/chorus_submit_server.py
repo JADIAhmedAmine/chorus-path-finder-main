@@ -86,17 +86,25 @@ class ChorusSubmitHandler(BaseHTTPRequestHandler):
             })
             return
 
-        if attachments:
+        if not isinstance(attachments, list):
             self._write_json(HTTPStatus.BAD_REQUEST, {
                 "ok": False,
-                "error": "Les pièces jointes complémentaires ne sont pas encore gérées par le pont Python minimal.",
+                "error": "Le champ attachments doit être une liste JSON s'il est fourni.",
+            })
+            return
+
+        invalid_attachment = next((item for item in attachments if not isinstance(item, dict)), None)
+        if invalid_attachment is not None:
+            self._write_json(HTTPStatus.BAD_REQUEST, {
+                "ok": False,
+                "error": "Chaque pièce jointe complémentaire doit être un objet JSON.",
             })
             return
 
         try:
             settings = load_chorus_settings()
             service = ChorusSubmissionService(settings)
-            result = service.submit_prepared_payload(payload, main_file=main_file)
+            result = service.submit_prepared_payload(payload, main_file=main_file, attachments=attachments)
             result["externalId"] = _extract_external_id(result.get("response"))
             self._write_json(HTTPStatus.OK, result)
         except Exception as error:  # noqa: BLE001

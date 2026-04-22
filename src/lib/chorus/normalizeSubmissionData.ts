@@ -124,8 +124,9 @@ export function formatVatRateForPayload(rate: number | undefined): string | unde
 
 function buildSingleFallbackLineItem(normalized: NormalizedInvoiceDraftData): ChorusSubmissionLineItem {
   const fallbackUnitPrice = normalized.totalAmountHt ?? normalized.totalAmountTtc ?? 0;
-  const computedRate = normalized.totalAmountHt && normalized.totalVat !== undefined && normalized.totalAmountHt > 0
-    ? normalizeVatRate(normalized.totalVat / normalized.totalAmountHt)
+  const derivedVatAmount = deriveVatAmount(normalized);
+  const computedRate = normalized.totalAmountHt && derivedVatAmount !== undefined && normalized.totalAmountHt > 0
+    ? normalizeVatRate(derivedVatAmount / normalized.totalAmountHt)
     : undefined;
 
   return {
@@ -141,6 +142,31 @@ function buildSingleFallbackLineItem(normalized: NormalizedInvoiceDraftData): Ch
     lignePosteTauxTvaManuel: computedRate === undefined ? 0 : undefined,
     lignePosteUnite: DEFAULT_LINE_UNIT,
   };
+}
+
+function deriveVatAmount(
+  normalized: NormalizedInvoiceDraftData,
+  vatLines: ChorusSubmissionVatLine[] = [],
+): number | undefined {
+  const explicitVatAmount = roundAmount(normalized.totalVat);
+  if (explicitVatAmount !== undefined) {
+    return explicitVatAmount;
+  }
+
+  if (vatLines.length > 0) {
+    const vatAmountFromLines = roundAmount(
+      vatLines.reduce((sum, line) => sum + line.ligneTvaMontantTvaParTaux, 0),
+    );
+    if (vatAmountFromLines !== undefined) {
+      return vatAmountFromLines;
+    }
+  }
+
+  if (normalized.totalAmountHt !== undefined && normalized.totalAmountTtc !== undefined) {
+    return roundAmount(normalized.totalAmountTtc - normalized.totalAmountHt);
+  }
+
+  return undefined;
 }
 
 export function normalizeSubmissionLineItems(
@@ -203,7 +229,7 @@ export function normalizeSubmissionVatLines(
     return normalizedVatLines;
   }
 
-  const totalVat = roundAmount(normalized.totalVat ?? 0) ?? 0;
+  const totalVat = deriveVatAmount(normalized) ?? 0;
   const totalHt = roundAmount(normalized.totalAmountHt ?? 0) ?? 0;
   if (totalVat <= 0 && totalHt <= 0) {
     return [];
@@ -231,10 +257,7 @@ export function computeSubmissionTotals(
   montantAPayer: number;
 } {
   const montantHtTotal = roundAmount(normalized.totalAmountHt) ?? 0;
-  const montantTVA = roundAmount(
-    normalized.totalVat
-      ?? vatLines.reduce((sum, line) => sum + line.ligneTvaMontantTvaParTaux, 0),
-  ) ?? 0;
+  const montantTVA = deriveVatAmount(normalized, vatLines) ?? 0;
   const montantTtcTotal = roundAmount(normalized.totalAmountTtc ?? (montantHtTotal + montantTVA)) ?? 0;
 
   return {

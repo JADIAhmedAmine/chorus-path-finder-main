@@ -93,7 +93,7 @@ export function buildChorusSubmissionPayload(
     pieceJointePrincipale,
     references: {
       deviseFacture: sanitizeText(normalized.currencyCode) || 'EUR',
-      modePaiement: chorusContext.modePaiement ?? 'VIREMENT',
+      modePaiement: chorusContext.modePaiement ?? normalized.paymentMode ?? 'VIREMENT',
       typeFacture: chorusContext.typeFacture ?? 'FACTURE',
       typeTva,
     },

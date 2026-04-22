@@ -25,3 +25,8 @@ dist-ssr
 .venv
 annuaire_out
 src/data/annuaire_out
+__pycache__/
+*.py[cod]
+vite.config.ts.timestamp-*.mjs
+output_base64.txt
+response.json

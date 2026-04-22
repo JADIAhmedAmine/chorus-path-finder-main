@@ -1,5 +1,6 @@
 import { canUseLlmExtraction, loadLlmConfig, resolveLlmRuntimeConfig } from '@/lib/llm/config';
 import type {
+  ChorusPaymentMode,
   ExtractedInvoiceDraftData,
   ExtractedInvoiceLineItemData,
   ExtractedInvoiceVatLineData,
@@ -10,6 +11,11 @@ interface OllamaChatResponse {
   message?: {
     content?: string;
   };
+}
+
+interface OllamaExtractionPromptContext {
+  evidenceText?: string;
+  referenceHints?: string;
 }
 
 function extractJsonObject(value: string): string | undefined {
@@ -74,6 +80,86 @@ function normalizeAmount(value: unknown): number | undefined {
 
 function normalizeString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
+function normalizePaymentMode(value: unknown): ChorusPaymentMode | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const upperValue = trimmed.toUpperCase() as ChorusPaymentMode;
+  if (['CHEQUE', 'ESPECE', 'VIREMENT', 'PRELEVEMENT', 'AUTRE', 'REPORT'].includes(upperValue)) {
+    return upperValue;
+  }
+
+  const normalized = trimmed
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+
+  if (/(virement|transfer|wire|sepa)/.test(normalized)) {
+    return 'VIREMENT';
+  }
+
+  if (/(cheque|cheque bancaire|check)/.test(normalized)) {
+    return 'CHEQUE';
+  }
+
+  if (/(prelevement|direct debit|sepa debit)/.test(normalized)) {
+    return 'PRELEVEMENT';
+  }
+
+  if (/(espece|cash)/.test(normalized)) {
+    return 'ESPECE';
+  }
+
+  if (/report/.test(normalized)) {
+    return 'REPORT';
+  }
+
+  if (/(autre|other)/.test(normalized)) {
+    return 'AUTRE';
+  }
+
+  return undefined;
+}
+
+function buildPromptDocumentText(text: string): string {
+  const structuredLines = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const structuredText = structuredLines.join('\n');
+
+  if (!structuredText) {
+    return structuredText;
+  }
+
+  if (structuredText.length <= 42000) {
+    return structuredText;
+  }
+
+  const totalLines = structuredLines.length;
+  const sliceSize = Math.max(80, Math.floor(totalLines / 4));
+  const middleStart = Math.max(sliceSize, Math.floor(totalLines / 2) - Math.floor(sliceSize / 2));
+  const head = structuredLines.slice(0, sliceSize).join('\n');
+  const middle = structuredLines.slice(middleStart, middleStart + sliceSize).join('\n');
+  const tail = structuredLines.slice(-sliceSize).join('\n');
+
+  return [
+    '[DEBUT_DOCUMENT]',
+    head,
+    '[MILIEU_DOCUMENT]',
+    middle,
+    '[FIN_DOCUMENT]',
+    tail,
+  ].join('\n');
 }
 
 function parseLineItems(value: unknown): ExtractedInvoiceLineItemData[] | undefined {
@@ -158,12 +244,17 @@ function parseLlmExtraction(content: string): ExtractedInvoiceDraftData | null {
     const parsed = JSON.parse(jsonPayload) as Record<string, unknown>;
 
     return {
+      supplierOrganizationId: normalizeString(parsed.supplierOrganizationId),
       supplierInvoiceNumber: normalizeString(parsed.supplierInvoiceNumber),
       supplierName: normalizeString(parsed.supplierName),
+      paymentMode: normalizePaymentMode(parsed.paymentMode ?? parsed.modePaiement ?? parsed.modeReglement),
+      publicCustomerId: normalizeString(parsed.publicCustomerId),
       supplierSiret: normalizeString(parsed.supplierSiret)?.replace(/\D/g, ''),
       supplierVatNumber: normalizeString(parsed.supplierVatNumber)?.toUpperCase(),
       publicCustomerName: normalizeString(parsed.publicCustomerName),
       publicCustomerSiret: normalizeString(parsed.publicCustomerSiret)?.replace(/\D/g, ''),
+      publicCustomerCode: normalizeString(parsed.publicCustomerCode ?? parsed.codeDestinataire),
+      publicServiceId: normalizeString(parsed.publicServiceId),
       publicServiceLabel: normalizeString(parsed.publicServiceLabel),
       publicServiceCode: normalizeString(parsed.publicServiceCode),
       engagementNumber: normalizeString(parsed.engagementNumber),
@@ -205,6 +296,7 @@ export async function extractInvoiceDataWithOllama(
   sourceFormat: InvoiceSourceFormat,
   fileName: string,
   heuristicFields: ExtractedInvoiceDraftData,
+  promptContext: OllamaExtractionPromptContext = {},
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<ExtractedInvoiceDraftData> {
   const config = resolveLlmRuntimeConfig(loadLlmConfig());
@@ -222,17 +314,23 @@ export async function extractInvoiceDataWithOllama(
     "- Aucun texte, aucun commentaire, aucun markdown",
     "- N invente aucune donnee",
     "- Si une donnee est absente, omets le champ",
+    "- Si plusieurs modalites de paiement generiques sont listees, ne renseigne paymentMode que si la facture indique explicitement celui qui est payable ou a utiliser",
     "",
     "Objectif :",
-    "Retourner des champs de facture normalises, plus eventuellement des lignes de facture et des lignes TVA.",
+    "Retourner les champs utiles a une soumission Chorus minimale, plus eventuellement des lignes de facture et des lignes TVA.",
     "",
     "Champs attendus :",
+    "- supplierOrganizationId (seulement si un indice de reference candidat le rend certain)",
     "- supplierName",
     "- supplierInvoiceNumber",
+    "- paymentMode (CHEQUE, ESPECE, VIREMENT, PRELEVEMENT, AUTRE ou REPORT)",
+    "- publicCustomerId (seulement si un indice de reference candidat le rend certain)",
     "- supplierSiret",
     "- supplierVatNumber",
     "- publicCustomerName",
     "- publicCustomerSiret",
+    "- publicCustomerCode",
+    "- publicServiceId (seulement si un indice de reference candidat le rend certain)",
     "- publicServiceLabel",
     "- publicServiceCode",
     "- engagementNumber",
@@ -259,10 +357,18 @@ export async function extractInvoiceDataWithOllama(
     "Format des vatLines :",
     "{ rate, baseHt, taxAmount }",
     "",
+    "Priorites de decision :",
+    "1. Extraire numero de facture, date, client public, service, montants, devise, mode de paiement",
+    "2. Utiliser les indices de references seulement si le match est clair",
+    "3. Mieux vaut omettre un champ que l inventer",
+    "",
     `Nom du fichier: ${fileName}`,
+    `Format source: ${sourceFormat}`,
+    promptContext.referenceHints ? `Indices de references candidates:\n${promptContext.referenceHints}` : undefined,
+    promptContext.evidenceText ? `Extraits cibles:\n${promptContext.evidenceText}` : undefined,
     "Texte facture:",
-    text.slice(0, 20000),
-  ].join("\n");
+    buildPromptDocumentText(text),
+  ].filter(Boolean).join("\n");
 
   try {
     const response = await fetchImpl(`${config.baseUrl.replace(/\/+$/, '')}/api/chat`, {

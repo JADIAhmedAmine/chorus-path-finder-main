@@ -91,6 +91,7 @@ export function normalizeInvoiceDraft(
     supplierOrganizationId: normalizeText(formData.supplierOrganizationId) || extractedFields?.supplierOrganizationId,
     supplierInvoiceNumber: normalizeText(formData.supplierInvoiceNumber) || extractedFields?.supplierInvoiceNumber,
     supplierName: context.supplier?.legalName || extractedFields?.supplierName,
+    paymentMode: extractedFields?.paymentMode,
     publicCustomerId: normalizeText(formData.publicCustomerId) || extractedFields?.publicCustomerId,
     publicServiceId: normalizeText(formData.publicServiceId) || extractedFields?.publicServiceId,
     engagementNumber: normalizeText(formData.engagementNumber) || extractedFields?.engagementNumber,

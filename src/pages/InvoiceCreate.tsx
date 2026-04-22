@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -147,6 +146,7 @@ export default function InvoiceCreate() {
   const [lastApiCalls, setLastApiCalls] = useState<ChorusApiDebugEntry[]>([]);
   const [showOptionalExtractionInfo, setShowOptionalExtractionInfo] = useState(false);
   const [showOptionalMetadata, setShowOptionalMetadata] = useState(false);
+  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
   const [prefilledInvoiceId, setPrefilledInvoiceId] = useState<string | null>(null);
   const [skipNextExtraction, setSkipNextExtraction] = useState(false);
   const treatmentDetailsRef = useRef<HTMLDivElement | null>(null);
@@ -251,7 +251,23 @@ export default function InvoiceCreate() {
     effectiveSubmissionPayload,
   ]);
   const isDirectMode = chorusConfig.mode === 'direct' && chorusConfig.enabled;
-  const isSubmissionBlocked = extracting || submitting || (isDirectMode && !submissionPreparation.validation.valid);
+  const blockingIssues = [
+    ...submissionPreparation.validation.errors.map((error) => error.message),
+    ...(isDirectMode ? effectivePayloadValidation.errors.map((error) => error.message) : []),
+  ];
+  const reviewIssues = [
+    ...submissionPreparation.validation.warnings.map((warning) => warning.message),
+    ...(isDirectMode ? effectivePayloadValidation.warnings.map((warning) => warning.message) : []),
+  ];
+  const hasVisibleSubmissionAlerts = isDirectMode && (blockingIssues.length > 0 || reviewIssues.length > 0);
+  const submissionBlockReason = extracting
+    ? 'Extraction du document en cours.'
+    : submitting
+      ? 'Soumission Chorus en cours.'
+      : hasVisibleSubmissionAlerts
+        ? `Soumission verrouillée : ${blockingIssues[0] ?? reviewIssues[0] ?? 'des alertes restent présentes.'}`
+        : undefined;
+  const isSubmissionBlocked = extracting || submitting || hasVisibleSubmissionAlerts;
 
   const handleViewTreatmentDetails = useCallback(() => {
     const target = treatmentDetailsRef.current
@@ -438,10 +454,10 @@ export default function InvoiceCreate() {
       return;
     }
 
-    if (isDirectMode && !submissionPreparation.validation.valid && !forceDebug) {
+    if (isDirectMode && hasVisibleSubmissionAlerts && !forceDebug) {
       toast({
-        title: 'Soumission bloquée',
-        description: submissionPreparation.validation.errors[0]?.message || 'Complétez les métadonnées obligatoires avant l’envoi.',
+        title: 'Soumission verrouillée',
+        description: blockingIssues[0] ?? reviewIssues[0] ?? 'Corrigez les alertes visibles avant l’envoi.',
         variant: 'destructive',
       });
       return;
@@ -606,15 +622,25 @@ export default function InvoiceCreate() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Nouvelle facture</h1>
-          <p className="text-sm text-muted-foreground">Déposez une facture et ses pièces jointes complémentaires</p>
+          <p className="text-sm text-muted-foreground">Déposez une facture, vérifiez l’essentiel, puis soumettez-la à Chorus.</p>
         </div>
-        <Badge variant={chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'default' : 'secondary'}>
-          {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Chorus direct' : 'Mode mock'}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setShowAdvancedTools((current) => !current)}
+          >
+            {showAdvancedTools ? 'Masquer l’avancé' : 'Afficher l’avancé'}
+          </Button>
+          <Badge variant={chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'default' : 'secondary'}>
+            {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Chorus direct' : 'Mode mock'}
+          </Badge>
+        </div>
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Facture principale</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Document principal</CardTitle></CardHeader>
         <CardContent>
           {mainFile ? (
             <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/30">
@@ -643,31 +669,36 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Pièces jointes complémentaires</CardTitle></CardHeader>
-        <CardContent>
-          <div className="space-y-3">
-            {attachments.map((file, i) => (
-              <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <FileText className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm">{file.name}</span>
+      {showAdvancedTools && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Pièces jointes complémentaires</CardTitle></CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {attachments.length === 0 && (
+                <p className="text-sm text-muted-foreground">Aucune pièce complémentaire ajoutée.</p>
+              )}
+              {attachments.map((file, i) => (
+                <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <FileText className="h-5 w-5 text-muted-foreground" />
+                    <span className="text-sm">{file.name}</span>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}><X className="h-4 w-4" /></Button>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}><X className="h-4 w-4" /></Button>
-              </div>
-            ))}
-            <Button variant="outline" onClick={() => document.getElementById('att-upload')?.click()}>
-              <Upload className="mr-2 h-4 w-4" /> Ajouter un fichier
-            </Button>
-            <input id="att-upload" type="file" className="hidden" multiple onChange={e => {
-              if (e.target.files) setAttachments(prev => [...prev, ...Array.from(e.target.files)]);
-            }} />
-          </div>
-        </CardContent>
-      </Card>
+              ))}
+              <Button variant="outline" onClick={() => document.getElementById('att-upload')?.click()}>
+                <Upload className="mr-2 h-4 w-4" /> Ajouter un fichier
+              </Button>
+              <input id="att-upload" type="file" className="hidden" multiple onChange={e => {
+                if (e.target.files) setAttachments(prev => [...prev, ...Array.from(e.target.files)]);
+              }} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Préremplissage automatique</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Extraction du document</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           {!mainFile && (
             <p className="text-sm text-muted-foreground">
@@ -700,14 +731,9 @@ export default function InvoiceCreate() {
                     Analyse locale {extractionResult.sourceFormat} terminée
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={extractionResult.requiresReview ? 'secondary' : 'default'}>
-                    {extractionResult.requiresReview ? 'Contrôle recommandé' : 'Préremplissage fiable'}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    Confiance {Math.round(extractionResult.confidence * 100)}%
-                  </span>
-                </div>
+                <Badge variant={extractionResult.requiresReview ? 'secondary' : 'default'}>
+                  {extractionResult.requiresReview ? 'À contrôler' : 'Prérempli'}
+                </Badge>
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -717,20 +743,14 @@ export default function InvoiceCreate() {
                 <ExtractionInfoRow label="Service destinataire" value={detectedService} />
                 <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
                 <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
-                <DocumentPreviewCard
-                  file={mainFile}
-                  previewUrl={mainFilePreviewUrl ?? undefined}
-                  extractedText={extractionResult.rawText}
-                  rawTextPreview={extractionResult.rawTextPreview}
-                />
               </div>
 
               <div className="rounded-lg border bg-muted/10 p-3">
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div>
-                    <p className="text-sm font-medium">Informations d’extraction optionnelles</p>
+                    <p className="text-sm font-medium">Détails d’extraction</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      À ouvrir seulement pour le contrôle détaillé. La soumission minimale n’en a pas toujours besoin.
+                      Contrôle détaillé du document et des champs secondaires.
                     </p>
                   </div>
                   <Button
@@ -746,11 +766,18 @@ export default function InvoiceCreate() {
                 {showOptionalExtractionInfo && (
                   <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
+                    <ExtractionInfoRow label="Mode paiement" value={extractionResult.fields.paymentMode} />
                     <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
                     <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
                     <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
                     <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
                     <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
+                    <DocumentPreviewCard
+                      file={mainFile}
+                      previewUrl={mainFilePreviewUrl ?? undefined}
+                      extractedText={extractionResult.rawText}
+                      rawTextPreview={extractionResult.rawTextPreview}
+                    />
                   </div>
                 )}
               </div>
@@ -774,22 +801,22 @@ export default function InvoiceCreate() {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Métadonnées initiales (optionnel)</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">Données facture</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {loadingReferences && (
+            {showAdvancedTools && loadingReferences && (
               <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
                 Chargement des référentiels fournisseur et des éventuelles listes API configurées…
               </div>
             )}
 
-            {!loadingReferences && !referenceCatalogError && (rawChorusConfig.referenceAnnuaireJsonUrl || rawChorusConfig.referenceAnnuaireXmlUrl) && referenceCatalogMetadata.publicCustomersSource === 'empty' && referenceCatalogMetadata.publicServicesSource === 'empty' && (
+            {showAdvancedTools && !loadingReferences && !referenceCatalogError && (rawChorusConfig.referenceAnnuaireJsonUrl || rawChorusConfig.referenceAnnuaireXmlUrl) && referenceCatalogMetadata.publicCustomersSource === 'empty' && referenceCatalogMetadata.publicServicesSource === 'empty' && (
               <div className="rounded-lg border bg-warning/5 p-3 text-sm text-muted-foreground">
                 L&apos;annuaire Chorus massif n&apos;est pas chargé automatiquement sur cet écran pour éviter les plantages pendant l&apos;upload. Il reste consultable dans `Référentiels`.
               </div>
             )}
 
-            {!loadingReferences && !referenceCatalogError && (publicCustomers.length > 0 || publicServices.length > 0 || suppliers.length > 0) && (
+            {showAdvancedTools && !loadingReferences && !referenceCatalogError && (publicCustomers.length > 0 || publicServices.length > 0 || suppliers.length > 0) && (
               <div className="rounded-lg border bg-muted/10 p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">Référentiels actifs :</span>
@@ -819,13 +846,9 @@ export default function InvoiceCreate() {
               </Alert>
             )}
 
-          <div className="rounded-lg border bg-muted/10 p-3 text-sm">
-            <p className="font-medium">Champs nécessaires pour un envoi minimal</p>
-            <p className="mt-1 text-muted-foreground">
-              Fournisseur, numéro de facture, destinataire, service, date de facture et montant TTC.
-              Les autres informations restent optionnelles et peuvent être ajoutées seulement si le dossier l’exige.
-            </p>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Renseigne l’essentiel. Le reste reste optionnel et le montant TVA peut être recalculé si HT et TTC sont cohérents.
+          </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -965,20 +988,30 @@ export default function InvoiceCreate() {
       <Card>
         <CardHeader><CardTitle className="text-base">Préparation de la soumission Chorus</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              <p className="text-sm font-medium">
-                {submissionPreparation.readiness === 'ready'
-                  ? 'Le dossier est prêt pour la soumission API.'
-                  : submissionPreparation.readiness === 'review'
-                    ? 'Le dossier est quasi prêt, avec contrôle humain recommandé.'
-                    : 'Des informations bloquantes manquent encore avant l’envoi Chorus.'}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Flux prévu: extraction locale, contrôle métier, dépôt PDF, puis soumission API sans repasser par l’interprétation du portail.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
+          <div className={`rounded-lg border p-4 ${
+            submissionPreparation.readiness === 'ready'
+              ? 'border-emerald-200 bg-emerald-50/60'
+              : submissionPreparation.readiness === 'review'
+                ? 'border-amber-200 bg-amber-50/60'
+                : 'border-red-200 bg-red-50/60'
+          }`}>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-medium">
+                  {submissionPreparation.readiness === 'ready'
+                    ? 'Prêt à envoyer'
+                    : submissionPreparation.readiness === 'review'
+                      ? 'Revue requise avant envoi'
+                      : 'Envoi bloqué'}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {submissionPreparation.readiness === 'ready'
+                    ? 'Le minimum nécessaire est présent.'
+                    : submissionPreparation.readiness === 'review'
+                      ? 'Des alertes restent présentes et doivent être levées avant la soumission.'
+                      : 'Des informations obligatoires sont encore manquantes.'}
+                </p>
+              </div>
               <Badge
                 variant={
                   submissionPreparation.readiness === 'blocked'
@@ -994,77 +1027,49 @@ export default function InvoiceCreate() {
                     ? 'Revue'
                     : 'Bloqué'}
               </Badge>
-              <Badge variant="outline">{submissionPreparation.suggestedStatus}</Badge>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <ExtractionInfoRow label="Erreurs bloquantes" value={String(submissionPreparation.validation.errors.length)} />
-            <ExtractionInfoRow label="Avertissements" value={String(submissionPreparation.validation.warnings.length)} />
-            <ExtractionInfoRow label="Devise normalisée" value={submissionPreparation.normalized.currencyCode} />
-            <ExtractionInfoRow
-              label="Montant TTC normalisé"
-              value={submissionPreparation.normalized.totalAmountTtc !== undefined ? String(submissionPreparation.normalized.totalAmountTtc) : undefined}
-            />
-          </div>
+          {(blockingIssues.length > 0 || reviewIssues.length > 0 || submissionPreparation.recommendations.length > 0) && (
+            <div className="rounded-lg border bg-muted/10 p-4 space-y-4">
+              <p className="text-sm font-medium">Corriger avant envoi</p>
 
-          {submissionPreparation.validation.errors.length > 0 && (
-            <Alert variant="destructive">
-              <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>Blocages à corriger</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
-                  {submissionPreparation.validation.errors.map((error) => (
-                    <li key={`${error.code}-${error.field}`}>{error.message}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
+              {blockingIssues.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-destructive">Blocages</p>
+                  <ul className="list-disc space-y-1 pl-4 text-sm">
+                    {blockingIssues.map((message) => (
+                      <li key={`blocking-${message}`}>{message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {reviewIssues.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Points à lever</p>
+                  <ul className="list-disc space-y-1 pl-4 text-sm">
+                    {reviewIssues.map((message) => (
+                      <li key={`review-${message}`}>{message}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {submissionPreparation.recommendations.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Étapes conseillées</p>
+                  <ul className="list-disc space-y-1 pl-4 text-sm text-muted-foreground">
+                    {submissionPreparation.recommendations.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           )}
 
-          {submissionPreparation.validation.warnings.length > 0 && (
-            <Alert>
-              <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>Contrôles recommandés</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
-                  {submissionPreparation.validation.warnings.map((warning) => (
-                    <li key={`${warning.code}-${warning.field}`}>{warning.message}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {isDirectMode && effectivePayloadValidation.errors.length > 0 && (
-            <Alert variant="destructive">
-              <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>{resolvedSubmission ? 'Contexte Chorus encore manquant après enrichissement' : 'Contexte technique Chorus manquant'}</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
-                  {effectivePayloadValidation.errors.map((error) => (
-                    <li key={`${error.code}-${error.path}`}>{error.message}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {isDirectMode && effectivePayloadValidation.warnings.length > 0 && (
-            <Alert>
-              <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>{resolvedSubmission ? 'Vérifications payload Chorus après enrichissement' : 'Vérifications payload Chorus'}</AlertTitle>
-              <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
-                  {effectivePayloadValidation.warnings.map((warning) => (
-                    <li key={`${warning.code}-${warning.path}`}>{warning.message}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {isDirectMode && (
+          {showAdvancedTools && isDirectMode && (
             <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
@@ -1161,36 +1166,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {submissionPreparation.recommendations.length > 0 && (
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <p className="text-sm font-medium">Actions suggérées</p>
-              <ul className="mt-2 list-disc space-y-1 pl-4 text-sm text-muted-foreground">
-                {submissionPreparation.recommendations.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {lastSubmissionError && (
-            <div ref={submissionErrorRef}>
-            <Alert variant="destructive">
-              <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>Dernière erreur Chorus</AlertTitle>
-              <AlertDescription>
-                <p>{lastSubmissionError}</p>
-                {lastSubmissionError.includes('Soumission Chorus échouée (500)') && (
-                  <p className="mt-2 text-xs">
-                    Le jeton OAuth2 et l’appel API passent désormais. Le blocage restant est côté soumission métier Chorus,
-                    très probablement sur la forme du JSON envoyé à <code>/v1/soumettre</code>.
-                  </p>
-                )}
-              </AlertDescription>
-            </Alert>
-            </div>
-          )}
-
-          {isDirectMode && (
+          {showAdvancedTools && isDirectMode && (
             <div className="rounded-lg border bg-muted/20 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1206,7 +1182,16 @@ export default function InvoiceCreate() {
 
               {showDebugPanel && (
                 <div className="mt-4 space-y-3 rounded-lg border bg-background p-4">
-                  <div className="flex justify-end">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleSubmit({ forceDebug: true })}
+                      disabled={extracting || submitting || !mainFile}
+                    >
+                      {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TriangleAlert className="mr-2 h-4 w-4" />}
+                      Forcer l’envoi debug
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => void handleExportDebugFile()} disabled={exportingDebugFile}>
                       {exportingDebugFile ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                       Exporter debug_chorus
@@ -1220,18 +1205,23 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
+      {hasTreatmentDetails && (
       <div ref={treatmentDetailsRef} className="space-y-4">
-        {!hasTreatmentDetails && lastApiCalls.length === 0 && (
-          <Card>
-            <CardHeader><CardTitle className="text-base">Détails du traitement Chorus</CardTitle></CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                {isDirectMode
-                  ? 'Aucune tentative d’envoi n’a encore été enregistrée. Après `Envoyer à Chorus`, cette zone affichera l’erreur, le résultat, le payload final soumis par Python et le journal complet des appels API.'
-                  : 'Le détail du traitement apparaîtra ici. Active le mode direct Chorus si tu veux voir le flux réel de soumission et les appels Python associés.'}
-              </p>
-            </CardContent>
-          </Card>
+        {lastSubmissionError && (
+          <div ref={submissionErrorRef}>
+            <Alert variant="destructive">
+              <TriangleAlert className="h-4 w-4" />
+              <AlertTitle>Dernière erreur Chorus</AlertTitle>
+              <AlertDescription>
+                <p>{lastSubmissionError}</p>
+                {lastSubmissionError.includes('Soumission Chorus échouée (500)') && (
+                  <p className="mt-2 text-xs">
+                    Le jeton OAuth2 et le bridge Python répondent. Le blocage restant est désormais côté soumission métier Chorus.
+                  </p>
+                )}
+              </AlertDescription>
+            </Alert>
+          </div>
         )}
 
           {lastSubmissionResult && (
@@ -1289,7 +1279,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {lastApiCalls.length > 0 && (
+          {showAdvancedTools && lastApiCalls.length > 0 && (
             <Card>
               <CardHeader><CardTitle className="text-base">Journal des appels API Chorus</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -1341,7 +1331,7 @@ export default function InvoiceCreate() {
             </Card>
           )}
 
-          {(pythonUploadCalls.length > 0 || pythonSubmitCalls.length > 0) && (
+          {showAdvancedTools && (pythonUploadCalls.length > 0 || pythonSubmitCalls.length > 0) && (
             <Card>
               <CardHeader><CardTitle className="text-base">Bodies JSON construits par Python</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -1400,22 +1390,32 @@ export default function InvoiceCreate() {
             </Card>
           )}
       </div>
+      )}
 
-      <div className="flex justify-end gap-3">
-        <Button variant="outline" onClick={() => navigate('/invoices')}>Annuler</Button>
-        <Button variant="outline" onClick={handleViewTreatmentDetails}>
-          Voir les détails du traitement
-        </Button>
-        <Button onClick={() => void handleSubmit()} disabled={isSubmissionBlocked}>
-          {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
-          {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Envoyer à Chorus' : 'Déposer la facture'}
-        </Button>
-        {isDirectMode && (
-          <Button variant="destructive" onClick={() => void handleSubmit({ forceDebug: true })} disabled={extracting || submitting || !mainFile}>
-            {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TriangleAlert className="mr-2 h-4 w-4" />}
-            Forcer l’envoi debug
-          </Button>
+      <div className="space-y-2">
+        {submissionBlockReason && (
+          <p className="text-right text-xs text-muted-foreground">
+            {submissionBlockReason}
+          </p>
         )}
+        <div className="flex justify-end gap-3">
+          <Button variant="outline" onClick={() => navigate('/invoices')}>Annuler</Button>
+          {hasTreatmentDetails && (
+            <Button variant="outline" onClick={handleViewTreatmentDetails}>
+              Voir les détails du traitement
+            </Button>
+          )}
+          {hasVisibleSubmissionAlerts && !submitting && !extracting ? (
+            <Button disabled variant="secondary">
+              Corriger avant envoi
+            </Button>
+          ) : (
+            <Button onClick={() => void handleSubmit()} disabled={isSubmissionBlocked}>
+              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Envoyer à Chorus' : 'Déposer la facture'}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
