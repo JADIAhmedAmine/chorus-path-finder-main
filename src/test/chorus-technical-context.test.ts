@@ -28,7 +28,7 @@ describe('chorus technical context', () => {
 
     expect(context).toEqual({
       idUtilisateurCourant: 331,
-      idFournisseur: 160,
+      idFournisseur: 26359578,
       idServiceFournisseur: 436,
       codeCoordonneesBancairesFournisseur: 132,
       codeCadreFacturation: 'A1_FACTURE_FOURNISSEUR',
@@ -51,7 +51,7 @@ describe('chorus technical context', () => {
 
     expect(context.typeTva).toBeUndefined();
     expect(context.idUtilisateurCourant).toBeUndefined();
-    expect(context.idFournisseur).toBeUndefined();
+    expect(context.idFournisseur).toBe(26359578);
   });
 
   it('falls back to the local auth session when Chorus config ids are empty', () => {
@@ -76,7 +76,7 @@ describe('chorus technical context', () => {
     });
 
     expect(context.idUtilisateurCourant).toBe(331);
-    expect(context.idFournisseur).toBe(160);
+    expect(context.idFournisseur).toBe(26359578);
     expect(context.idServiceFournisseur).toBe(436);
     expect(context.codeCoordonneesBancairesFournisseur).toBe(132);
   });

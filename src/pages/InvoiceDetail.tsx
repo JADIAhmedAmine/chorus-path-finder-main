@@ -1,4 +1,5 @@
-import { useParams, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -7,6 +8,7 @@ import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { StatusTimeline } from '@/components/common/StatusTimeline';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
+import { useToast } from '@/hooks/use-toast';
 import {
   getAuditLogs,
   getCustomer,
@@ -19,12 +21,15 @@ import {
   getService,
   getSupplier,
 } from '@/data/mock-data';
+import { markInvoiceReadyForSubmission, submitInvoiceFromDetail } from '@/data/invoice-actions';
 import { useAsyncResource } from '@/hooks/use-async-resource';
-import { ArrowLeft, Edit, CheckCircle, Send, RotateCcw, Download, FileText, Paperclip, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Edit, CheckCircle, Send, RotateCcw, Download, FileText, Paperclip, AlertTriangle, Loader2 } from 'lucide-react';
 
 export default function InvoiceDetail() {
+  const navigate = useNavigate();
+  const { toast } = useToast();
   const { id } = useParams();
-  const { data, loading, error } = useAsyncResource(
+  const { data, loading, error, reload } = useAsyncResource(
     async () => {
       if (!id) {
         return {
@@ -107,6 +112,7 @@ export default function InvoiceDetail() {
     },
   );
   const invoice = data.invoice;
+  const [actionLoading, setActionLoading] = useState<'validate' | 'submit' | null>(null);
 
   if (!invoice) {
     return (
@@ -137,6 +143,52 @@ export default function InvoiceDetail() {
   const invoiceAudit = data.invoiceAudit;
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL';
 
+  const handleEdit = () => {
+    navigate(`/invoices/new?invoiceId=${invoice.id}`);
+  };
+
+  const handleValidate = async () => {
+    setActionLoading('validate');
+    try {
+      const nextInvoice = await markInvoiceReadyForSubmission(invoice.id);
+      await reload();
+      toast({
+        title: 'Facture validée',
+        description: `${nextInvoice.supplierInvoiceNumber} est maintenant prête à être soumise.`,
+      });
+    } catch (actionError) {
+      toast({
+        title: 'Validation impossible',
+        description: actionError instanceof Error ? actionError.message : 'Erreur inconnue',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setActionLoading('submit');
+    try {
+      const result = await submitInvoiceFromDetail(invoice.id);
+      await reload();
+      toast({
+        title: 'Facture soumise',
+        description: result.externalId
+          ? `Référence Chorus: ${result.externalId}`
+          : 'La facture a été soumise depuis la page détail.',
+      });
+    } catch (actionError) {
+      toast({
+        title: 'Soumission impossible',
+        description: actionError instanceof Error ? actionError.message : 'Erreur inconnue',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* Header */}
@@ -153,13 +205,21 @@ export default function InvoiceDetail() {
         </div>
         <div className="flex gap-2">
           {['DRAFT_UPLOADED', 'DRAFT_STRUCTURED', 'PENDING_HUMAN_REVIEW'].includes(invoice.statusInternal) && (
-            <Button variant="outline"><Edit className="mr-2 h-4 w-4" /> Éditer</Button>
+            <Button variant="outline" onClick={handleEdit} disabled={actionLoading !== null}>
+              <Edit className="mr-2 h-4 w-4" /> Éditer
+            </Button>
           )}
           {['DRAFT_STRUCTURED', 'PENDING_HUMAN_REVIEW'].includes(invoice.statusInternal) && (
-            <Button variant="outline"><CheckCircle className="mr-2 h-4 w-4" /> Valider</Button>
+            <Button variant="outline" onClick={() => void handleValidate()} disabled={actionLoading !== null}>
+              {actionLoading === 'validate' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              Valider
+            </Button>
           )}
           {invoice.statusInternal === 'READY_FOR_SUBMISSION' && (
-            <Button><Send className="mr-2 h-4 w-4" /> Soumettre</Button>
+            <Button onClick={() => void handleSubmit()} disabled={actionLoading !== null}>
+              {actionLoading === 'submit' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Soumettre
+            </Button>
           )}
           {isRejected && (
             <Button><RotateCcw className="mr-2 h-4 w-4" /> Resoumettre</Button>
@@ -276,7 +336,7 @@ export default function InvoiceDetail() {
                       <td className="p-3 text-right">{line.quantity}</td>
                       <td className="p-3">{line.unitCode}</td>
                       <td className="p-3 text-right">{formatCurrency(line.unitPriceHt)}</td>
-                      <td className="p-3 text-right">{line.vatRate}%</td>
+                      <td className="p-3 text-right">{formatVatRateForDisplay(line.vatRate)}</td>
                       <td className="p-3 text-right">{formatCurrency(line.lineTotalHt)}</td>
                       <td className="p-3 text-right font-medium">{formatCurrency(line.lineTotalTtc)}</td>
                     </tr>
@@ -450,4 +510,9 @@ function InfoRow({ label, value, bold }: { label: string; value: string; bold?: 
       <span className={bold ? 'font-semibold text-base' : 'font-medium'}>{value}</span>
     </div>
   );
+}
+
+function formatVatRateForDisplay(value: number): string {
+  const percentage = value <= 1 ? value * 100 : value;
+  return `${percentage}%`;
 }

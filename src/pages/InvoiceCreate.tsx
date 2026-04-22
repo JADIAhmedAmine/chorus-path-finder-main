@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,9 +13,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
+import { getInvoice, getInvoiceAttachments } from '@/data/mock-data';
 import { ChorusSubmitApiError, createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
-import { createEmptyInvoiceDraft, mergeExtractionIntoDraft } from '@/lib/chorus/normalization';
+import { createEmptyInvoiceDraft, formatInvoiceAmountForInput, mergeExtractionIntoDraft } from '@/lib/chorus/normalization';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { prepareInvoiceSubmission } from '@/lib/chorus/preparation';
 import { extractInvoiceData } from '@/lib/chorus/extraction';
@@ -125,6 +126,7 @@ function DocumentPreviewCard({
 
 export default function InvoiceCreate() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const [mainFile, setMainFile] = useState<File | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
@@ -143,9 +145,14 @@ export default function InvoiceCreate() {
   const [resolvedSubmission, setResolvedSubmission] = useState<ChorusPayloadHydrationResult | null>(null);
   const [lastSubmissionResult, setLastSubmissionResult] = useState<ChorusSubmitInvoiceResult | null>(null);
   const [lastApiCalls, setLastApiCalls] = useState<ChorusApiDebugEntry[]>([]);
+  const [showOptionalExtractionInfo, setShowOptionalExtractionInfo] = useState(false);
   const [showOptionalMetadata, setShowOptionalMetadata] = useState(false);
+  const [prefilledInvoiceId, setPrefilledInvoiceId] = useState<string | null>(null);
+  const [skipNextExtraction, setSkipNextExtraction] = useState(false);
+  const treatmentDetailsRef = useRef<HTMLDivElement | null>(null);
   const submissionErrorRef = useRef<HTMLDivElement | null>(null);
   const submissionResultRef = useRef<HTMLDivElement | null>(null);
+  const editingInvoiceId = searchParams.get('invoiceId');
   const {
     suppliers,
     publicCustomers,
@@ -202,6 +209,14 @@ export default function InvoiceCreate() {
   const effectivePayloadValidation = resolvedSubmission?.validation ?? payloadValidation;
   const effectiveSubmissionPayload = resolvedSubmission?.payload ?? submissionPayload;
   const hasTreatmentDetails = Boolean(lastSubmissionResult || lastSubmissionError);
+  const pythonUploadCalls = useMemo(
+    () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/ajouter/fichier')),
+    [lastApiCalls],
+  );
+  const pythonSubmitCalls = useMemo(
+    () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/factures/v1/soumettre')),
+    [lastApiCalls],
+  );
   const debugSnapshot = useMemo(() => JSON.stringify({
     chorusConfig: {
       mode: chorusConfig.mode,
@@ -239,11 +254,12 @@ export default function InvoiceCreate() {
   const isSubmissionBlocked = extracting || submitting || (isDirectMode && !submissionPreparation.validation.valid);
 
   const handleViewTreatmentDetails = useCallback(() => {
-    const target = lastSubmissionResult
-      ? submissionResultRef.current
-      : lastSubmissionError
-        ? submissionErrorRef.current
-        : null;
+    const target = treatmentDetailsRef.current
+      ?? (lastSubmissionResult
+        ? submissionResultRef.current
+        : lastSubmissionError
+          ? submissionErrorRef.current
+          : null);
 
     target?.scrollIntoView({
       behavior: 'smooth',
@@ -252,6 +268,14 @@ export default function InvoiceCreate() {
   }, [lastSubmissionError, lastSubmissionResult]);
 
   useEffect(() => {
+    if (skipNextExtraction) {
+      setSkipNextExtraction(false);
+      setExtracting(false);
+      setExtractionError(null);
+      setExtractionResult(null);
+      return;
+    }
+
     if (!mainFile) {
       setExtracting(false);
       setExtractionError(null);
@@ -300,6 +324,80 @@ export default function InvoiceCreate() {
       cancelled = true;
     };
   }, [mainFile, suppliers, publicCustomers, publicServices]);
+
+  useEffect(() => {
+    if (!editingInvoiceId || prefilledInvoiceId === editingInvoiceId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadInvoiceForEdit() {
+      try {
+        const invoice = await getInvoice(editingInvoiceId);
+        if (!invoice || cancelled) {
+          return;
+        }
+
+        setFormData({
+          supplierOrganizationId: invoice.supplierOrganizationId,
+          supplierSiret: '',
+          supplierInvoiceNumber: invoice.supplierInvoiceNumber,
+          publicCustomerId: invoice.publicCustomerId,
+          publicCustomerCode: '',
+          publicServiceId: invoice.publicServiceId ?? '',
+          publicServiceCode: '',
+          engagementNumber: invoice.engagementNumber ?? '',
+          marketNumber: invoice.marketNumber ?? '',
+          purchaseOrderNumber: invoice.purchaseOrderNumber ?? '',
+          invoiceDate: invoice.invoiceDate,
+          currencyCode: invoice.currencyCode || 'EUR',
+          totalAmountHt: formatInvoiceAmountForInput(invoice.totalHt),
+          totalAmountTtc: formatInvoiceAmountForInput(invoice.totalTtc),
+        });
+
+        const attachmentsForInvoice = await getInvoiceAttachments(invoice.id);
+        const mainAttachment = attachmentsForInvoice.find((attachment) => attachment.attachmentRole === 'MAIN');
+
+        if (mainAttachment?.storageKey) {
+          const response = await fetch(mainAttachment.storageKey);
+          if (response.ok && !cancelled) {
+            const blob = await response.blob();
+            const nextFile = new File(
+              [blob],
+              mainAttachment.filename,
+              { type: mainAttachment.mimeType || blob.type || 'application/pdf' },
+            );
+            setSkipNextExtraction(true);
+            setMainFile(nextFile);
+          }
+        }
+
+        if (!cancelled) {
+          setPrefilledInvoiceId(editingInvoiceId);
+          toast({
+            title: 'Facture préchargée',
+            description: `La facture ${invoice.supplierInvoiceNumber} a été chargée pour édition/soumission.`,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPrefilledInvoiceId(editingInvoiceId);
+          toast({
+            title: 'Préchargement impossible',
+            description: error instanceof Error ? error.message : 'Erreur inconnue',
+            variant: 'destructive',
+          });
+        }
+      }
+    }
+
+    void loadInvoiceForEdit();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editingInvoiceId, prefilledInvoiceId, toast]);
 
   useEffect(() => {
     const isPdf = mainFile?.type === 'application/pdf' || mainFile?.name.toLowerCase().endsWith('.pdf');
@@ -615,15 +713,9 @@ export default function InvoiceCreate() {
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                 <ExtractionInfoRow label="Fournisseur" value={detectedSupplierName} />
                 <ExtractionInfoRow label="N° facture" value={formData.supplierInvoiceNumber} />
-                <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
-                <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
                 <ExtractionInfoRow label="Client public" value={detectedPublicCustomerName} />
-                <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
-                <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
-                <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
-                <ExtractionInfoRow label="Service détecté" value={detectedService} />
-                <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
-                <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
+                <ExtractionInfoRow label="Service destinataire" value={detectedService} />
+                <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
                 <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
                 <DocumentPreviewCard
                   file={mainFile}
@@ -631,6 +723,36 @@ export default function InvoiceCreate() {
                   extractedText={extractionResult.rawText}
                   rawTextPreview={extractionResult.rawTextPreview}
                 />
+              </div>
+
+              <div className="rounded-lg border bg-muted/10 p-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Informations d’extraction optionnelles</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      À ouvrir seulement pour le contrôle détaillé. La soumission minimale n’en a pas toujours besoin.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowOptionalExtractionInfo((current) => !current)}
+                  >
+                    {showOptionalExtractionInfo ? 'Masquer les détails' : 'Afficher les détails'}
+                  </Button>
+                </div>
+
+                {showOptionalExtractionInfo && (
+                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
+                    <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
+                    <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
+                    <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
+                    <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
+                    <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
+                  </div>
+                )}
               </div>
 
               {extractionResult.warnings.length > 0 && (
@@ -1098,110 +1220,192 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
-      {lastSubmissionResult && (
-        <div ref={submissionResultRef}>
-        <Card>
-          <CardHeader><CardTitle className="text-base">Résultat du traitement Chorus</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-              <ExtractionInfoRow label="Traitement" value={lastSubmissionResult.ok ? 'Réussi' : 'Échoué'} />
-              <ExtractionInfoRow label="Référence Chorus" value={lastSubmissionResult.externalId} />
-              <ExtractionInfoRow label="Pièces jointes uploadées" value={String(lastSubmissionResult.uploadedFiles.length)} />
-            </div>
+      <div ref={treatmentDetailsRef} className="space-y-4">
+        {!hasTreatmentDetails && lastApiCalls.length === 0 && (
+          <Card>
+            <CardHeader><CardTitle className="text-base">Détails du traitement Chorus</CardTitle></CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                {isDirectMode
+                  ? 'Aucune tentative d’envoi n’a encore été enregistrée. Après `Envoyer à Chorus`, cette zone affichera l’erreur, le résultat, le payload final soumis par Python et le journal complet des appels API.'
+                  : 'Le détail du traitement apparaîtra ici. Active le mode direct Chorus si tu veux voir le flux réel de soumission et les appels Python associés.'}
+              </p>
+            </CardContent>
+          </Card>
+        )}
 
-            {lastSubmissionResult.uploadedFiles.length > 0 && (
-              <div className="rounded-lg border bg-muted/20 p-4">
-                <p className="text-sm font-medium">Retour upload des pièces jointes</p>
-                <div className="mt-3 space-y-3">
-                  {lastSubmissionResult.uploadedFiles.map((uploadedFile) => (
+          {lastSubmissionResult && (
+            <div ref={submissionResultRef}>
+              <Card>
+                <CardHeader><CardTitle className="text-base">Résultat du traitement Chorus</CardTitle></CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <ExtractionInfoRow label="Traitement" value={lastSubmissionResult.ok ? 'Réussi' : 'Échoué'} />
+                    <ExtractionInfoRow label="Référence Chorus" value={lastSubmissionResult.externalId} />
+                    <ExtractionInfoRow label="Pièces jointes uploadées" value={String(lastSubmissionResult.uploadedFiles.length)} />
+                  </div>
+
+                  {lastSubmissionResult.uploadedFiles.length > 0 && (
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <p className="text-sm font-medium">Retour upload des pièces jointes</p>
+                      <div className="mt-3 space-y-3">
+                        {lastSubmissionResult.uploadedFiles.map((uploadedFile) => (
+                          <div
+                            key={`${uploadedFile.id}-${uploadedFile.filename}`}
+                            className="rounded-lg border bg-background p-3"
+                          >
+                            <p className="text-sm font-medium">{uploadedFile.filename}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Identifiant extrait : {uploadedFile.id}
+                            </p>
+                            <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                              {JSON.stringify(uploadedFile.response ?? null, null, 2)}
+                            </pre>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
+                    <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                      {JSON.stringify(lastSubmissionResult.response ?? null, null, 2)}
+                    </pre>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-sm font-medium">Payload final soumis par le bridge Python</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Ce JSON correspond au payload réellement envoyé après l’upload du PDF. C’est ici que `pieceJointePrincipale` doit apparaître.
+                    </p>
+                    <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                      {JSON.stringify(lastSubmissionResult.submittedPayload ?? null, null, 2)}
+                    </pre>
+                  </div>
+
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {lastApiCalls.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Journal des appels API Chorus</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium">Dernière tentative de soumission</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Corps de requête et réponses utiles pour débugger l’upload et la soumission. Les secrets et le base64 complet sont masqués.
+                    </p>
+                  </div>
+                  <Badge variant="outline">{lastApiCalls.length} appel(s)</Badge>
+                </div>
+
+                <div className="space-y-3">
+                  {lastApiCalls.map((apiCall, index) => (
                     <div
-                      key={`${uploadedFile.id}-${uploadedFile.filename}`}
+                      key={`${apiCall.label}-${apiCall.url}-${index}`}
                       className="rounded-lg border bg-background p-3"
                     >
-                      <p className="text-sm font-medium">{uploadedFile.filename}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Identifiant extrait : {uploadedFile.id}
-                      </p>
-                      <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
-                        {JSON.stringify(uploadedFile.response ?? null, null, 2)}
-                      </pre>
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <p className="text-sm font-medium">{apiCall.label}</p>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary">{apiCall.method}</Badge>
+                          <Badge variant={apiCall.responseStatus && apiCall.responseStatus >= 400 ? 'destructive' : 'outline'}>
+                            {apiCall.responseStatus ?? 'n/a'}
+                          </Badge>
+                        </div>
+                      </div>
+                      <p className="mt-2 break-all text-xs text-muted-foreground">{apiCall.url}</p>
+
+                      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Body envoyé</p>
+                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 text-xs">
+                            {JSON.stringify(apiCall.requestBody ?? null, null, 2)}
+                          </pre>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Réponse API</p>
+                          <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 text-xs">
+                            {JSON.stringify(apiCall.responseBody ?? null, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              </CardContent>
+            </Card>
+          )}
 
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
-              <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
-                {JSON.stringify(lastSubmissionResult.response ?? null, null, 2)}
-              </pre>
-            </div>
-
-          </CardContent>
-        </Card>
-        </div>
-      )}
-
-      {lastApiCalls.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle className="text-base">Journal des appels API Chorus</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium">Dernière tentative de soumission</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Corps de requête et réponses utiles pour débugger l’upload et la soumission. Les secrets et le base64 complet sont masqués.
+          {(pythonUploadCalls.length > 0 || pythonSubmitCalls.length > 0) && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Bodies JSON construits par Python</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Cette vue isole les corps JSON réellement construits par le bridge Python pour l’upload PDF et pour la soumission finale.
                 </p>
-              </div>
-              <Badge variant="outline">{lastApiCalls.length} appel(s)</Badge>
-            </div>
 
-            <div className="space-y-3">
-              {lastApiCalls.map((apiCall, index) => (
-                <div
-                  key={`${apiCall.label}-${apiCall.url}-${index}`}
-                  className="rounded-lg border bg-background p-3"
-                >
-                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                    <p className="text-sm font-medium">{apiCall.label}</p>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary">{apiCall.method}</Badge>
-                      <Badge variant={apiCall.responseStatus && apiCall.responseStatus >= 400 ? 'destructive' : 'outline'}>
-                        {apiCall.responseStatus ?? 'n/a'}
-                      </Badge>
+                {pythonUploadCalls.length > 0 && (
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-sm font-medium">Upload pièce jointe Python</p>
+                    <div className="mt-3 space-y-3">
+                      {pythonUploadCalls.map((apiCall, index) => (
+                        <div
+                          key={`${apiCall.label}-${apiCall.url}-python-upload-${index}`}
+                          className="rounded-lg border bg-background p-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-medium">{apiCall.label}</p>
+                            <Badge variant={apiCall.responseStatus && apiCall.responseStatus >= 400 ? 'destructive' : 'outline'}>
+                              {apiCall.responseStatus ?? 'n/a'}
+                            </Badge>
+                          </div>
+                          <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                            {JSON.stringify(apiCall.requestBody ?? null, null, 2)}
+                          </pre>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                  <p className="mt-2 break-all text-xs text-muted-foreground">{apiCall.url}</p>
+                )}
 
-                  <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Body envoyé</p>
-                      <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 text-xs">
-                        {JSON.stringify(apiCall.requestBody ?? null, null, 2)}
-                      </pre>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Réponse API</p>
-                      <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-muted/20 p-3 text-xs">
-                        {JSON.stringify(apiCall.responseBody ?? null, null, 2)}
-                      </pre>
+                {pythonSubmitCalls.length > 0 && (
+                  <div className="rounded-lg border bg-muted/20 p-4">
+                    <p className="text-sm font-medium">Soumission finale Python</p>
+                    <div className="mt-3 space-y-3">
+                      {pythonSubmitCalls.map((apiCall, index) => (
+                        <div
+                          key={`${apiCall.label}-${apiCall.url}-python-submit-${index}`}
+                          className="rounded-lg border bg-background p-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-medium">{apiCall.label}</p>
+                            <Badge variant={apiCall.responseStatus && apiCall.responseStatus >= 400 ? 'destructive' : 'outline'}>
+                              {apiCall.responseStatus ?? 'n/a'}
+                            </Badge>
+                          </div>
+                          <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                            {JSON.stringify(apiCall.requestBody ?? null, null, 2)}
+                          </pre>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+                )}
+              </CardContent>
+            </Card>
+          )}
+      </div>
 
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={() => navigate('/invoices')}>Annuler</Button>
-        {isDirectMode && (
-          <Button variant="outline" onClick={handleViewTreatmentDetails} disabled={!hasTreatmentDetails}>
-            Voir les détails du traitement
-          </Button>
-        )}
+        <Button variant="outline" onClick={handleViewTreatmentDetails}>
+          Voir les détails du traitement
+        </Button>
         <Button onClick={() => void handleSubmit()} disabled={isSubmissionBlocked}>
           {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
           {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Envoyer à Chorus' : 'Déposer la facture'}

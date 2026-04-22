@@ -125,6 +125,24 @@ function pickArrayPayload(body: unknown, candidateKeys: string[]): Record<string
   return [];
 }
 
+function filterRecordsByQuery(
+  records: Record<string, unknown>[],
+  query?: Record<string, string | undefined>,
+): Record<string, unknown>[] {
+  if (!query) {
+    return records;
+  }
+
+  const activeFilters = Object.entries(query).filter(([, value]) => typeof value === 'string' && value.trim());
+  if (activeFilters.length === 0) {
+    return records;
+  }
+
+  return records.filter((record) =>
+    activeFilters.every(([key, value]) => asString(record[key]) === value),
+  );
+}
+
 function pickRecordPayload(body: unknown, candidateKeys: string[]): Record<string, unknown> | null {
   if (isRecord(body)) {
     for (const key of candidateKeys) {
@@ -541,7 +559,7 @@ export class BackendDataClient {
     }
 
     const body = await response.json() as unknown;
-    return pickArrayPayload(body, candidateKeys).map(normalizeItem);
+    return filterRecordsByQuery(pickArrayPayload(body, candidateKeys), query).map(normalizeItem);
   }
 
   private async fetchEntity<T>(

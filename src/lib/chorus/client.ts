@@ -1,10 +1,4 @@
-import {
-  attachMainFileToChorusSubmissionPayload,
-  finalizeChorusSubmissionPayloadForPdfDeposit,
-} from '@/lib/chorus/buildSubmissionPayload';
-import { buildUploadPdfPayload } from '@/lib/chorus/buildUploadPdfPayload';
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
-import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
 import type {
   ChorusApiDebugEntry,
   ChorusConfig,
@@ -71,55 +65,6 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   return rawBody;
 }
 
-function inferUploadedFileId(filename: string, response: unknown): string {
-  const candidateKeys = [
-    'pieceJointeId',
-    'idPieceJointe',
-    'pieceJointePrincipaleId',
-    'idFichier',
-    'fileId',
-    'id',
-  ];
-
-  function findCandidate(value: unknown): string | undefined {
-    if (!value || typeof value !== 'object') {
-      return undefined;
-    }
-
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const nested = findCandidate(item);
-        if (nested) {
-          return nested;
-        }
-      }
-      return undefined;
-    }
-
-    const record = value as Record<string, unknown>;
-    for (const key of candidateKeys) {
-      const candidate = record[key];
-      if (typeof candidate === 'string' && candidate.trim()) {
-        return candidate;
-      }
-      if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-        return String(candidate);
-      }
-    }
-
-    for (const nested of Object.values(record)) {
-      const candidate = findCandidate(nested);
-      if (candidate) {
-        return candidate;
-      }
-    }
-
-    return undefined;
-  }
-
-  return findCandidate(response) ?? `file-${filename}`;
-}
-
 function compactText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
@@ -159,26 +104,8 @@ function summarizeBinaryField(value: string | undefined, fieldName: string): str
   return `[${fieldName} base64 masqué, ${value.length} caractères, aperçu: ${preview}…]`;
 }
 
-function sanitizeUploadPayloadForDebug(payload: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...payload,
-    fichierFacture: summarizeBinaryField(
-      typeof payload.fichierFacture === 'string' ? payload.fichierFacture : undefined,
-      'fichierFacture',
-    ) ?? payload.fichierFacture,
-    pieceJointeFichier: summarizeBinaryField(
-      typeof payload.pieceJointeFichier === 'string' ? payload.pieceJointeFichier : undefined,
-      'pieceJointeFichier',
-    ) ?? payload.pieceJointeFichier,
-  };
-}
-
-function serializeFormDataForDebug(file: File): Record<string, string> {
-  return {
-    mode: 'multipart/form-data',
-    fileName: file.name,
-    mimeType: file.type || 'application/octet-stream',
-  };
+function isDebugEntryArray(value: unknown): value is ChorusApiDebugEntry[] {
+  return Array.isArray(value);
 }
 
 function stripCurrentUserIdFromSubmissionPayload(input: ChorusSubmitInvoiceInput['invoiceData']): ChorusSubmitInvoiceInput['invoiceData'] {
@@ -204,35 +131,6 @@ function inferPieceJointeId(response: unknown): string | undefined {
   }
 
   return undefined;
-}
-
-function buildSubmitFailureHint(
-  responseStatus: number,
-  routes: PisteChorusRoutes,
-  body: unknown,
-  mainUploadedFile: ChorusUploadedFile,
-): string {
-  if (!/\/v1\/soumettre$/i.test(routes.submitInvoicePath)) {
-    return '';
-  }
-
-  const codeRetour = body && typeof body === 'object' ? (body as Record<string, unknown>).codeRetour : undefined;
-  if (responseStatus < 500 && codeRetour !== 500) {
-    return '';
-  }
-
-  const pieceJointeId = inferPieceJointeId(mainUploadedFile.response);
-  const depositInfo = pieceJointeId
-    ? ` L’upload de la pièce jointe a probablement abouti avec l’identifiant ${pieceJointeId}.`
-    : ' L’upload de la pièce jointe a probablement abouti avant l’erreur finale de soumission.';
-
-  return `${depositInfo} Le blocage restant vient vraisemblablement du JSON envoyé à /v1/soumettre, qui doit suivre le contrat Chorus officiel minimal (cadreDeFacturation, destinataire, fournisseur, lignePoste, ligneTva, montantTotal, numeroFactureSaisi, references, pieceJointePrincipale).`;
-}
-
-function formatValidationIssues(issues: Array<{ path: string; message: string }>): string {
-  return issues
-    .map((issue) => `${issue.path}: ${issue.message}`)
-    .join(' | ');
 }
 
 function cleanDigits(value: string | undefined): string | undefined {
@@ -535,204 +433,108 @@ export class DirectChorusConnector implements ChorusConnector {
     };
   }
 
-  private async uploadFile(
-    file: File,
-    apiCalls: ChorusApiDebugEntry[],
-    debugBypassValidation = false,
-  ): Promise<ChorusUploadedFile> {
-    if (!this.routes.uploadFilePath) {
-      throw new Error('uploadFilePath manquant. Configure un endpoint d\'upload avant la soumission.');
-    }
-
-    const uploadUrl = this.routes.uploadFileUrl();
-    let response: Response;
-    let requestBodyForDebug: unknown;
-    let requestBody: BodyInit;
-    let requestHeaders: HeadersInit | undefined;
-    let operationLabel: string;
-
-    if (this.routes.isPdfDepositUpload() || this.routes.isAttachmentUpload()) {
-      const payload = buildUploadPdfPayload(
-        await readFileAsBase64(file),
-        file.name,
-        file.type || 'application/pdf',
-      );
-      requestBodyForDebug = sanitizeUploadPayloadForDebug(payload as Record<string, unknown>);
-      debugChorusLog('Upload PDF payload', {
-        url: uploadUrl,
-        payload: requestBodyForDebug,
-      }, import.meta.env.DEV || debugBypassValidation);
-      requestBody = JSON.stringify(payload);
-      requestHeaders = await this.buildApiHeaders({
-        'content-type': 'application/json; charset=UTF-8',
-      });
-      operationLabel = this.routes.isAttachmentUpload()
-        ? 'Ajout fichier Chorus'
-        : 'Dépôt PDF Chorus';
-    } else {
-      const formData = new FormData();
-      formData.append('file', file, file.name);
-      requestBody = formData;
-      requestBodyForDebug = serializeFormDataForDebug(file);
-      debugChorusLog('Upload file form-data', {
-        url: uploadUrl,
-        filename: file.name,
-        mimeType: file.type,
-      }, import.meta.env.DEV || debugBypassValidation);
-      requestHeaders = await this.buildApiHeaders();
-      operationLabel = 'Upload fichier Chorus';
-    }
-
-    try {
-      response = await this.performFetch(uploadUrl, {
-        method: 'POST',
-        headers: requestHeaders,
-        body: requestBody,
-      }, operationLabel);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erreur réseau inconnue';
-      apiCalls.push({
-        label: `Upload fichier Chorus: ${file.name}`,
-        method: 'POST',
-        url: uploadUrl,
-        requestBody: requestBodyForDebug,
-        responseBody: { error: message },
-      });
-      throw new ChorusSubmitApiError(message, apiCalls);
-    }
-
-    const body = await parseResponseBody(response);
-    apiCalls.push({
-      label: `Upload fichier Chorus: ${file.name}`,
-      method: 'POST',
-      url: uploadUrl,
-      requestBody: requestBodyForDebug,
-      responseStatus: response.status,
-      responseBody: body,
-    });
-    debugChorusLog('Upload response', {
-      url: uploadUrl,
-      status: response.status,
-      body,
-    }, import.meta.env.DEV || debugBypassValidation);
-    if (!response.ok) {
-      throw new ChorusSubmitApiError(`Upload fichier échoué (${response.status}): ${stringifyResponseBody(body)}`, apiCalls);
-    }
-
-    return {
-      id: inferUploadedFileId(file.name, body),
-      filename: file.name,
-      response: body,
-    };
-  }
-
-  async submitInvoice(input: ChorusSubmitInvoiceInput): Promise<ChorusSubmitInvoiceResult> {
-    if (!this.routes.submitInvoicePath) {
-      throw new Error('submitInvoicePath manquant. Configure un endpoint de soumission avant d\'envoyer une facture.');
-    }
-
-    if (this.routes.isPdfDepositUpload() && input.attachments.length > 0) {
-      throw new Error('Le flux Chorus `deposer/pdf` ne gère pas encore les pièces jointes complémentaires dans ce connecteur.');
+  private async submitInvoiceViaPythonBridge(
+    input: ChorusSubmitInvoiceInput,
+  ): Promise<ChorusSubmitInvoiceResult> {
+    const bridgeUrl = this.config.submissionBridgeUrl.trim();
+    if (!bridgeUrl) {
+      throw new Error('submissionBridgeUrl manquant.');
     }
 
     const debugEnabled = import.meta.env.DEV || input.debugBypassValidation === true;
     const apiCalls: ChorusApiDebugEntry[] = [];
-    const preflightValidation = validateChorusSubmissionPayload(input.invoiceData);
-    debugChorusLog('Submit preflight', {
-      apiBaseUrl: this.config.apiBaseUrl,
-      uploadFilePath: this.config.uploadFilePath,
-      submitInvoicePath: this.config.submitInvoicePath,
-      invoiceData: input.invoiceData,
-      validation: preflightValidation,
-      debugBypassValidation: input.debugBypassValidation === true,
+    const requestBody = {
+      payload: stripCurrentUserIdFromSubmissionPayload(input.invoiceData),
+      mainFile: {
+        name: input.mainFile.name,
+        mimeType: input.mainFile.type || 'application/pdf',
+        base64: await readFileAsBase64(input.mainFile),
+      },
+      attachments: await Promise.all(
+        input.attachments.map(async (file) => ({
+          name: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          base64: await readFileAsBase64(file),
+        })),
+      ),
+    };
+    const requestBodyForDebug = {
+      ...requestBody,
+      mainFile: {
+        ...requestBody.mainFile,
+        base64: summarizeBinaryField(requestBody.mainFile.base64, 'mainFile.base64'),
+      },
+      attachments: requestBody.attachments.map((attachment) => ({
+        ...attachment,
+        base64: summarizeBinaryField(attachment.base64, `attachment:${attachment.name}`),
+      })),
+    };
+
+    debugChorusLog('Submit via Python bridge', {
+      url: bridgeUrl,
+      payload: requestBodyForDebug,
     }, debugEnabled);
-    if (!preflightValidation.valid && !input.debugBypassValidation) {
-      throw new Error(`Payload Chorus invalide: ${formatValidationIssues(preflightValidation.errors)}`);
-    }
 
-    const mainFile = await this.uploadFile(input.mainFile, apiCalls, input.debugBypassValidation);
-    const attachmentFiles = await Promise.all(
-      input.attachments.map((file) => this.uploadFile(file, apiCalls, input.debugBypassValidation)),
-    );
-    const uploadedFiles = [mainFile, ...attachmentFiles];
-
-    const payload = this.routes.isPdfDepositUpload()
-      ? finalizeChorusSubmissionPayloadForPdfDeposit(stripCurrentUserIdFromSubmissionPayload(input.invoiceData), {
-          mainFileId: mainFile.id,
-          mainFileName: mainFile.filename,
-        })
-      : this.routes.isAttachmentUpload()
-        ? attachMainFileToChorusSubmissionPayload(stripCurrentUserIdFromSubmissionPayload(input.invoiceData), {
-            mainFileId: mainFile.id,
-            mainFileName: mainFile.filename,
-            modeDepot: 'SAISIE_API',
-          })
-      : stripCurrentUserIdFromSubmissionPayload(input.invoiceData);
-
-    const validation = validateChorusSubmissionPayload(payload);
-    debugChorusLog('Submit final payload', {
-      payload,
-      validation,
-      uploadedFiles,
-    }, debugEnabled);
-    if (!validation.valid && !input.debugBypassValidation) {
-      throw new Error(`Payload Chorus invalide: ${formatValidationIssues(validation.errors)}`);
-    }
-
-    const submitUrl = this.routes.submitInvoiceUrl();
     let response: Response;
     try {
-      response = await this.performFetch(submitUrl, {
+      response = await this.performFetch(bridgeUrl, {
         method: 'POST',
-        headers: await this.buildApiHeaders({
+        headers: {
           'content-type': 'application/json; charset=UTF-8',
-        }),
-        body: JSON.stringify(payload),
-      }, 'Soumission de facture Chorus');
+          accept: 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      }, 'Soumission via backend Python Chorus');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur réseau inconnue';
-      apiCalls.push({
-        label: 'Soumission facture Chorus',
-        method: 'POST',
-        url: submitUrl,
-        requestBody: payload,
-        responseBody: { error: message },
-      });
       throw new ChorusSubmitApiError(message, apiCalls);
     }
 
     const body = await parseResponseBody(response);
-    apiCalls.push({
-      label: 'Soumission facture Chorus',
+    const record = body && typeof body === 'object' ? body as Record<string, unknown> : undefined;
+    const bridgeApiCalls = isDebugEntryArray(record?.apiCalls) ? record.apiCalls : [];
+    const bridgeCallEntry: ChorusApiDebugEntry = {
+      label: 'Bridge Python local',
       method: 'POST',
-      url: submitUrl,
-      requestBody: payload,
+      url: bridgeUrl,
+      requestBody: requestBodyForDebug,
       responseStatus: response.status,
       responseBody: body,
-    });
-    debugChorusLog('Submit response', {
-      url: submitUrl,
-      status: response.status,
-      body,
-    }, debugEnabled);
-    if (!response.ok) {
-      const hint = buildSubmitFailureHint(response.status, this.routes, body, mainFile);
-      throw new ChorusSubmitApiError(`Soumission Chorus échouée (${response.status}): ${stringifyResponseBody(body)}${hint}`, apiCalls);
+    };
+    const combinedApiCalls = [bridgeCallEntry, ...bridgeApiCalls];
+
+    if (!response.ok || record?.ok === false) {
+      const message = typeof record?.error === 'string'
+        ? record.error
+        : `Soumission backend Python échouée (${response.status}): ${stringifyResponseBody(body)}`;
+      throw new ChorusSubmitApiError(message, combinedApiCalls);
     }
 
-    const externalId = body && typeof body === 'object'
-      ? ((body as Record<string, unknown>).invoiceId
-        ?? (body as Record<string, unknown>).numeroFactureChorus
-        ?? (body as Record<string, unknown>).id)
+    const uploadedFiles = Array.isArray(record?.uploadedFiles)
+      ? (record?.uploadedFiles as ChorusUploadedFile[])
+      : [];
+    const externalId = typeof record?.externalId === 'string'
+      ? record.externalId
       : undefined;
 
     return {
       ok: true,
-      externalId: typeof externalId === 'string' ? externalId : undefined,
+      externalId,
       uploadedFiles,
-      response: body,
-      apiCalls,
+      submittedPayload: record?.payload,
+      response: record?.response ?? body,
+      apiCalls: combinedApiCalls,
     };
+  }
+
+  async submitInvoice(input: ChorusSubmitInvoiceInput): Promise<ChorusSubmitInvoiceResult> {
+    if (this.config.submissionBridgeUrl.trim()) {
+      return this.submitInvoiceViaPythonBridge(input);
+    }
+
+    throw new Error(
+      'La soumission facture doit passer par l’API Python locale. Configure VITE_CHORUS_SUBMISSION_BRIDGE_URL et démarre scripts/chorus_submit_server.py.',
+    );
   }
 }
 
@@ -770,6 +572,7 @@ export class MockChorusConnector implements ChorusConnector {
       ok: true,
       externalId: `MOCK-${Date.now()}`,
       uploadedFiles,
+      submittedPayload: input.invoiceData,
       response: {
         mocked: true,
         invoiceData: input.invoiceData,

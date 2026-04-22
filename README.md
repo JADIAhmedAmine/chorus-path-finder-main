@@ -62,8 +62,6 @@ Variables utiles pour éviter de ressaisir le contexte :
 - `CHORUS_SERVICE_EXECUTANT_CODE`
 - `CHORUS_BANK_ACCOUNT_CODE`
 
-`CHORUS_CURRENT_USER_ID` reste utile uniquement si tu fais un upload PDF via `POST /cpro/transverses/v1/ajouter/fichier`. Il n'est plus injecté dans le payload minimal `/factures/v1/soumettre`.
-
 Exemple de dry-run :
 
 ```bash
@@ -83,7 +81,6 @@ python scripts/submit_chorus_invoice.py \
   --recipient-code 00000000113495 \
   --service-code SERVICE_DESTINATAIRE25969476 \
   --supplier-id 26359578 \
-  --current-user-id 331 \
   --pdf 2026-003-00565.pdf
 ```
 
@@ -91,6 +88,24 @@ Dans ce cas, la sortie JSON inclut aussi :
 
 - `upload.piece_jointe_id` : identifiant extrait de `POST /cpro/transverses/v1/ajouter/fichier`
 - `upload.response` : réponse brute de cette API
+
+Pont local pour l'interface React :
+
+```bash
+python3 scripts/chorus_submit_server.py
+```
+
+Puis côté frontend, définir :
+
+```env
+VITE_CHORUS_SUBMISSION_BRIDGE_URL=http://127.0.0.1:8008/api/chorus/submit
+```
+
+Dans ce mode, l'interface n'upload plus le PDF directement vers Chorus depuis le navigateur :
+- elle envoie le payload minimal + le PDF encodé au pont Python local
+- `chorus_python` appelle `POST /cpro/transverses/v1/ajouter/fichier`
+- puis `POST /cpro/factures/v1/soumettre`
+- et renvoie à l'UI le journal détaillé des appels API Chorus
 
 TODO métier restant côté Python :
 
@@ -131,6 +146,42 @@ Variables à renseigner côté frontend pour pointer vers le backend applicatif 
 - `VITE_DATA_ASYNC_JOBS_PATH`
 - `VITE_DATA_AUDIT_LOGS_PATH`
 - `VITE_DATA_EXTRACTION_RESULTS_PATH`
+
+## Base de test facture
+
+Le projet peut maintenant générer une base de test locale de factures à partir de l'annuaire Chorus normalisé [public/annuaire/annuaire.normalized.json](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/public/annuaire/annuaire.normalized.json).
+
+Commande :
+
+```bash
+npm run build:test-data
+```
+
+Le générateur [scripts/build-test-invoice-db.mjs](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/scripts/build-test-invoice-db.mjs) :
+
+- prend des clients publics actifs depuis l'annuaire
+- extrait le prefixe numerique de leur nom legal, par exemple `26321024` dans `26321024DESTINATAIRE2`
+- cherche un service destinataire contenant ce prefixe
+- prefere les codes de service du type `SERVICE_DESTINATAIRE_*`
+- produit un jeu de données de test cohérent dans [public/test-data](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/public/test-data)
+
+Les endpoints frontend par defaut peuvent pointer sur :
+
+- `/test-data/tenant.current.json`
+- `/test-data/users.me.json`
+- `/test-data/suppliers.json`
+- `/test-data/public-customers.json`
+- `/test-data/public-services.json`
+- `/test-data/invoices.json`
+- `/test-data/invoice-lines.json`
+- `/test-data/invoice-attachments.json`
+- `/test-data/invoice-status-history.json`
+- `/test-data/api-exchange-logs.json`
+- `/test-data/async-jobs.json`
+- `/test-data/audit-logs.json`
+- `/test-data/invoice-extraction-results.json`
+
+Cette base de test sert de backend JSON local pour les pages `Factures`, `Detail`, `Jobs`, `Audit` et pour les listes fournisseur / client public / service destinataire.
 
 Pour les référentiels destinataires/services publics, il y a maintenant deux sources possibles :
 

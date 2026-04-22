@@ -46,7 +46,6 @@ class ChorusMinimalInvoiceInput:
     recipient_code: str | None = None
     service_executant_code: str | None = None
     supplier_id: int | None = None
-    current_user_id: int | None = None
     bank_account_code: int | None = None
     invoice_date: date | str | None = None
     comment: str | None = None

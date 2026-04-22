@@ -1,0 +1,148 @@
+{
+  "publicServices": [
+    {
+      "id": "annuaire-00000000380342::SERVICE_DESTINATAIRE_226321024",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000380342",
+      "codeServiceExecutant": "SERVICE_DESTINATAIRE_226321024",
+      "label": "SERVICE_DESTINATAIRE_226321024",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000380474::SERVICE_MOA26321033",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000380474",
+      "codeServiceExecutant": "SERVICE_MOA26321033",
+      "label": "SERVICE_MOA26321033",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000380284::SERVICE_DESTINATAIRE_226321023",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000380284",
+      "codeServiceExecutant": "SERVICE_DESTINATAIRE_226321023",
+      "label": "SERVICE_DESTINATAIRE_226321023",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000380499::SERVICE_MOA26264382",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000380499",
+      "codeServiceExecutant": "SERVICE_MOA26264382",
+      "label": "SERVICE_MOA26264382",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000313995::SERVICE_MOA26219329",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000313995",
+      "codeServiceExecutant": "SERVICE_MOA26219329",
+      "label": "SERVICE_MOA26219329",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000314201::SERVICE_MOA26220150",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000314201",
+      "codeServiceExecutant": "SERVICE_MOA26220150",
+      "label": "SERVICE_MOA26220150",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000315967::SERVICE_DESTINATAIRE_226220941",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000315967",
+      "codeServiceExecutant": "SERVICE_DESTINATAIRE_226220941",
+      "label": "SERVICE_DESTINATAIRE_226220941",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000335412::SERVICE_MOA26256450",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000335412",
+      "codeServiceExecutant": "SERVICE_MOA26256450",
+      "label": "SERVICE_MOA26256450",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000335429::SERVICE_MOA26256365",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000335429",
+      "codeServiceExecutant": "SERVICE_MOA26256365",
+      "label": "SERVICE_MOA26256365",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000335503::SERVICE_DESTINATAIRE_226256367",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000335503",
+      "codeServiceExecutant": "SERVICE_DESTINATAIRE_226256367",
+      "label": "SERVICE_DESTINATAIRE_226256367",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000137412::SERVICE_DESTINATAIRE_226021612",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000137412",
+      "codeServiceExecutant": "SERVICE_DESTINATAIRE_226021612",
+      "label": "SERVICE_DESTINATAIRE_226021612",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "annuaire-00000000138014::SERVICE_DESTINATAIRE26021622",
+      "tenantId": "tenant-gigalis-test",
+      "publicCustomerId": "annuaire-00000000138014",
+      "codeServiceExecutant": "SERVICE_DESTINATAIRE26021622",
+      "label": "SERVICE_DESTINATAIRE26021622",
+      "engagementRequired": false,
+      "purchaseOrderRequired": false,
+      "active": true,
+      "createdAt": "1970-01-01T00:00:00.000Z",
+      "updatedAt": "1970-01-01T00:00:00.000Z"
+    }
+  ]
+}

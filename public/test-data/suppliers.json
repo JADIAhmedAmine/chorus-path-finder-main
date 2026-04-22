@@ -1,0 +1,15 @@
+{
+  "suppliers": [
+    {
+      "id": "26359578",
+      "tenantId": "tenant-gigalis-test",
+      "legalName": "Destinataire 32242033407300",
+      "siret": "32242033407300",
+      "vatNumber": "",
+      "chorusSupplierCode": "26359578",
+      "active": true,
+      "createdAt": "2025-06-03T08:00:00.000Z",
+      "updatedAt": "2025-06-03T08:00:00.000Z"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "tenant": {
+    "id": "tenant-gigalis-test",
+    "code": "GIGALIS-TEST",
+    "name": "Gigalis - Base de test factures",
+    "active": true,
+    "createdAt": "2025-06-03T08:00:00.000Z",
+    "updatedAt": "2025-06-03T08:00:00.000Z"
+  }
+}
