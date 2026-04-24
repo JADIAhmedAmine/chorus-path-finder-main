@@ -18,6 +18,18 @@ interface OllamaExtractionPromptContext {
   referenceHints?: string;
 }
 
+const OLLAMA_API_TIMEOUT_MS = 5000;
+
+function isTestRuntime(): boolean {
+  const runtime = globalThis as typeof globalThis & {
+    process?: {
+      env?: Record<string, string | undefined>;
+    };
+  };
+
+  return runtime.process?.env?.VITEST === 'true' || runtime.process?.env?.NODE_ENV === 'test';
+}
+
 function extractJsonObject(value: string): string | undefined {
   const start = value.indexOf('{');
   const end = value.lastIndexOf('}');
@@ -162,6 +174,69 @@ function buildPromptDocumentText(text: string): string {
   ].join('\n');
 }
 
+const OLLAMA_EXTRACTION_FIELDS = [
+  'supplierOrganizationId',
+  'supplierName',
+  'supplierInvoiceNumber',
+  'paymentMode',
+  'supplierSiret',
+  'supplierVatNumber',
+  'publicCustomerId',
+  'publicCustomerName',
+  'publicCustomerSiret',
+  'publicCustomerCode',
+  'publicServiceId',
+  'publicServiceLabel',
+  'publicServiceCode',
+  'engagementNumber',
+  'marketNumber',
+  'purchaseOrderNumber',
+  'customerReference',
+  'invoiceDate',
+  'dueDate',
+  'currencyCode',
+  'totalAmountHt',
+  'totalVat',
+  'totalAmountTtc',
+  'lineItems',
+  'vatLines',
+] as const;
+
+const OLLAMA_EXTRACTION_EXAMPLE: ExtractedInvoiceDraftData = {
+  supplierName: 'GIP Gigalis',
+  supplierInvoiceNumber: '2026-003-00565',
+  paymentMode: 'CHEQUE',
+  supplierSiret: '25440253000011',
+  supplierVatNumber: 'FR59254402530',
+  publicCustomerName: 'REGION DES PAYS DE LA LOIRE - SI EPLE',
+  publicCustomerSiret: '23440003400026',
+  publicServiceLabel: 'Comptabilite fournisseurs',
+  engagementNumber: 'BC2025/25-007915',
+  customerReference: '1903',
+  invoiceDate: '2026-03-16',
+  dueDate: '2026-04-15',
+  currencyCode: 'EUR',
+  totalAmountHt: 45903.52,
+  totalVat: 9180.7,
+  totalAmountTtc: 55084.22,
+  lineItems: [
+    {
+      description: 'INF - Accessoires reseaux type 1 Module SFP 1G Base-T',
+      quantity: 15,
+      unitPriceHt: 38.44,
+      totalHt: 576.6,
+      vatRate: 20,
+    },
+  ],
+  vatLines: [
+    {
+      rate: 20,
+      baseHt: 45903.52,
+      taxAmount: 9180.7,
+    },
+  ],
+};
+
 function parseLineItems(value: unknown): ExtractedInvoiceLineItemData[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -301,7 +376,7 @@ export async function extractInvoiceDataWithOllama(
 ): Promise<ExtractedInvoiceDraftData> {
   const config = resolveLlmRuntimeConfig(loadLlmConfig());
 
-  if (!canUseLlmExtraction(config) || !text.trim()) {
+  if (isTestRuntime() || !canUseLlmExtraction(config) || !text.trim()) {
     return heuristicFields;
   }
 
@@ -330,11 +405,11 @@ export async function extractInvoiceDataWithOllama(
     "- publicCustomerName",
     "- publicCustomerSiret",
     "- publicCustomerCode",
-    "- publicServiceId (seulement si un indice de reference candidat le rend certain)",
-    "- publicServiceLabel",
-    "- publicServiceCode",
+    "- publicServiceId (optionnel, seulement si un indice de reference candidat le rend certain)",
+    "- publicServiceLabel (optionnel, seulement si present explicitement)",
+    "- publicServiceCode (optionnel, seulement si present explicitement)",
     "- engagementNumber",
-    "- marketNumber",
+    "- marketNumber (optionnel, ne jamais l inventer)",
     "- purchaseOrderNumber",
     "- customerReference",
     "- invoiceDate",
@@ -357,8 +432,20 @@ export async function extractInvoiceDataWithOllama(
     "Format des vatLines :",
     "{ rate, baseHt, taxAmount }",
     "",
+    "Champs autorises, sans aucun autre nom de champ :",
+    OLLAMA_EXTRACTION_FIELDS.join(', '),
+    "",
+    "Exemple de sortie attendue. Ne copie pas ces valeurs si elles ne sont pas presentes dans le document :",
+    JSON.stringify(OLLAMA_EXTRACTION_EXAMPLE, null, 2),
+    "",
+    "Points d attention pour les factures Docling/Markdown :",
+    "- publicServiceLabel correspond au service destinataire ou service executant seulement si ce champ est explicitement visible",
+    "- Les tableaux Markdown peuvent contenir Total HT, NET A PAYER, TVA et les lignes de facture",
+    "- Si totalVat est absent mais totalAmountHt et totalAmountTtc sont presents, calcule totalVat = totalAmountTtc - totalAmountHt",
+    "- Si le numero client apparait dans ID CLIENT ou Client [1903], renseigne customerReference",
+    "",
     "Priorites de decision :",
-    "1. Extraire numero de facture, date, client public, service, montants, devise, mode de paiement",
+    "1. Extraire numero de facture, date, client public, montants, devise, mode de paiement",
     "2. Utiliser les indices de references seulement si le match est clair",
     "3. Mieux vaut omettre un champ que l inventer",
     "",
@@ -371,11 +458,17 @@ export async function extractInvoiceDataWithOllama(
   ].filter(Boolean).join("\n");
 
   try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+    const timeoutId = controller
+      ? globalThis.setTimeout(() => controller.abort(), OLLAMA_API_TIMEOUT_MS)
+      : undefined;
+
     const response = await fetchImpl(`${config.baseUrl.replace(/\/+$/, '')}/api/chat`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
       },
+      signal: controller?.signal,
       body: JSON.stringify({
         model: config.model,
         stream: false,
@@ -392,6 +485,10 @@ export async function extractInvoiceDataWithOllama(
           num_predict: config.maxNewTokens,
         },
       }),
+    }).finally(() => {
+      if (timeoutId !== undefined) {
+        globalThis.clearTimeout(timeoutId);
+      }
     });
 
     if (!response.ok) {

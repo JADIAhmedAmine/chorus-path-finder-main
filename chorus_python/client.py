@@ -409,6 +409,15 @@ class ChorusClient:
         )
 
     def submit_invoice(self, payload: dict[str, Any]) -> Any:
+        print("\n[debug] Final JSON body sent to Chorus /factures/v1/soumettre:", flush=True)
+        print(
+            json.dumps(
+                self._sanitize_debug_payload(payload),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            flush=True,
+        )
         return self._post_json(
             "/factures/v1/soumettre",
             payload,

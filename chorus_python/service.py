@@ -5,9 +5,14 @@ from decimal import Decimal
 from typing import Any
 
 from .client import ChorusClient, ChorusUploadAttachmentResult
-from .config import ChorusSettings
+from .config import ChorusSettings, FIXED_SUPPLIER_ID
 from .models import ChorusMinimalInvoiceInput
 from .payload import build_minimal_submission_payload
+from .soumission import (
+    DEFAULT_MODE_DEPOT,
+    DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION,
+    SoumissionFacture,
+)
 
 
 class ChorusSubmissionService:
@@ -16,16 +21,32 @@ class ChorusSubmissionService:
         self.client = client or ChorusClient(settings)
 
     def _prepare_submission(self, invoice: ChorusMinimalInvoiceInput) -> tuple[dict[str, Any], ChorusUploadAttachmentResult | None]:
-        supplier_id = self.client.resolve_supplier_id(
-            invoice.supplier_id or self.settings.default_supplier_id
-        )
+        supplier_id = self.client.resolve_supplier_id(FIXED_SUPPLIER_ID)
         recipient_code = invoice.recipient_code or self.settings.default_code_destinataire
         if not recipient_code:
             raise ValueError("codeDestinataire manquant.")
 
-        recipient_match = self.client.resolve_recipient_and_service(
-            recipient_code,
-            invoice.service_executant_code or self.settings.default_code_service_executant,
+        upload_result: ChorusUploadAttachmentResult | None = None
+        if invoice.pdf_path is not None:
+            upload_result = self.client.upload_attachment(invoice.pdf_path)
+
+        if upload_result is not None:
+            payload = SoumissionFacture.from_invoice(
+                invoice,
+                code_destinataire=recipient_code,
+                id_fournisseur=supplier_id,
+                piece_jointe_principale_id=upload_result.piece_jointe_id,
+                piece_jointe_principale_designation=(
+                    invoice.pdf_designation or DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION
+                ),
+            ).to_payload()
+            return payload, upload_result
+
+        requested_service_code = invoice.service_executant_code or self.settings.default_code_service_executant
+        recipient_match = (
+            self.client.resolve_recipient_and_service(recipient_code, requested_service_code)
+            if requested_service_code
+            else None
         )
 
         requested_bank_account_code = (
@@ -50,24 +71,29 @@ class ChorusSubmissionService:
             if rate not in tva_code_by_rate:
                 tva_code_by_rate[rate] = self.client.resolve_tva_code(rate)
 
-        upload_result: ChorusUploadAttachmentResult | None = None
-        if invoice.pdf_path is not None:
-            upload_result = self.client.upload_attachment(invoice.pdf_path)
-
         payload = build_minimal_submission_payload(
             invoice,
             self.settings.fixed,
             supplier_id=supplier_id,
-            code_destinataire=recipient_match.code_destinataire,
-            code_service_executant=recipient_match.code_service_executant,
+            code_destinataire=recipient_match.code_destinataire if recipient_match else recipient_code,
+            code_service_executant=recipient_match.code_service_executant if recipient_match else None,
             tva_code_by_rate=tva_code_by_rate,
-            uploaded_piece_jointe_id=upload_result.piece_jointe_id if upload_result else None,
+            uploaded_piece_jointe_id=None,
             bank_account_code=bank_account_code,
         )
         return payload, upload_result
 
     def prepare_payload(self, invoice: ChorusMinimalInvoiceInput) -> dict[str, Any]:
         payload, _upload_result = self._prepare_submission(invoice)
+        return payload
+
+    def _enforce_fixed_supplier_id(self, payload: dict[str, Any]) -> dict[str, Any]:
+        fournisseur = payload.get("fournisseur")
+        if not isinstance(fournisseur, dict):
+            fournisseur = {}
+            payload["fournisseur"] = fournisseur
+
+        fournisseur["idFournisseur"] = FIXED_SUPPLIER_ID
         return payload
 
     def submit_prepared_payload(
@@ -78,7 +104,7 @@ class ChorusSubmissionService:
         attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         self.client.reset_api_calls()
-        final_payload = deepcopy(payload)
+        final_payload = self._enforce_fixed_supplier_id(deepcopy(payload))
         main_upload_result: ChorusUploadAttachmentResult | None = None
         additional_uploads: list[tuple[dict[str, Any], ChorusUploadAttachmentResult]] = []
 
@@ -88,9 +114,21 @@ class ChorusSubmissionService:
                 file_base64=str(main_file["base64"]),
                 mime_type=str(main_file.get("mimeType") or "application/pdf"),
             )
+            existing_main_attachment = final_payload.get("pieceJointePrincipale")
+            existing_designation = None
+            if isinstance(existing_main_attachment, list) and existing_main_attachment:
+                maybe_attachment = existing_main_attachment[0]
+                if isinstance(maybe_attachment, dict):
+                    raw_designation = maybe_attachment.get("pieceJointePrincipaleDesignation")
+                    if isinstance(raw_designation, str) and raw_designation.strip():
+                        existing_designation = raw_designation.strip()
+
+            final_payload["modeDepot"] = DEFAULT_MODE_DEPOT
             final_payload["pieceJointePrincipale"] = [
                 {
-                    "pieceJointePrincipaleDesignation": str(main_file["name"]),
+                    "pieceJointePrincipaleDesignation": (
+                        existing_designation or DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION
+                    ),
                     "pieceJointePrincipaleId": main_upload_result.piece_jointe_id,
                 }
             ]
@@ -113,7 +151,10 @@ class ChorusSubmissionService:
             )
             additional_uploads.append((attachment, upload_result))
 
-        final_payload["pieceJointeComplementaire"] = existing_additional_attachments
+        if existing_additional_attachments:
+            final_payload["pieceJointeComplementaire"] = existing_additional_attachments
+        else:
+            final_payload.pop("pieceJointeComplementaire", None)
 
         response = self.client.submit_invoice(final_payload)
         uploaded_files: list[dict[str, Any]] = []

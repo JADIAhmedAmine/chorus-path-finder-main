@@ -67,14 +67,6 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (normalized.publicCustomerId && availableServices.length > 0 && !normalized.publicServiceId && !normalized.publicServiceCode) {
-    errors.push({
-      field: 'publicServiceId',
-      code: 'PUBLIC_SERVICE_REQUIRED',
-      message: 'Le service destinataire doit être sélectionné pour ce client public.',
-    });
-  }
-
   if (!normalized.currencyCode) {
     errors.push({
       field: 'currencyCode',
@@ -121,14 +113,6 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!normalized.marketNumber) {
-    warnings.push({
-      field: 'marketNumber',
-      code: 'MARKET_NUMBER_MISSING',
-      message: 'Le numéro de marché n’est pas renseigné. Vérifie s’il est attendu pour cette facture.',
-    });
-  }
-
   if (extraction?.requiresReview) {
     warnings.push({
       field: 'extraction',
@@ -169,23 +153,12 @@ export function prepareInvoiceSubmission(input: ChorusPreparationInput): ChorusP
     });
   }
 
-  if (!publicService && !normalized.publicServiceCode && normalized.publicCustomerId && availableServices.length === 0) {
-    warnings.push({
-      field: 'publicServiceId',
-      code: 'NO_ACTIVE_SERVICE_REFERENCE',
-      message: 'Aucun service actif n’est référencé localement pour ce client public.',
-    });
-  }
-
   const validation: ValidationResult = {
     valid: errors.length === 0,
     errors,
     warnings,
   };
 
-  if (errors.some((error) => error.field === 'publicServiceId')) {
-    recommendations.push('Sélectionner le service destinataire avant l’envoi API.');
-  }
   if (errors.some((error) => error.field === 'engagementNumber')) {
     recommendations.push('Compléter le numéro d’engagement demandé par le service.');
   }

@@ -111,6 +111,34 @@ describe('chorus preparation', () => {
     expect(result.validation.warnings.some((warning) => warning.code === 'EXTRACTION_REVIEW_REQUIRED')).toBe(true);
   });
 
+  it('keeps service destinataire and market number optional for the minimal Chorus payload', () => {
+    const result = prepareInvoiceSubmission({
+      formData: {
+        supplierOrganizationId: 's1',
+        supplierInvoiceNumber: 'FAC-2026-MIN',
+        publicCustomerId: 'pc1',
+        publicServiceId: '',
+        engagementNumber: '',
+        marketNumber: '',
+        purchaseOrderNumber: '',
+        invoiceDate: '2026-04-16',
+        currencyCode: 'EUR',
+        totalAmountHt: '20,00',
+        totalAmountTtc: '24,00',
+      },
+      supplier: suppliersFixture[0],
+      publicCustomer: publicCustomersFixture[0],
+      publicService: undefined,
+      availableServices: publicServicesFixture.filter((service) => service.publicCustomerId === 'pc1' && service.active),
+      extraction: null,
+    });
+
+    expect(result.readiness).toBe('ready');
+    expect(result.validation.valid).toBe(true);
+    expect(result.validation.errors.some((error) => error.code === 'PUBLIC_SERVICE_REQUIRED')).toBe(false);
+    expect(result.validation.warnings.some((warning) => warning.code === 'MARKET_NUMBER_MISSING')).toBe(false);
+  });
+
   it('accepts manual Chorus destination codes when the right references are not selectable locally', () => {
     const result = prepareInvoiceSubmission({
       formData: {

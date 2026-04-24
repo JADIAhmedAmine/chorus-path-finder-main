@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { loadAuthSession } from '@/lib/auth/session';
+import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import { loadChorusConfig, maskSecret, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
 import type { ChorusConfig, ChorusConnectionResult, ChorusTechnicalContextResolutionResult } from '@/types/chorus';
 import { Loader2, PlugZap } from 'lucide-react';
@@ -85,7 +86,9 @@ export default function SettingsPage() {
     setConfig((previous) => {
       const nextConfig = {
         ...previous,
-        [field]: value,
+        [field]: field === 'submissionSupplierId'
+          ? FIXED_CHORUS_SUPPLIER_ID_TEXT as ChorusConfig[K]
+          : value,
       };
 
       saveChorusConfig(nextConfig);
@@ -144,7 +147,7 @@ export default function SettingsPage() {
       const nextConfig: ChorusConfig = {
         ...config,
         submissionCurrentUserId: result.userId !== undefined ? String(result.userId) : config.submissionCurrentUserId,
-        submissionSupplierId: result.supplierStructureId !== undefined ? String(result.supplierStructureId) : config.submissionSupplierId,
+        submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
         submissionSupplierServiceId: result.supplierServiceId !== undefined ? String(result.supplierServiceId) : config.submissionSupplierServiceId,
       };
 
@@ -260,12 +263,12 @@ export default function SettingsPage() {
 
             <div className="space-y-2">
               <Label htmlFor="upload-file-path">Endpoint upload fichier</Label>
-              <Input id="upload-file-path" value={config.uploadFilePath} onChange={(e) => handleFieldChange('uploadFilePath', e.target.value)} placeholder="/v1/ajouter/fichier" />
+              <Input id="upload-file-path" value={config.uploadFilePath} onChange={(e) => handleFieldChange('uploadFilePath', e.target.value)} placeholder="/v1/deposer/pdf" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="submit-invoice-path">Endpoint soumission facture</Label>
-              <Input id="submit-invoice-path" value={config.submitInvoicePath} onChange={(e) => handleFieldChange('submitInvoicePath', e.target.value)} placeholder="/factures/soumettre" />
+              <Input id="submit-invoice-path" value={config.submitInvoicePath} onChange={(e) => handleFieldChange('submitInvoicePath', e.target.value)} placeholder="/v1/soumettre" />
             </div>
 
             <div className="space-y-2 md:col-span-2">
@@ -354,7 +357,7 @@ export default function SettingsPage() {
             <div>
               <h3 className="text-sm font-medium">Contexte technique Chorus</h3>
               <p className="text-xs text-muted-foreground mt-1">
-                Ces identifiants ne viennent pas du PDF. Ils servent a construire le JSON minimal exact pour `ajouter/fichier` puis `soumettre`.
+                Ces identifiants ne viennent pas du PDF. Ils servent a construire le JSON minimal exact pour `deposer/pdf` puis `soumettre`.
               </p>
             </div>
 
@@ -421,7 +424,8 @@ export default function SettingsPage() {
                   <p className="mt-1 text-muted-foreground">
                     Les endpoints configurés pointent vers la qualification / sandbox. Dans ton contexte actuel, la récupération automatique
                     via `consulter/compte` et `monCompte/recuperer/rattachements` doit être considérée comme indisponible.
-                    Renseigne donc `idUtilisateurCourant`, `idFournisseur` et `idServiceFournisseur` manuellement dans ce bloc.
+                    Renseigne donc `idUtilisateurCourant` et `idServiceFournisseur` manuellement dans ce bloc.
+                    `idFournisseur` reste fixé à `26359578`.
                   </p>
                 </div>
               )}
@@ -431,9 +435,15 @@ export default function SettingsPage() {
                   <p className="font-medium">{lastTechnicalContextResult.message}</p>
                   <p className="text-muted-foreground">
                     `idUtilisateurCourant`: {lastTechnicalContextResult.userId ?? 'non trouvé'} ·
-                    `idFournisseur`: {lastTechnicalContextResult.supplierStructureId ?? 'non trouvé'} ·
+                    `idFournisseur`: {FIXED_CHORUS_SUPPLIER_ID_TEXT} (fixe) ·
                     `idServiceFournisseur`: {lastTechnicalContextResult.supplierServiceId ?? 'non trouvé'}
                   </p>
+                  {lastTechnicalContextResult.supplierStructureId !== undefined
+                    && String(lastTechnicalContextResult.supplierStructureId) !== FIXED_CHORUS_SUPPLIER_ID_TEXT && (
+                    <p className="text-xs text-muted-foreground">
+                      Chorus a retourné `{lastTechnicalContextResult.supplierStructureId}`, mais l&apos;application conserve la valeur fixe `{FIXED_CHORUS_SUPPLIER_ID_TEXT}`.
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Le rapprochement du fournisseur par SIRET est {lastTechnicalContextResult.matchedOnSupplierSiret ? 'réussi' : 'approximatif'}.
                   </p>
@@ -449,7 +459,10 @@ export default function SettingsPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="submission-supplier-id">idFournisseur</Label>
-                <Input id="submission-supplier-id" value={config.submissionSupplierId} onChange={(e) => handleFieldChange('submissionSupplierId', e.target.value)} placeholder="160" />
+                <Input id="submission-supplier-id" value={config.submissionSupplierId} readOnly />
+                <p className="text-xs text-muted-foreground">
+                  Valeur fixee pour toutes les soumissions: `26359578`.
+                </p>
               </div>
 
               <div className="space-y-2">

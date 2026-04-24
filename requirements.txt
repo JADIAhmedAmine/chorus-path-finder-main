@@ -1,1 +1,5 @@
 requests>=2.32,<3
+pdfplumber>=0.10.3
+Pymupdf
+dotenv
+

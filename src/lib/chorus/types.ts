@@ -11,18 +11,28 @@ export interface InvoiceExtractionReferences {
 export interface InvoiceDraftFormData {
   supplierOrganizationId: string;
   supplierSiret?: string;
+  supplierName?: string;
+  supplierVatNumber?: string;
   supplierInvoiceNumber: string;
   publicCustomerId: string;
   publicCustomerCode?: string;
+  publicCustomerName?: string;
   publicServiceId: string;
   publicServiceCode?: string;
+  publicServiceLabel?: string;
   engagementNumber: string;
   marketNumber: string;
   purchaseOrderNumber: string;
   invoiceDate: string;
+  dueDate?: string;
   currencyCode: string;
+  paymentMode?: ChorusPaymentMode;
   totalAmountHt: string;
   totalAmountTtc: string;
+  totalVat?: number;
+  customerReference?: string;
+  lineItems?: ExtractedInvoiceLineItemData[];
+  vatLines?: ExtractedInvoiceVatLineData[];
 }
 
 export interface ExtractedInvoiceLineItemData {
@@ -204,7 +214,7 @@ export interface ChorusSubmissionPayload {
   modeDepot: ChorusSubmissionMode;
   montantTotal: ChorusSubmissionMontantTotal;
   numeroFactureSaisi?: string;
-  pieceJointeComplementaire: ChorusSubmissionAdditionalAttachment[];
+  pieceJointeComplementaire?: ChorusSubmissionAdditionalAttachment[];
   pieceJointePrincipale: ChorusSubmissionMainAttachment[];
   references: ChorusSubmissionReferences;
 }

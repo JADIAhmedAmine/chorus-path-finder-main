@@ -15,12 +15,12 @@ from chorus_python import ChorusMinimalInvoiceInput, ChorusSubmissionService, In
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Prépare et soumet une facture Chorus Pro minimale en SAISIE_API."
+        description="Prépare et soumet une facture Chorus Pro minimale, avec le flux PDF signé quand un PDF est fourni."
     )
     parser.add_argument("--invoice-number", required=True, help="Numéro de facture à envoyer dans numeroFactureSaisi.")
     parser.add_argument("--recipient-code", help="codeDestinataire Chorus.")
     parser.add_argument("--service-code", help="codeServiceExecutant Chorus.")
-    parser.add_argument("--supplier-id", type=int, help="idFournisseur Chorus.")
+    parser.add_argument("--supplier-id", type=int, help="idFournisseur Chorus (ignore: valeur fixee a 26359578).")
     parser.add_argument("--bank-account-code", type=int, help="codeCoordonneesBancairesFournisseur.")
     parser.add_argument("--invoice-date", help="Date facture au format ISO (YYYY-MM-DD).")
     parser.add_argument("--comment", help="Commentaire libre ajouté au payload.")

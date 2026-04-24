@@ -208,13 +208,8 @@ function resolveServiceExecutantCode(
     }
   }
 
-  if (services.length === 1 && services[0]?.codeServiceExecutant) {
-    return {
-      value: services[0].codeServiceExecutant,
-      reason: 'Un seul service exécutant Chorus a été retourné pour ce destinataire.',
-    };
-  }
-
+  // Le service exécutant est optionnel dans le dépôt minimal Chorus.
+  // On le rapproche seulement si un code/libellé existe déjà dans la facture.
   return { value: currentCode };
 }
 
@@ -236,7 +231,7 @@ export function hydrateChorusSubmissionPayloadWithSnapshot(
     lignePoste: [...payload.lignePoste],
     ligneTva: [...payload.ligneTva],
     pieceJointePrincipale: [...payload.pieceJointePrincipale],
-    pieceJointeComplementaire: [...payload.pieceJointeComplementaire],
+    pieceJointeComplementaire: [...(payload.pieceJointeComplementaire ?? [])],
   };
 
   const nextCadreCode = resolveCodeValue(

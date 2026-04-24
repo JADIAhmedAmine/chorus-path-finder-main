@@ -33,27 +33,87 @@ export interface BackendDataApiConfig {
   extractionResultsPath: string;
 }
 
+const DATA_API_ENV_KEYS = [
+  'VITE_DATA_API_BASE_URL',
+  'VITE_DATA_TENANT_PATH',
+  'VITE_DATA_CURRENT_USER_PATH',
+  'VITE_DATA_SUPPLIERS_PATH',
+  'VITE_DATA_PUBLIC_CUSTOMERS_PATH',
+  'VITE_DATA_PUBLIC_SERVICES_PATH',
+  'VITE_DATA_INVOICES_PATH',
+  'VITE_DATA_INVOICE_LINES_PATH',
+  'VITE_DATA_INVOICE_ATTACHMENTS_PATH',
+  'VITE_DATA_STATUS_HISTORY_PATH',
+  'VITE_DATA_API_EXCHANGE_LOGS_PATH',
+  'VITE_DATA_ASYNC_JOBS_PATH',
+  'VITE_DATA_AUDIT_LOGS_PATH',
+  'VITE_DATA_EXTRACTION_RESULTS_PATH',
+] as const;
+
+const LOCAL_TEST_DATA_CONFIG: BackendDataApiConfig = {
+  baseUrl: '',
+  tenantPath: '/test-data/tenant.current.json',
+  currentUserPath: '/test-data/users.me.json',
+  suppliersPath: '/test-data/suppliers.json',
+  publicCustomersPath: '/test-data/public-customers.json',
+  publicServicesPath: '/test-data/public-services.json',
+  invoicesPath: '/test-data/invoices.json',
+  invoiceLinesPath: '/test-data/invoice-lines.json',
+  invoiceAttachmentsPath: '/test-data/invoice-attachments.json',
+  statusHistoryPath: '/test-data/invoice-status-history.json',
+  apiExchangeLogsPath: '/test-data/api-exchange-logs.json',
+  asyncJobsPath: '/test-data/async-jobs.json',
+  auditLogsPath: '/test-data/audit-logs.json',
+  extractionResultsPath: '/test-data/invoice-extraction-results.json',
+};
+
+const REMOTE_BACKEND_CONFIG: BackendDataApiConfig = {
+  baseUrl: '/api',
+  tenantPath: '/tenant/current',
+  currentUserPath: '/users/me',
+  suppliersPath: '/suppliers',
+  publicCustomersPath: '/public-customers',
+  publicServicesPath: '/public-services',
+  invoicesPath: '/invoices',
+  invoiceLinesPath: '/invoice-lines',
+  invoiceAttachmentsPath: '/invoice-attachments',
+  statusHistoryPath: '/invoice-status-history',
+  apiExchangeLogsPath: '/api-exchange-logs',
+  asyncJobsPath: '/async-jobs',
+  auditLogsPath: '/audit-logs',
+  extractionResultsPath: '/invoice-extraction-results',
+};
+
 function envValue(key: string, fallback: string): string {
   const raw = import.meta.env[key];
   return typeof raw === 'string' ? raw : fallback;
 }
 
+function hasConfiguredDataBackend(): boolean {
+  return DATA_API_ENV_KEYS.some((key) => {
+    const raw = import.meta.env[key];
+    return typeof raw === 'string' && raw.trim().length > 0;
+  });
+}
+
 export function loadBackendDataApiConfig(): BackendDataApiConfig {
+  const defaults = hasConfiguredDataBackend() ? REMOTE_BACKEND_CONFIG : LOCAL_TEST_DATA_CONFIG;
+
   return {
-    baseUrl: envValue('VITE_DATA_API_BASE_URL', '/api'),
-    tenantPath: envValue('VITE_DATA_TENANT_PATH', '/tenant/current'),
-    currentUserPath: envValue('VITE_DATA_CURRENT_USER_PATH', '/users/me'),
-    suppliersPath: envValue('VITE_DATA_SUPPLIERS_PATH', '/suppliers'),
-    publicCustomersPath: envValue('VITE_DATA_PUBLIC_CUSTOMERS_PATH', '/public-customers'),
-    publicServicesPath: envValue('VITE_DATA_PUBLIC_SERVICES_PATH', '/public-services'),
-    invoicesPath: envValue('VITE_DATA_INVOICES_PATH', '/invoices'),
-    invoiceLinesPath: envValue('VITE_DATA_INVOICE_LINES_PATH', '/invoice-lines'),
-    invoiceAttachmentsPath: envValue('VITE_DATA_INVOICE_ATTACHMENTS_PATH', '/invoice-attachments'),
-    statusHistoryPath: envValue('VITE_DATA_STATUS_HISTORY_PATH', '/invoice-status-history'),
-    apiExchangeLogsPath: envValue('VITE_DATA_API_EXCHANGE_LOGS_PATH', '/api-exchange-logs'),
-    asyncJobsPath: envValue('VITE_DATA_ASYNC_JOBS_PATH', '/async-jobs'),
-    auditLogsPath: envValue('VITE_DATA_AUDIT_LOGS_PATH', '/audit-logs'),
-    extractionResultsPath: envValue('VITE_DATA_EXTRACTION_RESULTS_PATH', '/invoice-extraction-results'),
+    baseUrl: envValue('VITE_DATA_API_BASE_URL', defaults.baseUrl),
+    tenantPath: envValue('VITE_DATA_TENANT_PATH', defaults.tenantPath),
+    currentUserPath: envValue('VITE_DATA_CURRENT_USER_PATH', defaults.currentUserPath),
+    suppliersPath: envValue('VITE_DATA_SUPPLIERS_PATH', defaults.suppliersPath),
+    publicCustomersPath: envValue('VITE_DATA_PUBLIC_CUSTOMERS_PATH', defaults.publicCustomersPath),
+    publicServicesPath: envValue('VITE_DATA_PUBLIC_SERVICES_PATH', defaults.publicServicesPath),
+    invoicesPath: envValue('VITE_DATA_INVOICES_PATH', defaults.invoicesPath),
+    invoiceLinesPath: envValue('VITE_DATA_INVOICE_LINES_PATH', defaults.invoiceLinesPath),
+    invoiceAttachmentsPath: envValue('VITE_DATA_INVOICE_ATTACHMENTS_PATH', defaults.invoiceAttachmentsPath),
+    statusHistoryPath: envValue('VITE_DATA_STATUS_HISTORY_PATH', defaults.statusHistoryPath),
+    apiExchangeLogsPath: envValue('VITE_DATA_API_EXCHANGE_LOGS_PATH', defaults.apiExchangeLogsPath),
+    asyncJobsPath: envValue('VITE_DATA_ASYNC_JOBS_PATH', defaults.asyncJobsPath),
+    auditLogsPath: envValue('VITE_DATA_AUDIT_LOGS_PATH', defaults.auditLogsPath),
+    extractionResultsPath: envValue('VITE_DATA_EXTRACTION_RESULTS_PATH', defaults.extractionResultsPath),
   };
 }
 

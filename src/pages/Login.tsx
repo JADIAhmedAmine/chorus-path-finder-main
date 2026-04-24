@@ -10,6 +10,7 @@ import { loadAuthSession, saveAuthSession, syncAuthSessionToChorusConfig } from 
 import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useAsyncResource } from '@/hooks/use-async-resource';
+import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import { Shield } from 'lucide-react';
 
 export default function Login() {
@@ -38,9 +39,9 @@ export default function Login() {
   const [lastName, setLastName] = useState(existingSession?.lastName ?? '');
   const [password, setPassword] = useState('password');
   const [chorusCurrentUserId, setChorusCurrentUserId] = useState('');
-  const [chorusSupplierId, setChorusSupplierId] = useState('');
   const [chorusSupplierServiceId, setChorusSupplierServiceId] = useState('');
   const [chorusBankAccountCode, setChorusBankAccountCode] = useState('');
+  const chorusSupplierId = FIXED_CHORUS_SUPPLIER_ID_TEXT;
 
   useEffect(() => {
     if (!existingSession) {
@@ -54,7 +55,6 @@ export default function Login() {
     setFirstName(existingSession.firstName);
     setLastName(existingSession.lastName);
     setChorusCurrentUserId(existingSession.chorusCurrentUserId ?? '');
-    setChorusSupplierId(existingSession.chorusSupplierId ?? '');
     setChorusSupplierServiceId(existingSession.chorusSupplierServiceId ?? '');
     setChorusBankAccountCode(existingSession.chorusBankAccountCode ?? '');
   }, [existingSession]);
@@ -68,7 +68,7 @@ export default function Login() {
       lastName: lastName.trim() || currentUser.lastName,
       roleCode: currentUser.roleCode,
       chorusCurrentUserId: chorusCurrentUserId.trim() || undefined,
-      chorusSupplierId: chorusSupplierId.trim() || undefined,
+      chorusSupplierId,
       chorusSupplierServiceId: chorusSupplierServiceId.trim() || undefined,
       chorusBankAccountCode: chorusBankAccountCode.trim() || undefined,
       createdAt: new Date().toISOString(),
@@ -150,7 +150,10 @@ export default function Login() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="chorus-supplier-id">idFournisseur</Label>
-                  <Input id="chorus-supplier-id" value={chorusSupplierId} onChange={e => setChorusSupplierId(e.target.value)} placeholder="160" />
+                  <Input id="chorus-supplier-id" value={chorusSupplierId} readOnly />
+                  <p className="text-xs text-muted-foreground">
+                    Valeur fixee pour toutes les soumissions: `26359578`.
+                  </p>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="chorus-supplier-service-id">idServiceFournisseur</Label>

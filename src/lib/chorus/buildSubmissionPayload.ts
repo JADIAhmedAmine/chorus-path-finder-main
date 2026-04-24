@@ -1,3 +1,4 @@
+import { FIXED_CHORUS_SUPPLIER_ID } from '@/lib/chorus/constants';
 import { normalizeInvoiceDraft } from '@/lib/chorus/normalization';
 import {
   computeSubmissionTotals,
@@ -19,6 +20,8 @@ function sanitizeText(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+const DEFAULT_MAIN_ATTACHMENT_DESIGNATION = 'GCU_MSG_01_000';
+
 function asInteger(value: number | string | undefined): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return Math.trunc(value);
@@ -33,11 +36,9 @@ function asInteger(value: number | string | undefined): number | undefined {
 }
 
 function inferMainAttachmentDesignation(mainFileName: string | undefined): string {
-  return sanitizeText(mainFileName) || 'Facture principale';
+  const sanitized = sanitizeText(mainFileName);
+  return sanitized?.startsWith('GCU_') ? sanitized : DEFAULT_MAIN_ATTACHMENT_DESIGNATION;
 }
-
-const DEFAULT_CHORUS_SUPPLIER_ID = 26359578;
-
 export function buildChorusSubmissionPayload(
   normalized: NormalizedInvoiceDraftData,
   context: ChorusPayloadBuildContext = {},
@@ -61,6 +62,8 @@ export function buildChorusSubmissionPayload(
         pieceJointePrincipaleDesignation: inferMainAttachmentDesignation(context.mainFileName),
       }];
 
+  const codeServiceExecutant = sanitizeText(normalized.publicServiceCode);
+
   return {
     cadreDeFacturation: {
       codeCadreFacturation: chorusContext.codeCadreFacturation ?? 'A1_FACTURE_FOURNISSEUR',
@@ -71,11 +74,11 @@ export function buildChorusSubmissionPayload(
     dateFacture: normalizeFrenchDateToIsoDate(normalized.invoiceDate),
     destinataire: {
       codeDestinataire: sanitizeText(normalized.publicCustomerCode),
-      codeServiceExecutant: sanitizeText(normalized.publicServiceCode),
+      ...(codeServiceExecutant ? { codeServiceExecutant } : {}),
     },
     fournisseur: {
       codeCoordonneesBancairesFournisseur: asInteger(chorusContext.codeCoordonneesBancairesFournisseur),
-      idFournisseur: asInteger(chorusContext.idFournisseur) ?? DEFAULT_CHORUS_SUPPLIER_ID,
+      idFournisseur: FIXED_CHORUS_SUPPLIER_ID,
     },
     lignePoste,
     ligneTva,
@@ -86,10 +89,8 @@ export function buildChorusSubmissionPayload(
       montantRemiseGlobaleTTC: 0,
       montantTVA: totals.montantTVA,
       montantTtcTotal: totals.montantTtcTotal,
-      motifRemiseGlobaleTTC: '',
     },
     numeroFactureSaisi: sanitizeText(normalized.supplierInvoiceNumber),
-    pieceJointeComplementaire: [],
     pieceJointePrincipale,
     references: {
       deviseFacture: sanitizeText(normalized.currencyCode) || 'EUR',
@@ -141,6 +142,6 @@ export function finalizeChorusSubmissionPayloadForPdfDeposit(
 ): ChorusSubmissionPayload {
   return attachMainFileToChorusSubmissionPayload(payload, {
     ...input,
-    modeDepot: payload.modeDepot === 'DEPOT_PDF_SIGNE_API' ? payload.modeDepot : 'DEPOT_PDF_API',
+    modeDepot: 'DEPOT_PDF_SIGNE_API',
   });
 }

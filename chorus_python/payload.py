@@ -50,7 +50,7 @@ def build_minimal_submission_payload(
     *,
     supplier_id: int,
     code_destinataire: str,
-    code_service_executant: str,
+    code_service_executant: str | None = None,
     tva_code_by_rate: Mapping[Decimal, str],
     uploaded_piece_jointe_id: int | None = None,
     bank_account_code: int | None = None,
@@ -115,14 +115,17 @@ def build_minimal_submission_payload(
     if bank_account_code is not None:
         fournisseur["codeCoordonneesBancairesFournisseur"] = bank_account_code
 
+    destinataire: dict[str, Any] = {
+        "codeDestinataire": code_destinataire,
+    }
+    if code_service_executant:
+        destinataire["codeServiceExecutant"] = code_service_executant
+
     payload: dict[str, Any] = {
         "cadreDeFacturation": {
             "codeCadreFacturation": fixed.code_cadre_facturation,
         },
-        "destinataire": {
-            "codeDestinataire": code_destinataire,
-            "codeServiceExecutant": code_service_executant,
-        },
+        "destinataire": destinataire,
         "fournisseur": fournisseur,
         "lignePoste": ligne_poste,
         "ligneTva": ligne_tva,

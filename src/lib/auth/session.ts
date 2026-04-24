@@ -1,3 +1,4 @@
+import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import { loadChorusConfig, saveChorusConfig } from '@/lib/chorus/storage';
 
 export interface LocalAuthSession {
@@ -58,7 +59,7 @@ export function syncAuthSessionToChorusConfig(session: LocalAuthSession): void {
   const nextConfig = {
     ...currentConfig,
     submissionCurrentUserId: trimText(session.chorusCurrentUserId) ?? currentConfig.submissionCurrentUserId,
-    submissionSupplierId: trimText(session.chorusSupplierId) ?? currentConfig.submissionSupplierId,
+    submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
     submissionSupplierServiceId: trimText(session.chorusSupplierServiceId) ?? currentConfig.submissionSupplierServiceId,
     submissionBankAccountCode: trimText(session.chorusBankAccountCode) ?? currentConfig.submissionBankAccountCode,
   };
