@@ -279,3 +279,55 @@ After implementation, verify:
 **Implementation Status:** ✅ Complete  
 **Last Updated:** April 17, 2026  
 **All Files:** 12 total | ~9000 lines of code + documentation
+{     "numeroFactureSaisi": "10851046",
+     "dateFacture": "2025-11-05",
+	"cadreDeFacturation": {
+    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR"
+  },
+  "destinataire": {
+    "codeDestinataire": "00000000113495"
+  },
+  "fournisseur": {
+    "idFournisseur": 26359578
+  },
+ 
+  "lignePoste": [
+    {
+      "lignePosteDenomination": "Licence",
+      "lignePosteMontantRemiseHT": 0,
+      "lignePosteMontantUnitaireHT": 16.6667,
+      "lignePosteNumero": 1,
+      "lignePosteQuantite": 1,
+      "lignePosteReference": "votil_licence",
+      "lignePosteTauxTvaManuel": 20,
+      "lignePosteUnite": "licence"
+    }
+  ],
+  "ligneTva": [
+    {
+      "ligneTvaMontantBaseHtParTaux": 16.6667,
+      "ligneTvaMontantTvaParTaux": 3.3333,
+      "ligneTvaTauxManuel": 20
+    }
+  ],
+  "modeDepot": "DEPOT_PDF_SIGNE_API",
+  "montantTotal": {
+    "montantAPayer": 20,
+    "montantHtTotal": 16.6667,
+    "montantRemiseGlobaleTTC": 0,
+    "montantTVA": 3.3333,
+    "montantTtcTotal": 20
+  },
+  "pieceJointePrincipale": [
+    {
+      "pieceJointePrincipaleDesignation": "GCU_MSG_01_000",
+      "pieceJointePrincipaleId": 10851046
+    }
+  ],
+  "references": {
+    "deviseFacture": "EUR",
+    "modePaiement": "VIREMENT",
+    "typeFacture": "FACTURE",
+    "typeTva": "TVA_SUR_ENCAISSEMENT"
+  }
+}

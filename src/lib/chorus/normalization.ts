@@ -32,13 +32,13 @@ export function formatInvoiceAmountForInput(value?: number): string {
   return value.toFixed(2).replace('.', ',');
 }
 
-function normalizeText(value: string): string | undefined {
-  const trimmed = value.trim();
+function normalizeText(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
   return trimmed || undefined;
 }
 
-export function parseInvoiceAmount(value: string): number | undefined {
-  const trimmed = value.trim();
+export function parseInvoiceAmount(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
   if (!trimmed) {
     return undefined;
   }
@@ -62,22 +62,32 @@ export function mergeExtractionIntoDraft(
     ...currentDraft,
     supplierOrganizationId: fields.supplierOrganizationId ?? currentDraft.supplierOrganizationId,
     supplierSiret: fields.supplierSiret ?? currentDraft.supplierSiret,
+    supplierName: fields.supplierName ?? currentDraft.supplierName,
+    supplierVatNumber: fields.supplierVatNumber ?? currentDraft.supplierVatNumber,
     supplierInvoiceNumber: fields.supplierInvoiceNumber ?? currentDraft.supplierInvoiceNumber,
     publicCustomerId: fields.publicCustomerId ?? currentDraft.publicCustomerId,
     publicCustomerCode: fields.publicCustomerCode ?? currentDraft.publicCustomerCode,
+    publicCustomerName: fields.publicCustomerName ?? currentDraft.publicCustomerName,
     publicServiceId: fields.publicServiceId ?? currentDraft.publicServiceId,
     publicServiceCode: fields.publicServiceCode ?? currentDraft.publicServiceCode,
+    publicServiceLabel: fields.publicServiceLabel ?? currentDraft.publicServiceLabel,
     engagementNumber: fields.engagementNumber ?? currentDraft.engagementNumber,
     marketNumber: fields.marketNumber ?? currentDraft.marketNumber,
     purchaseOrderNumber: fields.purchaseOrderNumber ?? currentDraft.purchaseOrderNumber,
     invoiceDate: fields.invoiceDate ?? currentDraft.invoiceDate,
+    dueDate: fields.dueDate ?? currentDraft.dueDate,
     currencyCode: fields.currencyCode ?? currentDraft.currencyCode,
+    paymentMode: fields.paymentMode ?? currentDraft.paymentMode,
     totalAmountHt: fields.totalAmountHt !== undefined
       ? formatInvoiceAmountForInput(fields.totalAmountHt)
       : currentDraft.totalAmountHt,
     totalAmountTtc: fields.totalAmountTtc !== undefined
       ? formatInvoiceAmountForInput(fields.totalAmountTtc)
       : currentDraft.totalAmountTtc,
+    totalVat: fields.totalVat ?? currentDraft.totalVat,
+    customerReference: fields.customerReference ?? currentDraft.customerReference,
+    lineItems: fields.lineItems ?? currentDraft.lineItems,
+    vatLines: fields.vatLines ?? currentDraft.vatLines,
   };
 }
 
@@ -90,29 +100,29 @@ export function normalizeInvoiceDraft(
   return {
     supplierOrganizationId: normalizeText(formData.supplierOrganizationId) || extractedFields?.supplierOrganizationId,
     supplierInvoiceNumber: normalizeText(formData.supplierInvoiceNumber) || extractedFields?.supplierInvoiceNumber,
-    supplierName: context.supplier?.legalName || extractedFields?.supplierName,
-    paymentMode: extractedFields?.paymentMode,
+    supplierName: normalizeText(formData.supplierName) || context.supplier?.legalName || extractedFields?.supplierName,
+    paymentMode: formData.paymentMode ?? extractedFields?.paymentMode,
     publicCustomerId: normalizeText(formData.publicCustomerId) || extractedFields?.publicCustomerId,
     publicServiceId: normalizeText(formData.publicServiceId) || extractedFields?.publicServiceId,
     engagementNumber: normalizeText(formData.engagementNumber) || extractedFields?.engagementNumber,
     marketNumber: normalizeText(formData.marketNumber) || extractedFields?.marketNumber,
     purchaseOrderNumber: normalizeText(formData.purchaseOrderNumber) || extractedFields?.purchaseOrderNumber,
     invoiceDate: normalizeText(formData.invoiceDate) || extractedFields?.invoiceDate,
-    dueDate: extractedFields?.dueDate,
+    dueDate: normalizeText(formData.dueDate) || extractedFields?.dueDate,
     currencyCode: normalizeText(formData.currencyCode)?.toUpperCase() || extractedFields?.currencyCode || 'EUR',
     totalAmountHt: parseInvoiceAmount(formData.totalAmountHt) ?? extractedFields?.totalAmountHt,
-    totalVat: extractedFields?.totalVat,
+    totalVat: formData.totalVat ?? extractedFields?.totalVat,
     totalAmountTtc: parseInvoiceAmount(formData.totalAmountTtc) ?? extractedFields?.totalAmountTtc,
     supplierSiret: normalizeText(formData.supplierSiret)?.replace(/\D/g, '') || context.supplier?.siret || extractedFields?.supplierSiret,
-    supplierVatNumber: extractedFields?.supplierVatNumber,
+    supplierVatNumber: normalizeText(formData.supplierVatNumber) || extractedFields?.supplierVatNumber,
     publicCustomerSiret: context.publicCustomer?.siret || extractedFields?.publicCustomerSiret,
-    publicCustomerName: context.publicCustomer?.legalName || extractedFields?.publicCustomerName,
+    publicCustomerName: normalizeText(formData.publicCustomerName) || context.publicCustomer?.legalName || extractedFields?.publicCustomerName,
     publicCustomerCode: normalizeText(formData.publicCustomerCode) || context.publicCustomer?.codeDestinataire || extractedFields?.publicCustomerCode,
     publicServiceCode: normalizeText(formData.publicServiceCode) || context.publicService?.codeServiceExecutant || extractedFields?.publicServiceCode,
-    publicServiceLabel: context.publicService?.label || extractedFields?.publicServiceLabel,
-    customerReference: extractedFields?.customerReference,
-    lineItems: extractedFields?.lineItems,
-    vatLines: extractedFields?.vatLines,
+    publicServiceLabel: normalizeText(formData.publicServiceLabel) || context.publicService?.label || extractedFields?.publicServiceLabel,
+    customerReference: normalizeText(formData.customerReference) || extractedFields?.customerReference,
+    lineItems: formData.lineItems ?? extractedFields?.lineItems,
+    vatLines: formData.vatLines ?? extractedFields?.vatLines,
     sourceFormat: context.extraction?.sourceFormat,
     extractionConfidence: context.extraction?.confidence,
     requiresHumanReview: context.extraction?.requiresReview,

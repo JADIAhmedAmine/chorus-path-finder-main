@@ -103,7 +103,6 @@ describe('chorus submission payload', () => {
       },
       fournisseur: {
         idFournisseur: 160,
-        idServiceFournisseur: 436,
         codeCoordonneesBancairesFournisseur: 132,
       },
       montantTotal: {
@@ -114,14 +113,38 @@ describe('chorus submission payload', () => {
       },
       references: {
         deviseFacture: 'EUR',
-        numeroBonCommande: 'BC2025/25-007915',
         typeFacture: 'FACTURE',
-        typeTva: 'TVA_SUR_DEBIT',
+        typeTva: 'TVA_SUR_ENCAISSEMENT',
       },
     });
     expect(payload.lignePoste).toHaveLength(1);
     expect(payload.lignePoste[0]?.lignePosteDenomination).toContain('2026-003-00565');
     expect(validateChorusSubmissionPayload(payload).valid).toBe(true);
+  });
+
+  it('validates the minimal payload without market number or service destinataire', () => {
+    const payload = buildInvoiceSubmissionPayload({
+      ...createEmptyInvoiceDraft(),
+      supplierInvoiceNumber: 'TEST-001',
+      publicCustomerCode: '00000000113495',
+      invoiceDate: '2026-04-23',
+      currencyCode: 'EUR',
+      totalAmountHt: '20,00',
+      totalAmountTtc: '24,00',
+    }, {
+      chorus: {
+        idFournisseur: 26359578,
+      },
+    });
+
+    expect(payload.destinataire).toEqual({
+      codeDestinataire: '00000000113495',
+    });
+    expect(payload.references.numeroMarche).toBeUndefined();
+    expect(validateChorusSubmissionPayload(payload)).toMatchObject({
+      valid: true,
+      errors: [],
+    });
   });
 
   it('keeps multiple extracted lines when they are available', () => {
@@ -232,18 +255,25 @@ describe('chorus submission payload', () => {
       mainFileName: 'gigalis-facture.pdf',
     });
 
-    expect(finalized.modeDepot).toBe('DEPOT_PDF_API');
+    expect(finalized.modeDepot).toBe('DEPOT_PDF_SIGNE_API');
     expect(finalized.pieceJointePrincipale).toEqual([
       {
-        pieceJointePrincipaleDesignation: 'gigalis-facture.pdf',
+        pieceJointePrincipaleDesignation: 'GCU_MSG_01_000',
         pieceJointePrincipaleId: 28093,
       },
     ]);
+    expect(finalized.pieceJointeComplementaire).toBeUndefined();
   });
 
   it('reports missing mandatory recipient fields before POST', () => {
     const payload = buildInvoiceSubmissionPayload(createEmptyInvoiceDraft(), {
-      extraction: gigalisExtractionResult,
+      extraction: {
+        ...gigalisExtractionResult,
+        fields: {
+          ...gigalisExtractionResult.fields,
+          publicCustomerCode: undefined,
+        },
+      },
     });
 
     const validation = validateChorusSubmissionPayload(payload);

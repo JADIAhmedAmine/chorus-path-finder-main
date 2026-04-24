@@ -2,9 +2,9 @@
  * Main attachment upload payload builder for Chorus Pro API.
  *
  * Minimal working flow:
- * - POST /cpro/transverses/v1/ajouter/fichier
+ * - POST /cpro/factures/v1/deposer/pdf
  * - then inject returned pieceJointeId into pieceJointePrincipale
- * - keep modeDepot = SAISIE_API for the final /factures/v1/soumettre payload
+ * - finalize /factures/v1/soumettre with modeDepot = DEPOT_PDF_SIGNE_API
  */
 
 export interface UploadPdfPayload {

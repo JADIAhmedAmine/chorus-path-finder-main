@@ -31,10 +31,6 @@ export function validateChorusSubmissionPayload(payload: ChorusSubmissionPayload
     pushIssue(errors, 'destinataire.codeDestinataire', 'DESTINATAIRE_REQUIRED', 'Le code destinataire est obligatoire.');
   }
 
-  if (!payload.destinataire.codeServiceExecutant) {
-    pushIssue(warnings, 'destinataire.codeServiceExecutant', 'SERVICE_EXECUTANT_RECOMMENDED', 'Le code service executant n est pas renseigne.');
-  }
-
   if (payload.lignePoste.length === 0) {
     pushIssue(errors, 'lignePoste', 'LIGNE_POSTE_REQUIRED', 'Au moins une lignePoste est obligatoire.');
   }

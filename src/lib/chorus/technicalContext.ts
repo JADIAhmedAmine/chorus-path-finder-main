@@ -1,4 +1,5 @@
 import { loadAuthSession } from '@/lib/auth/session';
+import { FIXED_CHORUS_SUPPLIER_ID } from '@/lib/chorus/constants';
 import type { ChorusSubmissionTechnicalContext } from '@/lib/chorus/types';
 import type { ChorusConfig } from '@/types/chorus';
 
@@ -25,7 +26,7 @@ export function buildChorusTechnicalContext(config: ChorusConfig): ChorusSubmiss
     codeCadreFacturation: trimText(config.submissionCadreCode),
     codeServiceValideur: trimText(config.submissionValidatorServiceCode),
     codeStructureValideur: trimText(config.submissionValidatorStructureCode),
-    idFournisseur: 26359578,
+    idFournisseur: FIXED_CHORUS_SUPPLIER_ID,
     idServiceFournisseur: parseOptionalInteger(config.submissionSupplierServiceId) ?? parseOptionalInteger(authSession?.chorusSupplierServiceId),
     codeCoordonneesBancairesFournisseur: parseOptionalInteger(config.submissionBankAccountCode) ?? parseOptionalInteger(authSession?.chorusBankAccountCode),
     modePaiement: config.submissionPaymentMode,

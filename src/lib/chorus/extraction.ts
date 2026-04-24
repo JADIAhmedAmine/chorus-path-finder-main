@@ -38,6 +38,98 @@ interface PositionedPdfTextFragment {
   text: string;
 }
 
+const PDF_TECHNICAL_INLINE_PATTERNS = [
+  /%PDF-[\d.]+/gi,
+  /\b\d+\s+\d+\s+obj\b/gi,
+  /\b(?:endobj|stream|endstream|xref|trailer|startxref)\b/gi,
+  /\/(?:Type|Subtype|Length|Filter|Producer|Creator|Font|BaseFont|Encoding|Resources|Parent|MediaBox|BBox)\b(?:\s*\/[A-Za-z0-9]+|\s+\d+)?/gi,
+  /\b(?:FlateDecode|ASCII85Decode|ASCIIHexDecode|ReportLab)\b/gi,
+  /\b(?:BT|ET|T\*)\b/gi,
+  /(?:^|\s)(?:-?\d+(?:\.\d+)?\s+){2,}(?:Tf|Tm|Td|TD|TL|cm|rg|RG|re|w|m|l|c|Do)\b/gi,
+];
+
+const PDF_FONT_METADATA_NOISE_PATTERN = /\b(?:Arial(?:[- ][A-Za-z]+)?|Times(?: New Roman|NewRoman[A-Za-z]*)|Monotype|Microsoft supplied font|Type Drawing Office|trademark|license terms|embedding restrictions|Ralph Hancock|John Hudson|Robin Nicholas|Patricia Saunders|Stanley Morison|Victor Lardent|Biblical Hebrew|cmap|glyf|GSUB|GPOS|DSIG|head|hhea|hmtx|kern|loca|maxp|prep|fpgm|cvt|post|mark|mkmk|ccmp|dlig|liga|rlig|locl|lnum|tnum|numr)\b/i;
+const PDF_OPERATOR_NOISE_PATTERN = /\b(?:BT|ET|Tf|Tm|Td|TD|TJ|Tj|TL|Do|cm|rg|RG|re|w|m|l|c|obj|endobj|stream|endstream|xref|trailer|startxref)\b/i;
+const PDF_DICTIONARY_NOISE_PATTERN = /<<|>>|\/[A-Za-z][A-Za-z0-9]+/;
+
+type PdfApiExtractionResult =
+  | { status: 'success'; text: string }
+  | { status: 'backend-error'; error: string }
+  | { status: 'unavailable' };
+
+// Local Docling extraction can be slow on the first request, especially on Windows/WSL.
+// Keep a wider timeout so the browser does not abort the Python bridge too early.
+const PDF_API_TIMEOUT_MS = 45000;
+
+function isTestRuntime(): boolean {
+  const runtime = globalThis as typeof globalThis & {
+    process?: {
+      env?: Record<string, string | undefined>;
+    };
+  };
+
+  return runtime.process?.env?.VITEST === 'true' || runtime.process?.env?.NODE_ENV === 'test';
+}
+
+async function tryExtractPdfViaApi(buffer: ArrayBuffer): Promise<PdfApiExtractionResult> {
+  if (isTestRuntime()) {
+    return { status: 'unavailable' };
+  }
+
+  try {
+    // Try to use Python backend if available at localhost:8008
+    const bytes = new Uint8Array(buffer);
+    let binaryString = '';
+    const chunkSize = 0x8000;
+
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binaryString += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+
+    const encoded = btoa(binaryString);
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
+    const timeoutId = controller
+      ? globalThis.setTimeout(() => controller.abort(), PDF_API_TIMEOUT_MS)
+      : undefined;
+
+    const response = await fetch('http://127.0.0.1:8008/api/extract-pdf-text', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdfBase64: encoded }),
+      signal: controller?.signal,
+    }).finally(() => {
+      if (timeoutId !== undefined) {
+        globalThis.clearTimeout(timeoutId);
+      }
+    });
+
+    const data = await response.json().catch(() => null) as { ok?: boolean; text?: string; error?: string } | null;
+
+    if (!response.ok) {
+      return {
+        status: 'backend-error',
+        error: data?.error?.trim() || `Le service Python a répondu avec le code ${response.status}.`,
+      };
+    }
+
+    if (data?.ok && typeof data.text === 'string' && data.text.trim()) {
+      console.debug('Successfully extracted PDF via Python API');
+      return {
+        status: 'success',
+        text: data.text,
+      };
+    }
+
+    return {
+      status: 'backend-error',
+      error: data?.error?.trim() || "Le service Python n'a renvoyé aucun texte exploitable.",
+    };
+  } catch {
+    // Python backend not available, will use fallback
+    return { status: 'unavailable' };
+  }
+}
 function compactWhitespace(value: string): string {
   return value
     .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ' ')
@@ -90,6 +182,102 @@ function scoreReadableText(value: string): number {
 
   const readableChars = compact.match(/[A-Za-z0-9À-ÿ€.,:/_#-]/g)?.length ?? 0;
   return readableChars / compact.length;
+}
+
+function countPatternMatches(value: string, pattern: RegExp): number {
+  return value.match(pattern)?.length ?? 0;
+}
+
+function stripPdfLineNoise(line: string): string {
+  let cleaned = line.replace(/\u0000/g, ' ').replace(/\r/g, '');
+
+  for (const pattern of PDF_TECHNICAL_INLINE_PATTERNS) {
+    cleaned = cleaned.replace(pattern, ' ');
+  }
+
+  return cleaned.replace(/[ \t]+/g, ' ').trim();
+}
+
+function isLikelyPdfNoiseLine(line: string): boolean {
+  const normalized = stripPdfLineNoise(line);
+
+  if (!normalized) {
+    return true;
+  }
+
+  if (/^[\x00-\x1F\x7F-\x9F\s]+$/.test(line)) {
+    return true;
+  }
+
+  if (/^(?:obj|endobj|stream|endstream|xref|trailer|startxref|q|Q|BT|ET)$/i.test(normalized)) {
+    return true;
+  }
+
+  if (PDF_FONT_METADATA_NOISE_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  const letters = countPatternMatches(normalized, /[A-Za-zÀ-ÿ]/g);
+  const digits = countPatternMatches(normalized, /\d/g);
+  const weirdSymbols = countPatternMatches(normalized, /[^A-Za-zÀ-ÿ0-9\s€$£¥.,:;()\-/'"%+]/g);
+  const operatorTokens = countPatternMatches(normalized, /\b(?:Tf|Tm|Td|TD|TJ|Tj|TL|Do|cm|rg|RG|re|w|m|l|c)\b/g);
+  const readableScore = scoreReadableText(normalized);
+
+  if (PDF_DICTIONARY_NOISE_PATTERN.test(normalized) && letters < 6) {
+    return true;
+  }
+
+  if (operatorTokens >= 1 && digits >= 4 && letters < 12) {
+    return true;
+  }
+
+  if (weirdSymbols >= 6 && weirdSymbols > letters + digits) {
+    return true;
+  }
+
+  if (normalized.length >= 24 && readableScore < 0.62) {
+    return true;
+  }
+
+  if (letters === 0 && digits >= 6) {
+    return true;
+  }
+
+  if (letters < 2 && !/[€$£¥]/.test(normalized)) {
+    return true;
+  }
+
+  if (PDF_OPERATOR_NOISE_PATTERN.test(normalized) && readableScore < 0.78) {
+    return true;
+  }
+
+  return false;
+}
+
+function isLikelyHumanPdfLine(line: string): boolean {
+  const normalized = stripPdfLineNoise(line);
+
+  if (!normalized || isLikelyPdfNoiseLine(normalized)) {
+    return false;
+  }
+
+  const letters = countPatternMatches(normalized, /[A-Za-zÀ-ÿ]/g);
+  const digits = countPatternMatches(normalized, /\d/g);
+
+  return letters >= 3 || (letters >= 2 && digits >= 2) || /[€$£¥]/.test(normalized);
+}
+
+function cleanPdfTechnicalNoise(text: string): string {
+  const cleanedLines = collapseSequentialDuplicates(
+    text
+      .replace(/\r\n?/g, '\n')
+      .replace(/[^\S\n]+/g, ' ')
+      .split('\n')
+      .map((line) => stripPdfLineNoise(line))
+      .filter((line) => isLikelyHumanPdfLine(line)),
+  );
+
+  return normalizeStructuredPdfText(cleanedLines.join('\n'));
 }
 
 function decodeOctalSequence(value: string): string {
@@ -236,9 +424,9 @@ function extractPdfHexStrings(content: string): string[] {
 }
 
 function extractPrintableRuns(content: string): string[] {
-  return Array.from(content.matchAll(/[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9@&/.,:;_#'’()\- ]{4,}/g))
+  return Array.from(content.matchAll(/[A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9€$£¥@&/.,:;_#'’()\- ]{4,}/g))
     .map((match) => compactWhitespace(match[0]))
-    .filter((value) => value.length >= 5);
+    .filter((value) => value.length >= 5 && isLikelyHumanPdfLine(value));
 }
 
 function decodePdfTextArray(value: string): string {
@@ -472,8 +660,9 @@ async function inflatePdfStreamBytes(bytes: Uint8Array): Promise<string | null> 
 
 async function decodePdfBufferToText(buffer: ArrayBuffer): Promise<string> {
   const bytes = new Uint8Array(buffer);
+  const utf8Text = new TextDecoder('utf-8').decode(buffer);
   const binaryText = new TextDecoder('windows-1252').decode(buffer);
-  const contents: string[] = [binaryText];
+  const contents: string[] = uniqueValues([utf8Text, binaryText]);
   const streamRegex = /stream\r?\n([\s\S]*?)endstream/g;
   let match: RegExpExecArray | null;
 
@@ -504,29 +693,83 @@ async function decodePdfBufferToText(buffer: ArrayBuffer): Promise<string> {
   ]));
 
   if (positionedReadingView || fragments.length > 0) {
-    return mergePdfTextViews(positionedReadingView, fragments);
+    const cleanedMergedText = cleanPdfTechnicalNoise(mergePdfTextViews(positionedReadingView, fragments));
+    if (cleanedMergedText) {
+      return cleanedMergedText;
+    }
   }
 
-  return normalizeStructuredPdfText(latin1BytesToString(bytes));
+  return cleanPdfTechnicalNoise(normalizeStructuredPdfText(latin1BytesToString(bytes)));
+}
+
+async function decodePdfArrayBuffer(buffer: ArrayBuffer): Promise<string> {
+  // Try Python API extraction first (cleaner results with pdfplumber)
+  const apiExtraction = await tryExtractPdfViaApi(buffer);
+  if (apiExtraction.status === 'success') {
+    const cleanedApiText = cleanPdfTechnicalNoise(apiExtraction.text);
+    if (cleanedApiText) {
+      return cleanedApiText;
+    }
+  }
+
+  if (apiExtraction.status === 'backend-error') {
+    const fallbackText = await decodePdfBufferToText(buffer);
+    const fallbackLength = fallbackText.replace(/\s+/g, '').length;
+    const fallbackLooksUseful = scoreReadableText(fallbackText) >= 0.62
+      || /\b(?:facture|siret|total|tva|montant)\b/i.test(fallbackText);
+
+    if (fallbackLength >= 40 && fallbackLooksUseful) {
+      return fallbackText;
+    }
+
+    throw new Error(`Extraction PDF via Python impossible: ${apiExtraction.error}`);
+  }
+
+  // Fallback to local extraction with noise cleaning.
+  return decodePdfBufferToText(buffer);
+}
+
+function looksLikeResponseWrappedFile(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === 'object file' || normalized === '[object file]';
+}
+
+function looksLikeRawPdfPayload(value: string): boolean {
+  const trimmed = value.trimStart();
+  return /^%PDF-[\d.]+/i.test(trimmed)
+    || /\b\d+\s+\d+\s+obj\b/i.test(value)
+    || /\b(?:xref|trailer|startxref|endstream)\b/i.test(value)
+    || /\/(?:Type|Subtype|Length|Filter|Resources|MediaBox)\b/i.test(value);
 }
 
 async function decodeFileToText(file: File): Promise<string> {
   const lowerName = file.name.toLowerCase();
   const lowerType = file.type.toLowerCase();
   const isPdf = lowerName.endsWith('.pdf') || lowerType.includes('pdf');
+  const directText = typeof file.text === 'function'
+    ? await file.text().catch(() => '')
+    : '';
 
-  if (!isPdf && typeof file.text === 'function') {
-    const directText = await file.text();
+  if (!isPdf) {
     if (directText) {
       return directText;
     }
+  } else if (directText && !looksLikeResponseWrappedFile(directText) && !looksLikeRawPdfPayload(directText)) {
+    return normalizeStructuredPdfText(directText);
   }
 
   if (typeof FileReader !== 'undefined') {
-    const readerText = await new Promise<string>((resolve, reject) => {
+    const readerResult = await new Promise<string | ArrayBuffer>((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(reader.error ?? new Error('Impossible de lire le fichier.'));
-      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onload = () => {
+        if (typeof reader.result === 'string' || reader.result instanceof ArrayBuffer) {
+          resolve(reader.result);
+          return;
+        }
+
+        resolve('');
+      };
       if (isPdf) {
         reader.readAsArrayBuffer(file);
       } else {
@@ -534,17 +777,36 @@ async function decodeFileToText(file: File): Promise<string> {
       }
     });
 
-    if (readerText && !isPdf) {
-      return readerText;
+    if (!isPdf && typeof readerResult === 'string' && readerResult) {
+      return readerResult;
+    }
+
+    if (isPdf && readerResult instanceof ArrayBuffer) {
+      return decodePdfArrayBuffer(readerResult);
     }
   }
 
   const buffer = typeof file.arrayBuffer === 'function'
     ? await file.arrayBuffer()
-    : await new Response(file).arrayBuffer();
+    : await new Response(file).arrayBuffer().catch(() => undefined);
 
   if (isPdf) {
-    return decodePdfBufferToText(buffer);
+    if (buffer) {
+      const decoded = await decodePdfArrayBuffer(buffer);
+      if (!looksLikeResponseWrappedFile(decoded)) {
+        return decoded;
+      }
+    }
+
+    if (directText && !looksLikeResponseWrappedFile(directText)) {
+      return cleanPdfTechnicalNoise(normalizeStructuredPdfText(directText));
+    }
+
+    return '';
+  }
+
+  if (!buffer) {
+    return directText;
   }
 
   const encodings = ['utf-8', 'windows-1252'] as const;
@@ -656,7 +918,7 @@ function parseAmount(value: string): number | undefined {
     .replace(/['’]/g, '')
     .replace(/[A-Za-z€$£]/g, '');
 
-  if (!cleaned) {
+  if (!cleaned || !/\d/.test(cleaned) || !/^\d/.test(cleaned)) {
     return undefined;
   }
 
@@ -674,6 +936,75 @@ function parseAmount(value: string): number | undefined {
 
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function roundMoney(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function parseFirstAmountFromPatterns(
+  text: string,
+  patterns: Array<{ regex: RegExp; confidence: number }>,
+): CandidateMatch<number> {
+  for (const pattern of patterns) {
+    const match = text.match(pattern.regex);
+    const amount = match?.[1] ? parseAmount(match[1]) : undefined;
+
+    if (amount !== undefined) {
+      return {
+        value: amount,
+        confidence: pattern.confidence,
+      };
+    }
+  }
+
+  return {};
+}
+
+function extractVatRate(text: string): number | undefined {
+  const match = text.match(/\btva\s*([0-9]{1,2}(?:[,.][0-9]+)?)\s*%/i);
+  const rate = match?.[1] ? Number(match[1].replace(',', '.')) : undefined;
+
+  return Number.isFinite(rate) ? rate : undefined;
+}
+
+function inferVatAmountFromHt(text: string, amountHt?: number): CandidateMatch<number> {
+  const vatRate = extractVatRate(text);
+  if (amountHt === undefined || vatRate === undefined) {
+    return {};
+  }
+
+  return {
+    value: roundMoney((amountHt * vatRate) / 100),
+    confidence: 0.72,
+  };
+}
+
+function inferTtcFromHtAndVat(amountHt?: number, vatAmount?: number): CandidateMatch<number> {
+  if (amountHt === undefined || vatAmount === undefined) {
+    return {};
+  }
+
+  return {
+    value: roundMoney(amountHt + vatAmount),
+    confidence: 0.68,
+  };
+}
+
+function inferVatAmountFromHtAndTtc(amountHt?: number, amountTtc?: number): CandidateMatch<number> {
+  if (amountHt === undefined || amountTtc === undefined || amountTtc < amountHt) {
+    return {};
+  }
+
+  const vatAmount = roundMoney(amountTtc - amountHt);
+  if (vatAmount <= 0 || vatAmount > amountHt) {
+    return {};
+  }
+
+  return {
+    value: vatAmount,
+    confidence: 0.8,
+  };
 }
 
 function normalizePaymentMode(value: string | undefined): ChorusPaymentMode | undefined {
@@ -772,7 +1103,7 @@ function extractPaymentMode(text: string, rawText: string, sourceFormat: Invoice
 
   const regexMatch = pickFirstMatch(text, [
     {
-      regex: /\b(?:reglement|règlement)[^A-Za-z]{0,30}(?:est\s+)?payable\s+par\s+(virement(?:\s+bancaire)?|cheque(?:\s+bancaire)?|chèque(?:\s+bancaire)?|prelevement(?:\s+sepa)?|prélèvement(?:\s+sepa)?|especes|espèces|cash)\b/i,
+      regex: /\b(?:reglement|règlement)\b.{0,100}?\bpayable\s+par\s+(virement(?:\s+bancaire)?|cheque(?:\s+bancaire)?|chèque(?:\s+bancaire)?|prelevement(?:\s+sepa)?|prélèvement(?:\s+sepa)?|especes|espèces|cash)\b/i,
       confidence: 0.95,
     },
     {
@@ -791,36 +1122,109 @@ function extractPaymentMode(text: string, rawText: string, sourceFormat: Invoice
     : {};
 }
 
+function normalizeInvoiceNumberCandidate(value: string): string | undefined {
+  const candidate = sanitizeToken(value)
+    .replace(/\s+/g, '')
+    .replace(/_/g, '-');
+
+  if (!candidate || candidate.length < 4) {
+    return undefined;
+  }
+
+  // A short numeric value is often the customer id in French invoices (ex: ID CLIENT N° 1903).
+  if (/^\d{1,5}$/.test(candidate)) {
+    return undefined;
+  }
+
+  return candidate;
+}
+
+function scoreInvoiceNumberCandidate(value: string, confidence: number): number {
+  let score = confidence;
+
+  if (/[A-Z]/i.test(value)) {
+    score += 0.12;
+  }
+  if (/[/-]/.test(value)) {
+    score += 0.16;
+  }
+  if (/^(?:19|20)\d{2}[-/]/.test(value)) {
+    score += 0.22;
+  }
+  if (value.length >= 8) {
+    score += 0.08;
+  }
+
+  return score;
+}
+
 function extractInvoiceNumber(text: string, rawText: string, filename: string, sourceFormat: InvoiceSourceFormat): CandidateMatch<string> {
   const xmlInvoiceNumber = sourceFormat === 'XML'
     ? extractXmlTagValue(rawText, ['InvoiceNumber', 'NumeroFacture', 'InvoiceID', 'DocumentNumber'])
     : undefined;
 
-  const regexMatch = pickFirstMatch(text, [
-    {
-      regex: /\b(?:facture|invoice)\s*(?:n[°ºo]?|numero|numéro|number|reference|référence)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/i,
-      confidence: 0.94,
-    },
-    {
-      regex: /\b(?:n[°ºo]?|numero|numéro)\s*de\s*facture\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/i,
-      confidence: 0.92,
-    },
-  ]);
-
   if (xmlInvoiceNumber) {
     return { value: xmlInvoiceNumber, confidence: 0.94 };
   }
 
-  if (regexMatch.value) {
-    return regexMatch;
+  const candidates: Array<{ value: string; confidence: number; score: number }> = [];
+  const patterns = [
+    {
+      regex: /\bfacture\s*n[°ºo]?\s*:?\s*([A-Z0-9][A-Z0-9/_-]{4,})\s+(?:du|date|le)\b/gi,
+      confidence: 0.97,
+    },
+    {
+      regex: /\bfacture\s*n[°ºo]?\s*:?\s*([A-Z0-9][A-Z0-9/_-]{4,})\b/gi,
+      confidence: 0.95,
+    },
+    {
+      regex: /\bn[°ºo]?\s*:\s*([12]\d{3}[-/][A-Z0-9][A-Z0-9/_-]{4,})\b/gi,
+      confidence: 0.93,
+    },
+    {
+      regex: /\b(?:facture|invoice)\s*(?:n[°ºo]?|numero|numéro|number|reference|référence)\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/gi,
+      confidence: 0.94,
+    },
+    {
+      regex: /\b(?:n[°ºo]?|numero|numéro)\s*de\s*facture\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/gi,
+      confidence: 0.92,
+    },
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern.regex)) {
+      const normalized = match[1] ? normalizeInvoiceNumberCandidate(match[1]) : undefined;
+      if (normalized) {
+        candidates.push({
+          value: normalized,
+          confidence: pattern.confidence,
+          score: scoreInvoiceNumberCandidate(normalized, pattern.confidence),
+        });
+      }
+    }
+  }
+
+  const bestCandidate = candidates
+    .sort((left, right) => right.score - left.score)[0];
+
+  if (bestCandidate) {
+    return {
+      value: bestCandidate.value,
+      confidence: bestCandidate.confidence,
+    };
   }
 
   const baseName = filename.replace(/\.[^.]+$/, '');
-  const filenameMatch = baseName.match(/([A-Z]{2,}[-_]\d{2,}(?:[-_][A-Z0-9]+)*)/i);
+  const filenameMatch = baseName.match(/([A-Z0-9]{2,}[-_][A-Z0-9]{2,}(?:[-_][A-Z0-9]+)*|[12]\d{3}[-_][A-Z0-9][A-Z0-9_-]{4,})/i);
 
   if (filenameMatch?.[1]) {
+    const normalized = normalizeInvoiceNumberCandidate(filenameMatch[1]);
+    if (!normalized) {
+      return {};
+    }
+
     return {
-      value: filenameMatch[1].replace(/_/g, '-'),
+      value: normalized,
       confidence: 0.55,
     };
   }
@@ -863,7 +1267,7 @@ function extractDueDate(text: string, rawText: string, sourceFormat: InvoiceSour
 
   const regexMatch = pickFirstMatch(text, [
     {
-      regex: /\b(?:jusqu['’]au|date\s+echeance|date\s+échéance|echeance|échéance|delai\s+de\s+reglement|délai\s+de\s+règlement)\s*[:#-]?\s*(\d{2}[\/.-]\d{2}[\/.-]\d{4}|\d{4}[\/.-]\d{2}[\/.-]\d{2})/i,
+      regex: /\b(?:jusqu['’]au|date\s+echeance|date\s+échéance|echeance|échéance|delai\s+de\s+reglement|délai\s+de\s+règlement)\b[^0-9]{0,45}(\d{2}[\/.-]\d{2}[\/.-]\d{4}|\d{4}[\/.-]\d{2}[\/.-]\d{2})/i,
       confidence: 0.94,
     },
   ]);
@@ -887,6 +1291,7 @@ function extractCode(text: string, rawText: string, sourceFormat: InvoiceSourceF
 
   const regexes: Record<typeof field, Array<{ regex: RegExp; confidence: number }>> = {
     engagement: [
+      { regex: /\b(?:numero|numéro)\s+d['’]\s*engagement\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/i, confidence: 0.94 },
       { regex: /\b(?:engagement|commitment)\s*(?:n[°ºo]?|numero|numéro|number)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/i, confidence: 0.9 },
     ],
     market: [
@@ -896,6 +1301,7 @@ function extractCode(text: string, rawText: string, sourceFormat: InvoiceSourceF
       { regex: /\b(?:bon\s+de\s+commande|purchase\s+order|order)\s*(?:n[°ºo]?|numero|numéro|number)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{2,})/i, confidence: 0.9 },
     ],
     service: [
+      { regex: /\b(?:code\s+service\s+destinataire|code\s+service\s+executant|code\s+service\s+exécutant)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,19})/i, confidence: 0.94 },
       { regex: /\b(?:code\s+service|service\s+destinataire|service\s+executant|service\s+exécutant|service\s+code)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,19})/i, confidence: 0.92 },
     ],
     publicCustomer: [
@@ -925,21 +1331,26 @@ function extractAmount(text: string, rawText: string, sourceFormat: InvoiceSourc
 
   const regexes: Record<typeof field, Array<{ regex: RegExp; confidence: number }>> = {
     ht: [
-      { regex: /\b(?:total\s*ht|montant\s*ht|hors\s*taxes)\s*[:#-]?\s*([0-9\s.,]+)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.88 },
+      { regex: /\|\s*(?:total\s*ht|montant\s*ht|hors\s*taxes)\s*\|\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*\|/i, confidence: 0.88 },
+      { regex: /\|\s*abonnement\(s\)\s*\|\s*quantit[eé]\s*\|\s*prix\s+unit\.?\s*\|\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*\|/i, confidence: 0.86 },
+      { regex: /\b(?:total\s*ht|montant\s*ht|hors\s*taxes)\s*[:#-]?\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.88 },
+      { regex: /\bp[eé]riode\s+factur[eé]e\b.{0,220}\bBC\s+([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\b/i, confidence: 0.74 },
     ],
     ttc: [
-      { regex: /\b(?:total\s*ttc|montant\s*ttc|net\s+a\s+payer|net\s+à\s+payer|amount\s+due)\s*[:#-]?\s*([0-9\s.,]+)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.88 },
+      { regex: /\|\s*(?:total\s*ttc|montant\s*ttc|net\s+a\s+payer|net\s+à\s+payer)\s*\|\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*\|/i, confidence: 0.88 },
+      { regex: /\b(?:total\s*ttc|montant\s*ttc|amount\s+due)\s*[:#-]?\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.88 },
+      { regex: /\b(?:net\s+a\s+payer|net\s+à\s+payer)\b[^0-9]{0,35}([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.86 },
     ],
   };
 
   const xmlValue = sourceFormat === 'XML'
     ? extractXmlTagValue(rawText, xmlTags[field])
     : undefined;
-  const candidate = xmlValue ?? pickFirstMatch(text, regexes[field]).value;
-  const amount = candidate ? parseAmount(candidate) : undefined;
+  const amountMatch = parseFirstAmountFromPatterns(text, regexes[field]);
+  const amount = xmlValue ? parseAmount(xmlValue) : amountMatch.value;
 
   return amount !== undefined
-    ? { value: amount, confidence: xmlValue ? 0.9 : 0.88 }
+    ? { value: amount, confidence: xmlValue ? 0.9 : amountMatch.confidence }
     : {};
 }
 
@@ -948,15 +1359,15 @@ function extractVatAmount(text: string, rawText: string, sourceFormat: InvoiceSo
     ? extractXmlTagValue(rawText, ['TaxAmount', 'TotalTaxAmount'])
     : undefined;
 
-  const regexMatch = pickFirstMatch(text, [
-    { regex: /\b(?:montant\s+tva|total\s+tva|tva\s*\d{1,2}(?:[.,]\d+)?%)\s*[:#-]?\s*([0-9\s.,']+)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.86 },
+  const amountMatch = parseFirstAmountFromPatterns(text, [
+    { regex: /\b(?:montant\s+tva|total\s+tva)\s*[:#-]?\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.86 },
+    { regex: /\btva\s*\d{1,2}(?:[.,]\d+)?%\s*[:#-]?\s*([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)\s*(?:€|eur|usd|gbp|chf)?/i, confidence: 0.86 },
   ]);
 
-  const candidate = xmlValue ?? regexMatch.value;
-  const amount = candidate ? parseAmount(candidate) : undefined;
+  const amount = xmlValue ? parseAmount(xmlValue) : amountMatch.value;
 
   return amount !== undefined
-    ? { value: amount, confidence: xmlValue ? 0.9 : regexMatch.confidence }
+    ? { value: amount, confidence: xmlValue ? 0.9 : amountMatch.confidence }
     : {};
 }
 
@@ -970,6 +1381,8 @@ function extractCustomerReference(text: string, rawText: string, sourceFormat: I
   }
 
   return pickFirstMatch(text, [
+    { regex: /\bclient\s*:\s*[^[\n]{3,180}\[\s*([A-Z0-9][A-Z0-9/_-]{1,19})\s*\]/i, confidence: 0.94 },
+    { regex: /\bid\s+client\b.{0,120}\bn[°ºo]?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.9 },
     { regex: /\b(?:id\s+client|reference\s+client|référence\s+client)\s*(?:n[°ºo]?|numero|numéro|number)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.9 },
   ]);
 }
@@ -988,13 +1401,56 @@ function extractSupplierVatNumber(text: string, rawText: string, sourceFormat: I
   ]);
 }
 
+function cleanLabelCandidate(value: string): string {
+  return compactWhitespace(sanitizeToken(value))
+    .replace(/\s+(?:siret|facture|total|montant|page|num[eé]ro|n[°ºo]?)\b.*$/i, '')
+    .trim();
+}
+
+function extractPublicCustomerName(text: string): CandidateMatch<string> {
+  const clientMatch = text.match(/\bclient\s*:\s*([^[]+?)\s*\[[A-Z0-9/_-]+\]/i);
+  const clientName = clientMatch?.[1] ? cleanLabelCandidate(clientMatch[1]) : '';
+  if (clientName.length >= 4) {
+    return {
+      value: clientName,
+      confidence: 0.88,
+    };
+  }
+
+  const beforeServiceMatch = text.match(/\b([A-Z][A-ZÀ-ÖØ-Þ0-9'’ .-]{8,140}?)\s+(?:comptabilite|comptabilité)\s+fournisseurs\b/i);
+  const beforeServiceName = beforeServiceMatch?.[1] ? cleanLabelCandidate(beforeServiceMatch[1]) : '';
+  if (beforeServiceName.length >= 4) {
+    return {
+      value: beforeServiceName,
+      confidence: 0.82,
+    };
+  }
+
+  return {};
+}
+
 function extractServiceLabel(text: string): CandidateMatch<string> {
   const normalizedText = compactWhitespace(text);
-  const explicitMatch = normalizedText.match(/\b((?:comptabilite|comptabilité)\s+fournisseurs)\b/i);
-  if (explicitMatch?.[1]) {
-    return {
-      value: explicitMatch[1],
+  const explicitMatch = pickFirstMatch(normalizedText, [
+    {
+      regex: /\b(?:service\s+destinataire|service\s+executant|service\s+exécutant|service\s+facture)\s*[:#-]\s*([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’ ._/-]{2,80}?)(?=\s+(?:siret|num[eé]ro|n[°ºo]?|facture|total|montant|page)\b|$)/i,
+      confidence: 0.9,
+    },
+    {
+      regex: /\b((?:comptabilite|comptabilité)\s+fournisseurs)\b/i,
       confidence: 0.86,
+    },
+    {
+      regex: /##\s*(?:[0-9]{3,8}\s*:)\s*([A-Za-zÀ-ÿ0-9][A-Za-zÀ-ÿ0-9'’ ._/-]{6,140}?)(?=\s+(?:date|p[eé]riode|abonnement|\||powered)\b|$)/i,
+      confidence: 0.78,
+    },
+  ]);
+  const label = explicitMatch.value ? cleanLabelCandidate(explicitMatch.value) : '';
+
+  if (label) {
+    return {
+      value: label,
+      confidence: explicitMatch.confidence,
     };
   }
 
@@ -1203,6 +1659,41 @@ function average(values: number[]): number {
   return Number((total / values.length).toFixed(2));
 }
 
+function completeDerivedTotals(fields: ExtractedInvoiceDraftData, text: string, fieldConfidences: number[]): void {
+  if (fields.totalVat === undefined) {
+    const inferredVatFromTotals = inferVatAmountFromHtAndTtc(fields.totalAmountHt, fields.totalAmountTtc);
+    if (inferredVatFromTotals.value !== undefined) {
+      fields.totalVat = inferredVatFromTotals.value;
+      fieldConfidences.push(inferredVatFromTotals.confidence ?? 0.6);
+    }
+  }
+
+  if (fields.totalVat === undefined) {
+    const inferredVat = inferVatAmountFromHt(text, fields.totalAmountHt);
+    if (inferredVat.value !== undefined) {
+      fields.totalVat = inferredVat.value;
+      fieldConfidences.push(inferredVat.confidence ?? 0.6);
+    }
+  }
+
+  if (fields.totalAmountTtc === undefined) {
+    const inferredTtc = inferTtcFromHtAndVat(fields.totalAmountHt, fields.totalVat);
+    if (inferredTtc.value !== undefined) {
+      fields.totalAmountTtc = inferredTtc.value;
+      fieldConfidences.push(inferredTtc.confidence ?? 0.6);
+    }
+  }
+
+  if (!fields.vatLines && fields.totalAmountHt !== undefined && fields.totalVat !== undefined) {
+    fields.vatLines = [{
+      rate: extractVatRate(text),
+      baseHt: fields.totalAmountHt,
+      taxAmount: fields.totalVat,
+    }];
+    fieldConfidences.push(0.66);
+  }
+}
+
 export async function extractInvoiceData(
   file: File,
   references: InvoiceExtractionReferences,
@@ -1281,6 +1772,8 @@ export async function extractInvoiceData(
     fieldConfidences.push(totalAmountTtc.confidence ?? 0.6);
   }
 
+  completeDerivedTotals(fields, text, fieldConfidences);
+
   const customerReference = extractCustomerReference(text, rawText, sourceFormat);
   if (customerReference.value) {
     fields.customerReference = customerReference.value;
@@ -1293,6 +1786,12 @@ export async function extractInvoiceData(
     fieldConfidences.push(supplierVatNumber.confidence ?? 0.6);
   }
 
+  const explicitPublicCustomerName = extractPublicCustomerName(text);
+  if (explicitPublicCustomerName.value) {
+    fields.publicCustomerName = explicitPublicCustomerName.value;
+    fieldConfidences.push(explicitPublicCustomerName.confidence ?? 0.6);
+  }
+
   const llmEnrichedFields = await extractInvoiceDataWithOllama(rawText || text, sourceFormat, file.name, fields, {
     evidenceText: buildKeywordEvidence(rawText || text),
     referenceHints: buildReferenceHints({
@@ -1302,6 +1801,7 @@ export async function extractInvoiceData(
     }),
   });
   Object.assign(fields, llmEnrichedFields);
+  completeDerivedTotals(fields, text, fieldConfidences);
 
   const candidateSirets = extractSiretCandidates(rawText);
   const labelledSirets = extractLabelledSirets(rawText);
@@ -1452,9 +1952,7 @@ export async function extractInvoiceData(
   } else if (!fields.publicCustomerId) {
     warnings.push('Destinataire extrait mais non rapproché des références locales.');
   }
-  if (!fields.publicServiceId && !fields.publicServiceCode && !fields.publicServiceLabel) {
-    warnings.push('Code service non reconnu automatiquement.');
-  } else if (!fields.publicServiceId) {
+  if ((fields.publicServiceCode || fields.publicServiceLabel) && !fields.publicServiceId) {
     warnings.push('Service destinataire extrait mais non rapproché des références locales.');
   }
   if (!fields.currencyCode) {
@@ -1477,6 +1975,6 @@ export async function extractInvoiceData(
     requiresReview,
     warnings: uniqueValues(warnings),
     rawText,
-    rawTextPreview: normalizeStructuredPdfText(rawText).slice(0, 320),
+    rawTextPreview: normalizeStructuredPdfText(rawText).slice(0, 900),
   };
 }

@@ -54,9 +54,9 @@ function buildSubmitDebugPayload(
 
   return {
     ...payloadWithoutCurrentUserId,
-    modeDepot: 'DEPOT_PDF_API',
+    modeDepot: 'DEPOT_PDF_SIGNE_API',
     pieceJointePrincipale: [{
-      pieceJointePrincipaleDesignation: mainFileName || 'Facture principale',
+      pieceJointePrincipaleDesignation: mainFileName?.startsWith('GCU_') ? mainFileName : 'GCU_MSG_01_000',
       pieceJointePrincipaleId: '<PIECE_JOINTE_ID_FROM_UPLOAD>',
     }],
   };

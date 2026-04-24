@@ -1,3 +1,4 @@
+import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import type { ChorusConfig, ChorusConnectionTestMethod, ChorusConnectorMode } from '@/types/chorus';
 
 export const CHORUS_CONFIG_STORAGE_KEY = 'chorus.connector.config';
@@ -47,7 +48,7 @@ function mergeConfigWithFallback(
     }
   });
 
-  return normalizeLegacyChorusUserServiceConfig(merged);
+  return normalizeFixedSubmissionFields(normalizeLegacyChorusUserServiceConfig(merged));
 }
 
 function normalizeLegacyChorusUserServiceUrl(
@@ -84,13 +85,20 @@ function normalizeLegacyChorusUserServiceConfig(config: ChorusConfig): ChorusCon
   };
 }
 
+function normalizeFixedSubmissionFields(config: ChorusConfig): ChorusConfig {
+  return {
+    ...config,
+    submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
+  };
+}
+
 export function getDefaultChorusConfig(): ChorusConfig {
   const mode = (envValue('VITE_CHORUS_MODE', 'mock') as ChorusConnectorMode) === 'direct' ? 'direct' : 'mock';
   const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
     ? 'POST'
     : 'GET';
 
-  return {
+  return normalizeFixedSubmissionFields({
     enabled: envBool('VITE_CHORUS_ENABLED', mode === 'direct'),
     mode,
     tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token'),
@@ -114,13 +122,13 @@ export function getDefaultChorusConfig(): ChorusConfig {
     technicalPassword: envValue('VITE_CHORUS_TECHNICAL_PASSWORD', ''),
     connectionTestPath: envValue('VITE_CHORUS_CONNECTION_TEST_PATH', ''),
     connectionTestMethod,
-    uploadFilePath: envValue('VITE_CHORUS_UPLOAD_FILE_PATH', '/v1/ajouter/fichier'),
-    submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', ''),
+    uploadFilePath: envValue('VITE_CHORUS_UPLOAD_FILE_PATH', '/v1/deposer/pdf'),
+    submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', '/v1/soumettre'),
     userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', DEFAULT_USER_ACCOUNT_PATH),
     userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', DEFAULT_USER_CONNECTIONS_PATH),
     submissionBridgeUrl: envValue('VITE_CHORUS_SUBMISSION_BRIDGE_URL', ''),
     submissionCurrentUserId: envValue('VITE_CHORUS_SUBMISSION_CURRENT_USER_ID', ''),
-    submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', '26359578'),
+    submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', FIXED_CHORUS_SUPPLIER_ID_TEXT),
     submissionSupplierServiceId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID', ''),
     submissionBankAccountCode: envValue('VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE', ''),
     submissionCadreCode: envValue('VITE_CHORUS_SUBMISSION_CADRE_CODE', 'A1_FACTURE_FOURNISSEUR'),
@@ -144,7 +152,7 @@ export function getDefaultChorusConfig(): ChorusConfig {
     submissionVatExonerationReason: envValue('VITE_CHORUS_SUBMISSION_VAT_EXONERATION_REASON', ''),
     submissionOriginalInvoiceNumber: envValue('VITE_CHORUS_SUBMISSION_ORIGINAL_INVOICE_NUMBER', ''),
     submissionComment: envValue('VITE_CHORUS_SUBMISSION_COMMENT', ''),
-  };
+  });
 }
 
 export function loadChorusConfig(): ChorusConfig {
@@ -195,16 +203,16 @@ function rewriteUrlToDevProxy(url: string): string {
 
 export function resolveChorusRuntimeConfig(config: ChorusConfig, devMode = import.meta.env.DEV): ChorusConfig {
   if (!devMode) {
-    return config;
+    return normalizeFixedSubmissionFields(config);
   }
 
-  return {
+  return normalizeFixedSubmissionFields({
     ...config,
     tokenUrl: rewriteUrlToDevProxy(config.tokenUrl),
     apiBaseUrl: rewriteUrlToDevProxy(config.apiBaseUrl),
     userAccountPath: rewriteUrlToDevProxy(config.userAccountPath),
     userConnectionsPath: rewriteUrlToDevProxy(config.userConnectionsPath),
-  };
+  });
 }
 
 export function saveChorusConfig(config: ChorusConfig): void {
@@ -212,7 +220,10 @@ export function saveChorusConfig(config: ChorusConfig): void {
     return;
   }
 
-  window.localStorage.setItem(CHORUS_CONFIG_STORAGE_KEY, JSON.stringify(config));
+  window.localStorage.setItem(
+    CHORUS_CONFIG_STORAGE_KEY,
+    JSON.stringify(normalizeFixedSubmissionFields(config)),
+  );
 }
 
 export function maskSecret(value: string): string {

@@ -210,11 +210,11 @@ export default function InvoiceCreate() {
   const effectiveSubmissionPayload = resolvedSubmission?.payload ?? submissionPayload;
   const hasTreatmentDetails = Boolean(lastSubmissionResult || lastSubmissionError);
   const pythonUploadCalls = useMemo(
-    () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/ajouter/fichier')),
+    () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/deposer/pdf')),
     [lastApiCalls],
   );
   const pythonSubmitCalls = useMemo(
-    () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/factures/v1/soumettre')),
+    () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/v1/soumettre')),
     [lastApiCalls],
   );
   const debugSnapshot = useMemo(() => JSON.stringify({
@@ -259,15 +259,16 @@ export default function InvoiceCreate() {
     ...submissionPreparation.validation.warnings.map((warning) => warning.message),
     ...(isDirectMode ? effectivePayloadValidation.warnings.map((warning) => warning.message) : []),
   ];
+  const hasBlockingSubmissionAlerts = isDirectMode && blockingIssues.length > 0;
   const hasVisibleSubmissionAlerts = isDirectMode && (blockingIssues.length > 0 || reviewIssues.length > 0);
   const submissionBlockReason = extracting
     ? 'Extraction du document en cours.'
     : submitting
       ? 'Soumission Chorus en cours.'
-      : hasVisibleSubmissionAlerts
-        ? `Soumission verrouillée : ${blockingIssues[0] ?? reviewIssues[0] ?? 'des alertes restent présentes.'}`
+      : hasBlockingSubmissionAlerts
+        ? `Soumission verrouillée : ${blockingIssues[0] ?? 'des champs obligatoires restent incomplets.'}`
         : undefined;
-  const isSubmissionBlocked = extracting || submitting || hasVisibleSubmissionAlerts;
+  const isSubmissionBlocked = extracting || submitting || hasBlockingSubmissionAlerts;
 
   const handleViewTreatmentDetails = useCallback(() => {
     const target = treatmentDetailsRef.current
@@ -358,16 +359,22 @@ export default function InvoiceCreate() {
         setFormData({
           supplierOrganizationId: invoice.supplierOrganizationId,
           supplierSiret: '',
+          supplierName: '',
+          supplierVatNumber: '',
           supplierInvoiceNumber: invoice.supplierInvoiceNumber,
           publicCustomerId: invoice.publicCustomerId,
           publicCustomerCode: '',
+          publicCustomerName: '',
           publicServiceId: invoice.publicServiceId ?? '',
           publicServiceCode: '',
+          publicServiceLabel: '',
           engagementNumber: invoice.engagementNumber ?? '',
           marketNumber: invoice.marketNumber ?? '',
           purchaseOrderNumber: invoice.purchaseOrderNumber ?? '',
           invoiceDate: invoice.invoiceDate,
+          dueDate: invoice.dueDate ?? '',
           currencyCode: invoice.currencyCode || 'EUR',
+          paymentMode: undefined,
           totalAmountHt: formatInvoiceAmountForInput(invoice.totalHt),
           totalAmountTtc: formatInvoiceAmountForInput(invoice.totalTtc),
         });
@@ -454,10 +461,10 @@ export default function InvoiceCreate() {
       return;
     }
 
-    if (isDirectMode && hasVisibleSubmissionAlerts && !forceDebug) {
+    if (isDirectMode && hasBlockingSubmissionAlerts && !forceDebug) {
       toast({
         title: 'Soumission verrouillée',
-        description: blockingIssues[0] ?? reviewIssues[0] ?? 'Corrigez les alertes visibles avant l’envoi.',
+        description: blockingIssues[0] ?? 'Corrigez les champs obligatoires avant l’envoi.',
         variant: 'destructive',
       });
       return;
@@ -1076,7 +1083,7 @@ export default function InvoiceCreate() {
                   <p className="text-sm font-medium">Contrôle référentiel Chorus Transverses</p>
                   <p className="text-xs text-muted-foreground mt-1">
                     Vérifie avant soumission les cadres, devises, taux TVA, modes de règlement, structures fournisseur,
-                    coordonnées bancaires, destinataire et service exécutant.
+                    coordonnées bancaires, destinataire et service exécutant si renseigné.
                   </p>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => void handleCheckTransverses()} disabled={loadingTransverses}>

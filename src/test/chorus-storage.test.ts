@@ -27,12 +27,16 @@ describe('chorus storage', () => {
       clientId: 'client-id',
       clientSecret: 'super-secret',
       technicalLogin: 'tech-user',
+      submissionSupplierId: '160',
     };
 
     saveChorusConfig(config);
 
     expect(window.localStorage.getItem(CHORUS_CONFIG_STORAGE_KEY)).toContain('client-id');
-    expect(loadChorusConfig()).toMatchObject(config);
+    expect(loadChorusConfig()).toMatchObject({
+      ...config,
+      submissionSupplierId: '26359578',
+    });
   });
 
   it('keeps fallback env values when persisted config contains empty strings', () => {

@@ -80,17 +80,17 @@ export function validateTestUploadPdfPayload(payload: UploadPdfPayload): Validat
 
 /**
  * Validates that a PDF submission payload is ready for testing
- * Specific checks for DEPOT_PDF_API mode with file ID
+ * Specific checks for DEPOT_PDF_SIGNE_API mode with file ID
  */
 export function validateTestPdfSubmissionPayload(payload: ChorusSubmissionPayload): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
 
   // Mode validation
-  if (payload.modeDepot !== 'DEPOT_PDF_API') {
+  if (payload.modeDepot !== 'DEPOT_PDF_SIGNE_API') {
     errors.push({
       field: 'modeDepot',
-      message: `Expected DEPOT_PDF_API for PDF submission, got ${payload.modeDepot}`,
+      message: `Expected DEPOT_PDF_SIGNE_API for PDF submission, got ${payload.modeDepot}`,
       severity: 'error',
     });
   }
@@ -99,7 +99,7 @@ export function validateTestPdfSubmissionPayload(payload: ChorusSubmissionPayloa
   if (!payload.pieceJointePrincipale || payload.pieceJointePrincipale.length === 0) {
     errors.push({
       field: 'pieceJointePrincipale',
-      message: 'Main attachment is required for DEPOT_PDF_API mode',
+      message: 'Main attachment is required for DEPOT_PDF_SIGNE_API mode',
       severity: 'error',
     });
   } else if (!payload.pieceJointePrincipale[0]?.pieceJointePrincipaleId) {
