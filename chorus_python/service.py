@@ -6,13 +6,19 @@ from typing import Any
 
 from .client import ChorusClient, ChorusUploadAttachmentResult
 from .config import ChorusSettings, FIXED_SUPPLIER_ID
+from .files import is_signed_pdf_base64, is_signed_pdf_path
 from .models import ChorusMinimalInvoiceInput
 from .payload import build_minimal_submission_payload
 from .soumission import (
     DEFAULT_MODE_DEPOT,
     DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION,
+    SIGNED_PDF_MODE_DEPOT,
     SoumissionFacture,
 )
+
+
+def mode_depot_for_pdf(is_signed: bool) -> str:
+    return SIGNED_PDF_MODE_DEPOT if is_signed else DEFAULT_MODE_DEPOT
 
 
 class ChorusSubmissionService:
@@ -31,6 +37,9 @@ class ChorusSubmissionService:
             upload_result = self.client.upload_attachment(invoice.pdf_path)
 
         if upload_result is not None:
+            mode_depot = mode_depot_for_pdf(
+                is_signed_pdf_path(invoice.pdf_path) if invoice.pdf_path is not None else False
+            )
             payload = SoumissionFacture.from_invoice(
                 invoice,
                 code_destinataire=recipient_code,
@@ -39,6 +48,7 @@ class ChorusSubmissionService:
                 piece_jointe_principale_designation=(
                     invoice.pdf_designation or DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION
                 ),
+                mode_depot=mode_depot,
             ).to_payload()
             return payload, upload_result
 
@@ -123,7 +133,7 @@ class ChorusSubmissionService:
                     if isinstance(raw_designation, str) and raw_designation.strip():
                         existing_designation = raw_designation.strip()
 
-            final_payload["modeDepot"] = DEFAULT_MODE_DEPOT
+            final_payload["modeDepot"] = mode_depot_for_pdf(is_signed_pdf_base64(str(main_file["base64"])))
             final_payload["pieceJointePrincipale"] = [
                 {
                     "pieceJointePrincipaleDesignation": (

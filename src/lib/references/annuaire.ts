@@ -66,7 +66,7 @@ export function parseChorusAnnuaireXml(xmlContent: string): ChorusAnnuaireCatalo
   }
 
   const parser = new DOMParser();
-  const document = parser.parseFromString(xmlContent, 'application/xml');
+  const document = parser.parseFromString(xmlContent.trim(), 'application/xml');
   const parserError = document.querySelector('parsererror');
 
   if (parserError) {

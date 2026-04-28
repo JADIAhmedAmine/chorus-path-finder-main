@@ -8,9 +8,10 @@ const DEV_PROXY_CHORUS_QUALIF_PREFIX = '/__chorus-proxy/chorus-qualif';
 const DEFAULT_USER_ACCOUNT_PATH = 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte';
 const DEFAULT_USER_CONNECTIONS_PATH = 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements';
 const DEFAULT_DEV_ANNUAIRE_JSON_URL = '/annuaire/annuaire.normalized.json';
-const DEFAULT_DEV_ANNUAIRE_XML_URL = '/annuaire/FAR0037A_SEC001_CPP0010037000000000007495';
+const DEFAULT_DEV_ANNUAIRE_XML_URL = '';
 const LEGACY_DEV_ANNUAIRE_JSON_URL = '/src/data/annuaire_out/annuaire.normalized.json';
 const LEGACY_DEV_ANNUAIRE_XML_URL = '/src/data/annuaire_out/FAR0037A_SEC001_CPP0010037000000000007495';
+const EXTENSIONLESS_DEV_ANNUAIRE_XML_URL = '/annuaire/FAR0037A_SEC001_CPP0010037000000000007495';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
@@ -81,6 +82,8 @@ function normalizeLegacyChorusUserServiceConfig(config: ChorusConfig): ChorusCon
       : config.referenceAnnuaireJsonUrl,
     referenceAnnuaireXmlUrl: config.referenceAnnuaireXmlUrl === LEGACY_DEV_ANNUAIRE_XML_URL
       ? DEFAULT_DEV_ANNUAIRE_XML_URL
+      : config.referenceAnnuaireXmlUrl === EXTENSIONLESS_DEV_ANNUAIRE_XML_URL
+        ? DEFAULT_DEV_ANNUAIRE_XML_URL
       : config.referenceAnnuaireXmlUrl,
   };
 }
@@ -92,13 +95,17 @@ function normalizeFixedSubmissionFields(config: ChorusConfig): ChorusConfig {
   };
 }
 
+function normalizeChorusConfig(config: ChorusConfig): ChorusConfig {
+  return normalizeFixedSubmissionFields(normalizeLegacyChorusUserServiceConfig(config));
+}
+
 export function getDefaultChorusConfig(): ChorusConfig {
   const mode = (envValue('VITE_CHORUS_MODE', 'mock') as ChorusConnectorMode) === 'direct' ? 'direct' : 'mock';
   const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
     ? 'POST'
     : 'GET';
 
-  return normalizeFixedSubmissionFields({
+  return normalizeChorusConfig({
     enabled: envBool('VITE_CHORUS_ENABLED', mode === 'direct'),
     mode,
     tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token'),
@@ -145,9 +152,9 @@ export function getDefaultChorusConfig(): ChorusConfig {
       'FACTURE',
     ),
     submissionVatType: pickEnumValue(
-      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'TVA_SUR_ENCAISSEMENT').toUpperCase(),
+      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'AUTO').toUpperCase(),
       ['AUTO', 'TVA_SUR_DEBIT', 'TVA_SUR_ENCAISSEMENT', 'EXONERATION', 'SANS_TVA'],
-      'TVA_SUR_ENCAISSEMENT',
+      'AUTO',
     ),
     submissionVatExonerationReason: envValue('VITE_CHORUS_SUBMISSION_VAT_EXONERATION_REASON', ''),
     submissionOriginalInvoiceNumber: envValue('VITE_CHORUS_SUBMISSION_ORIGINAL_INVOICE_NUMBER', ''),
@@ -203,10 +210,10 @@ function rewriteUrlToDevProxy(url: string): string {
 
 export function resolveChorusRuntimeConfig(config: ChorusConfig, devMode = import.meta.env.DEV): ChorusConfig {
   if (!devMode) {
-    return normalizeFixedSubmissionFields(config);
+    return normalizeChorusConfig(config);
   }
 
-  return normalizeFixedSubmissionFields({
+  return normalizeChorusConfig({
     ...config,
     tokenUrl: rewriteUrlToDevProxy(config.tokenUrl),
     apiBaseUrl: rewriteUrlToDevProxy(config.apiBaseUrl),
@@ -222,7 +229,7 @@ export function saveChorusConfig(config: ChorusConfig): void {
 
   window.localStorage.setItem(
     CHORUS_CONFIG_STORAGE_KEY,
-    JSON.stringify(normalizeFixedSubmissionFields(config)),
+    JSON.stringify(normalizeChorusConfig(config)),
   );
 }
 

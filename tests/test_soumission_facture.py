@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sys
 import unittest
 from pathlib import Path
@@ -185,7 +186,7 @@ class SoumissionFactureTest(unittest.TestCase):
                 "deviseFacture": "EUR",
                 "modePaiement": "ESPECE",
                 "typeFacture": "FACTURE",
-                "typeTva": "TVA_SUR_ENCAISSEMENT",
+                "typeTva": "TVA_SUR_DEBIT",
             },
         }
 
@@ -215,6 +216,61 @@ class SoumissionFactureTest(unittest.TestCase):
             }
         ])
         self.assertNotIn("pieceJointeComplementaire", result["payload"])
+
+    def test_submit_prepared_payload_uses_signed_pdf_mode_when_signature_markers_are_present(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+        signed_pdf_base64 = base64.b64encode(
+            b"%PDF-1.7\n1 0 obj\n<< /Type /Sig /ByteRange [0 10 20 30] >>\nendobj\n%%EOF"
+        ).decode("ascii")
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "SIGNED-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "ESPECE",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            main_file={
+                "name": "signed.pdf",
+                "mimeType": "application/pdf",
+                "base64": signed_pdf_base64,
+            },
+            attachments=[],
+        )
+
+        self.assertEqual(result["payload"]["modeDepot"], "DEPOT_PDF_SIGNE_API")
 
 
 if __name__ == "__main__":

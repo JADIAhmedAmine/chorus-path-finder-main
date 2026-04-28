@@ -74,6 +74,24 @@ describe('chorus extraction', () => {
     expect(result.fields.totalAmountTtc).toBe(50400);
   }, 10000);
 
+  it('does not extract a non numeric recipient SIRET as destination code', async () => {
+    const file = new File([`
+      Facture numéro : FAC-2026-TEST
+      SIRET destinataire : TEST
+      Destinataire : TEST
+      Total TTC : 753,60 EUR
+    `], 'invoice.pdf', { type: 'application/pdf' });
+
+    const result = await extractInvoiceData(file, {
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
+    });
+
+    expect(result.fields.publicCustomerSiret).toBeUndefined();
+    expect(result.fields.publicCustomerCode).toBeUndefined();
+  }, 10000);
+
   it('does not infer a currency from noisy pdf text without explicit context', async () => {
     const file = new File([`
       %PDF-1.7

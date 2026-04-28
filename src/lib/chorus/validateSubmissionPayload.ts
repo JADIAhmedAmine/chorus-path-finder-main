@@ -27,6 +27,10 @@ export function validateChorusSubmissionPayload(payload: ChorusSubmissionPayload
     pushIssue(errors, 'numeroFactureSaisi', 'NUMERO_FACTURE_REQUIRED', 'Le numero de facture saisi est obligatoire.');
   }
 
+  if (!payload.dateFacture) {
+    pushIssue(errors, 'dateFacture', 'DATE_FACTURE_REQUIRED', 'La date de facture est obligatoire.');
+  }
+
   if (!payload.destinataire.codeDestinataire) {
     pushIssue(errors, 'destinataire.codeDestinataire', 'DESTINATAIRE_REQUIRED', 'Le code destinataire est obligatoire.');
   }

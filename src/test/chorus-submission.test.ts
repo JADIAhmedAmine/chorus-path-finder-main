@@ -99,7 +99,6 @@ describe('chorus submission payload', () => {
       numeroFactureSaisi: '2026-003-00565',
       destinataire: {
         codeDestinataire: '23440003400026',
-        codeServiceExecutant: 'SE-PDL',
       },
       fournisseur: {
         idFournisseur: 160,
@@ -113,8 +112,9 @@ describe('chorus submission payload', () => {
       },
       references: {
         deviseFacture: 'EUR',
+        numeroFactureOrigine: '2026-003-00565',
         typeFacture: 'FACTURE',
-        typeTva: 'TVA_SUR_ENCAISSEMENT',
+        typeTva: 'TVA_SUR_DEBIT',
       },
     });
     expect(payload.lignePoste).toHaveLength(1);
@@ -272,6 +272,7 @@ describe('chorus submission payload', () => {
         fields: {
           ...gigalisExtractionResult.fields,
           publicCustomerCode: undefined,
+          publicCustomerSiret: undefined,
         },
       },
     });

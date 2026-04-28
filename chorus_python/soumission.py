@@ -11,12 +11,13 @@ from .models import ChorusMinimalInvoiceInput, InvoiceLineInput
 MONEY_QUANTIZER = Decimal("0.0001")
 
 DEFAULT_CODE_CADRE_FACTURATION = "A1_FACTURE_FOURNISSEUR"
-DEFAULT_MODE_DEPOT = "DEPOT_PDF_SIGNE_API"
+DEFAULT_MODE_DEPOT = "DEPOT_PDF_API"
+SIGNED_PDF_MODE_DEPOT = "DEPOT_PDF_SIGNE_API"
 DEFAULT_DEVISE_FACTURE = "EUR"
 DEFAULT_MODE_PAIEMENT = "VIREMENT"
 DEFAULT_TYPE_FACTURE = "FACTURE"
-DEFAULT_TYPE_TVA = "TVA_SUR_ENCAISSEMENT"
-DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION = "Facture_Originale"
+DEFAULT_TYPE_TVA = "TVA_SUR_DEBIT"
+DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION = "GCU_MSG_01_000"
 
 
 def _normalize_text(value: str | None) -> str | None:
@@ -146,6 +147,7 @@ class SoumissionFacture:
         id_fournisseur: int,
         piece_jointe_principale_id: int,
         piece_jointe_principale_designation: str | None = None,
+        mode_depot: str | None = None,
     ) -> SoumissionFacture:
         return cls(
             numero_facture_saisi=invoice.invoice_number,
@@ -157,6 +159,7 @@ class SoumissionFacture:
             piece_jointe_principale_designation=(
                 piece_jointe_principale_designation or DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION
             ),
+            mode_depot=mode_depot or DEFAULT_MODE_DEPOT,
         )
 
     def _compute_totals(self) -> tuple[Decimal, Decimal, Decimal]:
