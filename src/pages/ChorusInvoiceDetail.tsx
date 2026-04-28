@@ -6,8 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
+import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { getChorusLiveInvoiceDetail } from '@/lib/chorus/liveInvoiceDetails';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -24,7 +23,20 @@ function formatOptionalDate(value: string | undefined, withTime = false): string
     return value;
   }
 
-  return withTime ? formatDateTime(value) : formatDate(value);
+  if (parsed.getTime() === 0) {
+    return '-';
+  }
+
+  if (!withTime) {
+    return formatDate(value);
+  }
+
+  const hasTime = parsed.getHours() !== 0
+    || parsed.getMinutes() !== 0
+    || parsed.getSeconds() !== 0
+    || parsed.getMilliseconds() !== 0;
+
+  return hasTime ? formatDateTime(value) : formatDate(value);
 }
 
 function formatRawValue(value: unknown): ReactNode {
@@ -93,7 +105,7 @@ export default function ChorusInvoiceDetail() {
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold">{invoice.supplierInvoiceNumber}</h1>
-              <StatusBadge status={invoice.statusInternal} />
+              <ChorusStatusPill value={invoice.statusChorus || invoice.statusInternal} />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
               {supplier?.legalName || `Fournisseur ${search.idFournisseur}`} → {customer?.legalName || 'Destinataire Chorus'}
@@ -120,7 +132,7 @@ export default function ChorusInvoiceDetail() {
                 <InfoRow label="N° facture fournisseur" value={invoice.supplierInvoiceNumber} />
                 <InfoRow label="N° Chorus" value={invoice.chorusInvoiceNumber || '-'} />
                 <InfoRow label="Date facture" value={formatOptionalDate(invoice.invoiceDate)} />
-                <InfoRow label="Date dépôt" value={formatOptionalDate(invoice.submittedAt, true)} />
+                <InfoRow label="Date dépôt / heure statut" value={formatOptionalDate(invoice.submittedAt, true)} />
                 <InfoRow label="Dernier statut" value={formatOptionalDate(invoice.lastStatusSyncAt, true)} />
                 <InfoRow label="Mode dépôt" value={invoice.depositMode || '-'} />
                 <InfoRow label="Statut Chorus brut" value={invoice.statusChorus || '-'} />
@@ -227,5 +239,16 @@ function Metric({ label, value }: { label: string; value: string }) {
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-1 break-words font-medium">{value}</div>
     </div>
+  );
+}
+
+function ChorusStatusPill({ value }: { value: string }) {
+  const config = getChorusRawStatusConfig(value);
+
+  return (
+    <span className={`inline-flex max-w-[320px] items-center rounded px-2 py-1 text-sm font-medium ${config.bgClass} ${config.textClass}`}>
+      <span className="mr-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: config.color }} />
+      <span className="truncate">{config.label}</span>
+    </span>
   );
 }

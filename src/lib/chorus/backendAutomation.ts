@@ -38,6 +38,45 @@ export interface ChorusSupplierInvoicesSearchResult {
   apiCalls: ChorusApiDebugEntry[];
 }
 
+export interface ChorusSupplierInvoicesSearchInput {
+  idFournisseur?: number | string;
+  coordonneeBancaire?: number | string;
+  idServiceFournisseur?: number | string;
+  idStructureValideur?: number | string;
+  idUtilisateurCourant?: number | string;
+  idUtilisateurCreateur?: Array<number | string>;
+  idDestinataire?: number | string;
+  listeIdServiceExecutant?: Array<number | string>;
+  destinataire?: string;
+  raisonSocialeStuctDmd?: string;
+  modeDepot?: string;
+  montantApayerMax?: number | string;
+  montantApayerMin?: number | string;
+  montantHTMax?: number | string;
+  montantHTMin?: number | string;
+  montantTTCMax?: number | string;
+  montantTTCMin?: number | string;
+  numeroBonCommande?: string;
+  numeroFacture?: string;
+  numeroFactureOrigine?: string;
+  numeroFluxDepot?: string;
+  numeroMarche?: string;
+  periodeDateDepotAu?: string;
+  periodeDateDepotDu?: string;
+  periodeDateFactureAu?: string;
+  periodeDateFactureDu?: string;
+  periodeDateHeureEtatCourantAu?: string;
+  periodeDateHeureEtatCourantDu?: string;
+  rechercheFactureParFournisseur?: {
+    triColonne?: string;
+    triSens?: string;
+  };
+  rechercheSirenDestinataire?: boolean;
+  rejetTraite?: boolean;
+  statutCourant?: string[];
+  typeFacture?: string;
+}
+
 export class ChorusBackendAutomationError extends Error {
   readonly apiCalls: ChorusApiDebugEntry[];
 
@@ -225,7 +264,7 @@ export class ChorusBackendAutomationClient {
     return normalizeSiretInformationResult(body);
   }
 
-  async searchSupplierInvoices(input: { idFournisseur?: number | string } = {}): Promise<ChorusSupplierInvoicesSearchResult> {
+  async searchSupplierInvoices(input: ChorusSupplierInvoicesSearchInput = {}): Promise<ChorusSupplierInvoicesSearchResult> {
     const response = await this.fetchImpl(this.supplierInvoicesSearchUrl, {
       method: 'POST',
       headers: {
