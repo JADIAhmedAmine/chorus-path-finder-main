@@ -24,8 +24,161 @@ export const jobStatusConfig: Record<JobStatus, StatusConfig> = {
   DEAD: { label: 'Abandonné', color: '#991b1b', bgClass: 'bg-destructive/20', textClass: 'text-destructive' },
 };
 
+export const CHORUS_INVOICE_STATUS_CODES = [
+  'BROUILLON',
+  'A_VALIDER_1',
+  'ERREUR_FOURNISSEUR_SUR_VALIDEUR',
+  'REFUSEE_1',
+  'VALIDEE_1',
+  'ABSENCE_VALIDATION_1_HORS_DELAI',
+  'A_VALIDER_2',
+  'ERREUR_COTRAITANT_SUR_VALIDEUR',
+  'REFUSEE_2',
+  'VALIDEE_2',
+  'ABSENCE_VALIDATION_2_HORS_DELAI',
+  'DEPOSEE',
+  'ERREUR_FOURNISSEUR_SUR_MOE',
+  'EN_COURS_ACHEMINEMENT',
+  'MISE_A_DISPOSITION',
+  'A_RECYCLER',
+  'SUSPENDUE',
+  'REJETEE',
+  'MANDATEE',
+  'MISE_EN_PAIEMENT',
+  'COMPTABILISEE',
+  'MISE_A_DISPOSITION_COMPTABLE',
+  'ABANDONNEE',
+  'SUPPRIMEE',
+  'ASSOCIEE',
+  'EN_COURS_TRAITEMENT_PIVOT_S',
+  'A_VALIDER_MOE',
+  'REFUSEE_MOE',
+  'EN_ATTENTE_RECYCLAGE_FOURNISSEUR',
+  'ERREUR_MOE_SUR_FOURNISSEUR',
+  'ERREUR_MOA_SUR_FOURNISSEUR',
+  'INTERPRETEE_OCR',
+  'COMPLETEE',
+  'ERREUR_FOURNISSEUR_SUR_MOA',
+  'ERREUR_MOE_SUR_MOA',
+  'ERREUR_DESTINATAIRE_PD',
+  'ERREUR_DESTINATAIRE_EA',
+  'SERVICE_FAIT',
+  'NON_CONFORME',
+  'A_ASSOCIER_MOE',
+  'ERREUR_DE_MOE',
+  'MISE_A_DISPOSITION_MOE',
+  'PRISE_EN_COMPTE_MOE',
+  'A_ASSOCIER_MOA',
+  'ERREUR_DE_MOA',
+  'REFUSEE_MOA',
+  'A_ASSOCIER_FOURNISSEUR',
+  'REFUSEE_FOURNISSEUR',
+  'A_COMPLETER',
+  'TRANSMISE_MOA',
+  'PRISE_EN_COMPTE_DESTINATAIRE',
+  'REMPLACEE_PAR_A22',
+  'DUPLIQUE_APRES_REFUS',
+  'MISE_A_DISPOSITION_MOA',
+  'PRISE_EN_COMPTE_MOA',
+  'ABSENCE_VALIDATION_MOE_DELAI_REGLEMENTAIRE',
+  'TECHNIQUE_INCONNU',
+] as const;
+
+export type ChorusInvoiceStatusCode = typeof CHORUS_INVOICE_STATUS_CODES[number];
+
+const CHORUS_SUCCESS_STATUS_CODES = new Set<string>([
+  'VALIDEE_1',
+  'VALIDEE_2',
+  'MANDATEE',
+  'MISE_EN_PAIEMENT',
+  'COMPTABILISEE',
+  'SERVICE_FAIT',
+  'PRISE_EN_COMPTE_MOE',
+  'PRISE_EN_COMPTE_MOA',
+  'PRISE_EN_COMPTE_DESTINATAIRE',
+]);
+
+const CHORUS_WARNING_STATUS_CODES = new Set<string>([
+  'A_VALIDER_1',
+  'A_VALIDER_2',
+  'A_VALIDER_MOE',
+  'A_RECYCLER',
+  'SUSPENDUE',
+  'EN_ATTENTE_RECYCLAGE_FOURNISSEUR',
+  'A_ASSOCIER_MOE',
+  'A_ASSOCIER_MOA',
+  'A_ASSOCIER_FOURNISSEUR',
+  'A_COMPLETER',
+  'DUPLIQUE_APRES_REFUS',
+]);
+
+const CHORUS_ERROR_STATUS_CODES = new Set<string>([
+  'ERREUR_FOURNISSEUR_SUR_VALIDEUR',
+  'REFUSEE_1',
+  'ABSENCE_VALIDATION_1_HORS_DELAI',
+  'ERREUR_COTRAITANT_SUR_VALIDEUR',
+  'REFUSEE_2',
+  'ABSENCE_VALIDATION_2_HORS_DELAI',
+  'ERREUR_FOURNISSEUR_SUR_MOE',
+  'REJETEE',
+  'ABANDONNEE',
+  'SUPPRIMEE',
+  'REFUSEE_MOE',
+  'ERREUR_MOE_SUR_FOURNISSEUR',
+  'ERREUR_MOA_SUR_FOURNISSEUR',
+  'ERREUR_FOURNISSEUR_SUR_MOA',
+  'ERREUR_MOE_SUR_MOA',
+  'ERREUR_DESTINATAIRE_PD',
+  'ERREUR_DESTINATAIRE_EA',
+  'NON_CONFORME',
+  'ERREUR_DE_MOE',
+  'ERREUR_DE_MOA',
+  'REFUSEE_MOA',
+  'REFUSEE_FOURNISSEUR',
+  'ABSENCE_VALIDATION_MOE_DELAI_REGLEMENTAIRE',
+  'TECHNIQUE_INCONNU',
+]);
+
+const CHORUS_INFO_STATUS_CODES = new Set<string>([
+  'DEPOSEE',
+  'EN_COURS_ACHEMINEMENT',
+  'MISE_A_DISPOSITION',
+  'MISE_A_DISPOSITION_COMPTABLE',
+  'ASSOCIEE',
+  'EN_COURS_TRAITEMENT_PIVOT_S',
+  'INTERPRETEE_OCR',
+  'COMPLETEE',
+  'MISE_A_DISPOSITION_MOE',
+  'TRANSMISE_MOA',
+  'REMPLACEE_PAR_A22',
+  'MISE_A_DISPOSITION_MOA',
+]);
+
 export function getStatusConfig(status: InvoiceStatusInternal): StatusConfig {
   return invoiceStatusConfig[status] || { label: status, color: '#6b7280', bgClass: 'bg-muted', textClass: 'text-muted-foreground' };
+}
+
+export function getChorusRawStatusConfig(status: string): StatusConfig {
+  const label = status.trim() || '-';
+  const normalized = label.toUpperCase();
+
+  if (CHORUS_ERROR_STATUS_CODES.has(normalized)) {
+    return { label, color: '#ef4444', bgClass: 'bg-destructive/10', textClass: 'text-destructive' };
+  }
+
+  if (CHORUS_SUCCESS_STATUS_CODES.has(normalized)) {
+    return { label, color: '#16a34a', bgClass: 'bg-success/10', textClass: 'text-success' };
+  }
+
+  if (CHORUS_WARNING_STATUS_CODES.has(normalized)) {
+    return { label, color: '#f59e0b', bgClass: 'bg-warning/10', textClass: 'text-warning' };
+  }
+
+  if (CHORUS_INFO_STATUS_CODES.has(normalized)) {
+    return { label, color: '#3b82f6', bgClass: 'bg-info/10', textClass: 'text-info' };
+  }
+
+  return { label, color: '#6b7280', bgClass: 'bg-muted', textClass: 'text-muted-foreground' };
 }
 
 export function getJobStatusConfig(status: JobStatus): StatusConfig {

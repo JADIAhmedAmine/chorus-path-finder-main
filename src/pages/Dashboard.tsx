@@ -1,61 +1,121 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { formatCurrency, formatDate } from '@/lib/status-utils';
-import { getAsyncJobs, getInvoices, getStatusHistory, getSuppliers } from '@/data/mock-data';
-import { useAsyncResource } from '@/hooks/use-async-resource';
-import { FileText, AlertTriangle, CheckCircle, Clock, Upload, Ban, ArrowRight, Plus, Wrench } from 'lucide-react';
+import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
+import { ChorusBackendAutomationClient, type ChorusSupplierInvoicesSearchResult } from '@/lib/chorus/backendAutomation';
+import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
+import { normalizeChorusInvoiceSearch } from '@/lib/chorus/invoiceRecords';
+import { loadChorusConfig } from '@/lib/chorus/storage';
+import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
+import {
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle,
+  Euro,
+  FileText,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Wrench,
+} from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 
-export default function Dashboard() {
-  const { data, loading, error } = useAsyncResource(
-    async () => {
-      const [invoices, asyncJobs, statusHistory, suppliers] = await Promise.all([
-        getInvoices(),
-        getAsyncJobs(),
-        getStatusHistory(),
-        getSuppliers(),
-      ]);
+function isRejectedStatus(status: string): boolean {
+  return status.toUpperCase().includes('REJET');
+}
 
-      return { invoices, asyncJobs, statusHistory, suppliers };
-    },
-    [],
-    {
-      invoices: [],
-      asyncJobs: [],
-      statusHistory: [],
-      suppliers: [],
-    },
-  );
+function isPaidStatus(status: string): boolean {
+  const normalized = status.toUpperCase();
+  return normalized.includes('PAY') || normalized.includes('PAIE') || normalized.includes('PAIEMENT');
+}
+
+function getInvoiceStatusLabel(invoice: Invoice): string {
+  return invoice.statusChorus || invoice.statusInternal;
+}
+
+export default function Dashboard() {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [suppliers, setSuppliers] = useState<SupplierOrganization[]>([]);
+  const [customers, setCustomers] = useState<PublicCustomer[]>([]);
+  const [searchResult, setSearchResult] = useState<ChorusSupplierInvoicesSearchResult | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+
+  async function loadDashboardInvoices() {
+    setLoading(true);
+    setError(null);
+
+    try {
+      const config = loadChorusConfig();
+      const idFournisseur = Number(config.submissionSupplierId || FIXED_CHORUS_SUPPLIER_ID_TEXT);
+      const client = new ChorusBackendAutomationClient(config);
+      const result = await client.searchSupplierInvoices({
+        idFournisseur,
+        typeFacture: 'FACTURE',
+        rechercheFactureParFournisseur: {
+          triColonne: 'TypeDemandePaiement',
+          triSens: 'Descendant',
+        },
+      });
+      const normalized = normalizeChorusInvoiceSearch(result, idFournisseur);
+
+      setInvoices(normalized.invoices);
+      setSuppliers([normalized.supplier]);
+      setCustomers(normalized.customers);
+      setSearchResult(result);
+      setLastSyncAt(normalized.fetchedAt);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : 'Chargement du tableau de bord Chorus impossible.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadDashboardInvoices();
+  }, []);
 
   const supplierById = useMemo(
-    () => new Map(data.suppliers.map((supplier) => [supplier.id, supplier])),
-    [data.suppliers],
+    () => new Map(suppliers.map((supplier) => [supplier.id, supplier])),
+    [suppliers],
+  );
+
+  const customerById = useMemo(
+    () => new Map(customers.map((customer) => [customer.id, customer])),
+    [customers],
   );
 
   const statusCounts = useMemo(() => {
-    return data.invoices.reduce((acc, invoice) => {
-      acc[invoice.statusInternal] = (acc[invoice.statusInternal] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-  }, [data.invoices]);
+    const counts = new Map<string, number>();
 
-  const pieData = useMemo(() => [
-    { name: 'Brouillons', value: (statusCounts['DRAFT_UPLOADED'] || 0) + (statusCounts['DRAFT_STRUCTURED'] || 0), color: '#6b7280' },
-    { name: 'En attente', value: statusCounts['PENDING_HUMAN_REVIEW'] || 0, color: '#f59e0b' },
-    { name: 'Prêt/Soumis', value: (statusCounts['READY_FOR_SUBMISSION'] || 0) + (statusCounts['SUBMISSION_REQUESTED'] || 0) + (statusCounts['SUBMITTED_TO_CHORUS'] || 0), color: '#3b82f6' },
-    { name: 'Rejetés', value: (statusCounts['REJECTED_BUSINESS'] || 0) + (statusCounts['REJECTED_TECHNICAL'] || 0), color: '#ef4444' },
-    { name: 'Acceptés/Payés', value: (statusCounts['ACCEPTED_BY_CHORUS'] || 0) + (statusCounts['PAID'] || 0), color: '#22c55e' },
-    { name: 'Archivés', value: statusCounts['ARCHIVED'] || 0, color: '#9ca3af' },
-  ].filter((item) => item.value > 0), [statusCounts]);
+    for (const invoice of invoices) {
+      const status = getInvoiceStatusLabel(invoice);
+      counts.set(status, (counts.get(status) ?? 0) + 1);
+    }
+
+    return counts;
+  }, [invoices]);
+
+  const pieData = useMemo(() => {
+    return [...statusCounts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .map(([status, value]) => {
+        const config = getChorusRawStatusConfig(status);
+        return {
+          name: config.label,
+          value,
+          color: config.color,
+        };
+      });
+  }, [statusCounts]);
 
   const barData = useMemo(() => {
     const counts = new Map<string, number>();
 
-    for (const invoice of data.invoices) {
+    for (const invoice of invoices) {
       const key = invoice.invoiceDate.slice(0, 7);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
@@ -63,44 +123,68 @@ export default function Dashboard() {
     return [...counts.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([month, count]) => ({
-        month: new Date(`${month}-01T00:00:00Z`).toLocaleDateString('fr-FR', { month: 'short' }),
+        month: new Date(`${month}-01T00:00:00Z`).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }),
         count,
       }));
-  }, [data.invoices]);
-
-  const failedJobs = useMemo(
-    () => data.asyncJobs.filter((job) => job.status === 'FAILED' || job.status === 'DEAD'),
-    [data.asyncJobs],
-  );
-
-  const recentEvents = useMemo(
-    () => [...data.statusHistory].sort((left, right) => new Date(right.occurredAt).getTime() - new Date(left.occurredAt).getTime()).slice(0, 5),
-    [data.statusHistory],
-  );
+  }, [invoices]);
 
   const recentInvoices = useMemo(
-    () => [...data.invoices].sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()).slice(0, 5),
-    [data.invoices],
+    () => [...invoices]
+      .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
+      .slice(0, 5),
+    [invoices],
+  );
+
+  const recentStatuses = useMemo(
+    () => [...invoices]
+      .sort((left, right) => new Date(right.lastStatusSyncAt || right.updatedAt).getTime() - new Date(left.lastStatusSyncAt || left.updatedAt).getTime())
+      .slice(0, 5),
+    [invoices],
+  );
+
+  const totalTtc = useMemo(
+    () => invoices.reduce((sum, invoice) => sum + invoice.totalTtc, 0),
+    [invoices],
+  );
+
+  const rejectedCount = useMemo(
+    () => invoices.filter((invoice) => isRejectedStatus(getInvoiceStatusLabel(invoice))).length,
+    [invoices],
+  );
+
+  const paidCount = useMemo(
+    () => invoices.filter((invoice) => isPaidStatus(getInvoiceStatusLabel(invoice))).length,
+    [invoices],
   );
 
   const statCards = useMemo(() => [
-    { label: 'Total factures', value: data.invoices.length, icon: FileText, color: 'text-foreground' },
-    { label: 'En attente de revue', value: data.invoices.filter((invoice) => invoice.statusInternal === 'PENDING_HUMAN_REVIEW').length, icon: Clock, color: 'text-warning' },
-    { label: 'Rejetées', value: data.invoices.filter((invoice) => invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL').length, icon: AlertTriangle, color: 'text-destructive' },
-    { label: 'Acceptées / Payées', value: data.invoices.filter((invoice) => invoice.statusInternal === 'ACCEPTED_BY_CHORUS' || invoice.statusInternal === 'PAID').length, icon: CheckCircle, color: 'text-success' },
-  ], [data.invoices]);
+    { label: 'Total factures Chorus', value: searchResult?.total ?? invoices.length, icon: FileText, color: 'text-foreground' },
+    { label: 'Montant TTC cumulé', value: formatCurrency(totalTtc), icon: Euro, color: 'text-info' },
+    { label: 'Rejets Chorus', value: rejectedCount, icon: AlertTriangle, color: 'text-destructive' },
+    { label: 'Paiement / payées', value: paidCount, icon: CheckCircle, color: 'text-success' },
+  ], [invoices.length, paidCount, rejectedCount, searchResult?.total, totalTtc]);
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Tableau de bord</h1>
-          <p className="text-sm text-muted-foreground">Vue d'ensemble de votre activité de facturation</p>
+          <p className="text-sm text-muted-foreground">
+            {loading
+              ? 'Chargement des données Chorus...'
+              : lastSyncAt
+                ? `Données Chorus synchronisées le ${formatDateTime(lastSyncAt)}`
+                : 'Vue réelle des factures Chorus'}
+          </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={loadDashboardInvoices} disabled={loading}>
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Actualiser Chorus
+          </Button>
           <Button variant="outline" asChild>
-            <Link to="/invoices?status=REJECTED_BUSINESS,REJECTED_TECHNICAL">
-              <Wrench className="mr-2 h-4 w-4" /> Traiter les rejets
+            <Link to="/invoices">
+              <Wrench className="mr-2 h-4 w-4" /> Rechercher
             </Link>
           </Button>
           <Button asChild>
@@ -117,7 +201,15 @@ export default function Dashboard() {
         </Alert>
       )}
 
-      {/* Stat Cards */}
+      {searchResult && (
+        <Alert>
+          <AlertDescription>
+            Chorus a retourné {searchResult.returned} ligne(s) sur {searchResult.total || searchResult.returned}.
+            Taille demandée : {searchResult.requestedPageSize}.
+          </AlertDescription>
+        </Alert>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {statCards.map((stat) => (
           <Card key={stat.label}>
@@ -134,10 +226,9 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle className="text-base">Répartition par statut</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Répartition par statut Chorus</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -152,18 +243,19 @@ export default function Dashboard() {
               </ResponsiveContainer>
             </div>
             <div className="flex flex-wrap gap-3 mt-2 justify-center">
-              {pieData.map((d) => (
-                <div key={d.name} className="flex items-center gap-1.5 text-xs">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: d.color }} />
-                  {d.name} ({d.value})
+              {pieData.map((item) => (
+                <div key={item.name} className="flex items-center gap-1.5 text-xs">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                  {item.name} ({item.value})
                 </div>
               ))}
+              {pieData.length === 0 && <span className="text-sm text-muted-foreground">Aucun statut Chorus chargé</span>}
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">Factures par mois</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Factures Chorus par mois</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[250px]">
               <ResponsiveContainer width="100%" height="100%">
@@ -179,94 +271,101 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Recent Invoices & Events */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base">Dernières factures</CardTitle>
+            <CardTitle className="text-base">Dernières factures Chorus</CardTitle>
             <Button variant="ghost" size="sm" asChild>
               <Link to="/invoices">Voir tout <ArrowRight className="ml-1 h-3.5 w-3.5" /></Link>
             </Button>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {recentInvoices.map((inv) => {
-                const supplier = supplierById.get(inv.supplierOrganizationId);
+              {recentInvoices.map((invoice) => {
+                const supplier = supplierById.get(invoice.supplierOrganizationId);
                 return (
-                  <Link key={inv.id} to={`/invoices/${inv.id}`} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted/50 transition-colors">
+                  <Link
+                    key={invoice.id}
+                    to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`}
+                    className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-muted/50 transition-colors"
+                  >
                     <div className="min-w-0">
-                      <div className="font-medium text-sm">{inv.supplierInvoiceNumber}</div>
+                      <div className="font-medium text-sm">{invoice.supplierInvoiceNumber}</div>
                       <div className="text-xs text-muted-foreground truncate">{supplier?.legalName}</div>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      <span className="text-sm font-medium">{formatCurrency(inv.totalTtc)}</span>
-                      <StatusBadge status={inv.statusInternal} />
+                      <span className="text-sm font-medium">{formatCurrency(invoice.totalTtc)}</span>
+                      <ChorusStatusPill value={getInvoiceStatusLabel(invoice)} />
                     </div>
                   </Link>
                 );
               })}
+              {recentInvoices.length === 0 && (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  {loading ? 'Chargement des factures Chorus...' : 'Aucune facture Chorus chargée'}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">Événements récents</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Derniers statuts Chorus</CardTitle></CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {recentEvents.map((event) => {
-                const inv = data.invoices.find((invoice) => invoice.id === event.invoiceId);
+              {recentStatuses.map((invoice) => {
+                const customer = customerById.get(invoice.publicCustomerId);
                 return (
-                  <div key={event.id} className="flex items-start gap-3 py-2">
-                    <div className="h-2 w-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: event.source === 'CHORUS' ? '#8b5cf6' : event.source === 'USER' ? '#3b82f6' : '#6b7280' }} />
+                  <Link
+                    key={invoice.id}
+                    to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`}
+                    className="flex items-start gap-3 rounded-lg px-3 py-2 hover:bg-muted/50 transition-colors"
+                  >
+                    <StatusDot value={getInvoiceStatusLabel(invoice)} />
                     <div className="min-w-0">
-                      <div className="text-sm">{event.eventLabel}</div>
+                      <div className="text-sm">{getInvoiceStatusLabel(invoice)}</div>
                       <div className="text-xs text-muted-foreground">
-                        {inv?.supplierInvoiceNumber} · {formatDate(event.occurredAt)}
+                        {invoice.supplierInvoiceNumber} · {customer?.legalName || 'Destinataire Chorus'} · {formatDate(invoice.lastStatusSyncAt || invoice.updatedAt)}
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
+              {recentStatuses.length === 0 && (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  {loading ? 'Chargement des statuts Chorus...' : 'Aucun statut Chorus chargé'}
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Failed Jobs Alert */}
-      {failedJobs.length > 0 && (
-        <Card className="border-destructive/30">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Ban className="h-4 w-4 text-destructive" />
-              Jobs en erreur ({failedJobs.length})
-            </CardTitle>
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/jobs">Voir les jobs</Link>
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {failedJobs.slice(0, 3).map((job) => {
-                const inv = data.invoices.find((invoice) => invoice.id === job.invoiceId);
-                return (
-                  <div key={job.id} className="flex items-center justify-between text-sm py-1">
-                    <span>{job.jobType} — {inv?.supplierInvoiceNumber || 'Batch'}</span>
-                    <span className="text-xs text-destructive">{job.lastErrorMessage}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {!loading && data.invoices.length === 0 && !error && (
+      {!loading && invoices.length === 0 && !error && (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            Aucune donnée facture n&apos;a encore été chargée depuis le backend.
+            Aucune facture réelle n&apos;a encore été retournée par Chorus.
           </CardContent>
         </Card>
       )}
     </div>
+  );
+}
+
+function ChorusStatusPill({ value }: { value: string }) {
+  const config = getChorusRawStatusConfig(value);
+
+  return (
+    <span className={`inline-flex max-w-[180px] items-center rounded px-2 py-1 text-xs font-medium ${config.bgClass} ${config.textClass}`}>
+      <span className="mr-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: config.color }} />
+      <span className="truncate">{config.label}</span>
+    </span>
+  );
+}
+
+function StatusDot({ value }: { value: string }) {
+  const config = getChorusRawStatusConfig(value);
+  return (
+    <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: config.color }} />
   );
 }

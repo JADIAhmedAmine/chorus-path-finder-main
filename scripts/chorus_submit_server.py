@@ -118,22 +118,199 @@ def _as_positive_int(value: Any) -> int | None:
     return None
 
 
+def _as_non_empty_string(value: Any) -> str | None:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+
+    return None
+
+
+def _as_optional_number(value: Any) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return value if value >= 0 else None
+    if isinstance(value, str) and value.strip():
+        normalized = value.replace("\u202f", "").replace(" ", "").replace(",", ".")
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            return None
+        if parsed < 0:
+            return None
+        return int(parsed) if parsed.is_integer() else parsed
+    return None
+
+
+def _as_optional_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip():
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "oui", "yes"}:
+            return True
+        if normalized in {"false", "0", "non", "no"}:
+            return False
+    return None
+
+
+def _as_date(value: Any) -> str | None:
+    raw_value = _as_non_empty_string(value)
+    if not raw_value:
+        return None
+    return raw_value[:10]
+
+
+def _as_datetime(value: Any, *, end_of_day: bool = False) -> str | None:
+    raw_value = _as_non_empty_string(value)
+    if not raw_value:
+        return None
+    if "T" in raw_value:
+        return raw_value
+
+    date_value = raw_value[:10]
+    return f"{date_value}T23:59:59.999Z" if end_of_day else f"{date_value}T00:00:00.000Z"
+
+
+def _as_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [item for item in (_as_non_empty_string(item) for item in value) if item]
+
+    raw_value = _as_non_empty_string(value)
+    if not raw_value:
+        return []
+
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
+def _copy_invoice_search_criteria(payload: dict[str, Any], criteria: dict[str, Any]) -> None:
+    string_fields = (
+        "modeDepot",
+        "numeroBonCommande",
+        "numeroFacture",
+        "numeroFactureOrigine",
+        "numeroFluxDepot",
+        "numeroMarche",
+        "typeFacture",
+    )
+    for field_name in string_fields:
+        value = _as_non_empty_string(criteria.get(field_name))
+        if value:
+            payload[field_name] = value
+
+    for field_name in ("coordonneeBancaire", "idServiceFournisseur", "idStructureValideur", "idUtilisateurCourant"):
+        value = _as_positive_int(criteria.get(field_name))
+        if value is not None:
+            payload[field_name] = value
+
+    user_creator_ids = [
+        item
+        for item in (_as_positive_int(item) for item in criteria.get("idUtilisateurCreateur", []))
+        if item is not None
+    ]
+    if user_creator_ids:
+        payload["idUtilisateurCreateur"] = user_creator_ids
+
+    amount_fields = (
+        "montantApayerMax",
+        "montantApayerMin",
+        "montantHTMax",
+        "montantHTMin",
+        "montantTTCMax",
+        "montantTTCMin",
+    )
+    for field_name in amount_fields:
+        value = _as_optional_number(criteria.get(field_name))
+        if value is not None:
+            payload[field_name] = value
+
+    date_depot_du = _as_date(criteria.get("periodeDateDepotDu"))
+    date_depot_au = _as_date(criteria.get("periodeDateDepotAu"))
+    if date_depot_du:
+        payload["periodeDateDepotDu"] = date_depot_du
+    if date_depot_au:
+        payload["periodeDateDepotAu"] = date_depot_au
+
+    date_facture_du = _as_datetime(criteria.get("periodeDateFactureDu"))
+    date_facture_au = _as_datetime(criteria.get("periodeDateFactureAu"), end_of_day=True)
+    if date_facture_du:
+        payload["periodeDateFactureDu"] = date_facture_du
+    if date_facture_au:
+        payload["periodeDateFactureAu"] = date_facture_au
+
+    date_statut_du = _as_datetime(criteria.get("periodeDateHeureEtatCourantDu"))
+    date_statut_au = _as_datetime(criteria.get("periodeDateHeureEtatCourantAu"), end_of_day=True)
+    if date_statut_du:
+        payload["periodeDateHeureEtatCourantDu"] = date_statut_du
+    if date_statut_au:
+        payload["periodeDateHeureEtatCourantAu"] = date_statut_au
+
+    recherche_siren_destinataire = _as_optional_bool(criteria.get("rechercheSirenDestinataire"))
+    if recherche_siren_destinataire is not None:
+        payload["rechercheSirenDestinataire"] = recherche_siren_destinataire
+
+    rejet_traite = _as_optional_bool(criteria.get("rejetTraite"))
+    if rejet_traite is not None:
+        payload["rejetTraite"] = rejet_traite
+
+    statuts = _as_string_list(criteria.get("statutCourant"))
+    if statuts:
+        payload["statutCourant"] = statuts
+
+    destinataire: dict[str, Any] = {}
+    id_destinataire = _as_positive_int(criteria.get("idDestinataire"))
+    if id_destinataire is not None:
+        destinataire["idDestinataire"] = id_destinataire
+
+    raison_sociale = _as_non_empty_string(criteria.get("raisonSocialeStuctDmd") or criteria.get("destinataire"))
+    if raison_sociale:
+        destinataire["raisonSocialeStuctDmd"] = raison_sociale
+
+    service_ids = [
+        item
+        for item in (_as_positive_int(item) for item in criteria.get("listeIdServiceExecutant", []))
+        if item is not None
+    ]
+    if service_ids:
+        destinataire["listeIdServiceExecutant"] = service_ids
+
+    if destinataire:
+        payload["listeDestinataire"] = [destinataire]
+
+
 def _build_supplier_invoice_search_payload(
     *,
     supplier_id: int,
     page_size: int,
+    criteria: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    search_options = criteria.get("rechercheFactureParFournisseur", {}) if isinstance(criteria, dict) else {}
+    tri_colonne = _as_non_empty_string(search_options.get("triColonne") if isinstance(search_options, dict) else None)
+    tri_sens = _as_non_empty_string(search_options.get("triSens") if isinstance(search_options, dict) else None)
+
+    payload = {
         "cadreFacturation": "A1_FACTURE_FOURNISSEUR",
         "idFournisseur": supplier_id,
         "rechercheFactureParFournisseur": {
             "nbResultatsMaximum": page_size,
             "nbResultatsParPage": page_size,
-            "triColonne": "TypeDemandePaiement",
-            "triSens": "Descendant",
+            "triColonne": tri_colonne or "TypeDemandePaiement",
+            "triSens": tri_sens or "Descendant",
         },
         "typeFacture": "FACTURE",
     }
+
+    if criteria:
+        _copy_invoice_search_criteria(payload, criteria)
+        payload["idFournisseur"] = supplier_id
+        payload["cadreFacturation"] = "A1_FACTURE_FOURNISSEUR"
+        payload.setdefault("typeFacture", "FACTURE")
+
+    return payload
 
 
 def _deep_find_first_list(value: Any, candidate_keys: set[str]) -> list[Any]:
@@ -386,6 +563,7 @@ class ChorusSubmitHandler(BaseHTTPRequestHandler):
             initial_payload = _build_supplier_invoice_search_payload(
                 supplier_id=supplier_id,
                 page_size=2,
+                criteria=body,
             )
             initial_response = client.search_supplier_invoices(initial_payload)
             initial_items = _extract_supplier_invoice_items(initial_response)
@@ -396,6 +574,7 @@ class ChorusSubmitHandler(BaseHTTPRequestHandler):
                 final_payload = _build_supplier_invoice_search_payload(
                     supplier_id=supplier_id,
                     page_size=page_size,
+                    criteria=body,
                 )
                 final_response = client.search_supplier_invoices(final_payload)
             else:
