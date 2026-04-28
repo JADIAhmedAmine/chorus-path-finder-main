@@ -148,6 +148,12 @@ function cleanDigits(value: string): string {
   return value.replace(/\D/g, '');
 }
 
+function isValidExtractedDestinationCode(value: string, references: InvoiceExtractionReferences): boolean {
+  const trimmed = value.trim();
+  return /^\d+$/.test(trimmed)
+    || references.publicCustomers.some((customer) => customer.codeDestinataire.toLowerCase() === trimmed.toLowerCase());
+}
+
 function uniqueValues(values: string[]): string[] {
   return Array.from(new Set(values.filter(Boolean)));
 }
@@ -1380,9 +1386,18 @@ function extractCustomerReference(text: string, rawText: string, sourceFormat: I
     return { value: xmlValue, confidence: 0.9 };
   }
 
+  const idClientNumber = text.match(/\bid\s+client\b[\s\S]{0,80}?(\d{2,})/i);
+  if (idClientNumber?.[1]) {
+    return {
+      value: idClientNumber[1],
+      confidence: 0.95,
+    };
+  }
+
   return pickFirstMatch(text, [
+    { regex: /\bid\s+client\s*n[°ºo]?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.95 },
     { regex: /\bclient\s*:\s*[^[\n]{3,180}\[\s*([A-Z0-9][A-Z0-9/_-]{1,19})\s*\]/i, confidence: 0.94 },
-    { regex: /\bid\s+client\b.{0,120}\bn[°ºo]?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.9 },
+    { regex: /\bid\s+client\b[^\n]{0,80}?\bn[°ºo]?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.9 },
     { regex: /\b(?:id\s+client|reference\s+client|référence\s+client)\s*(?:n[°ºo]?|numero|numéro|number)?\s*[:#-]?\s*([A-Z0-9][A-Z0-9/_-]{1,19})/i, confidence: 0.9 },
   ]);
 }
@@ -1825,7 +1840,7 @@ export async function extractInvoiceData(
   }
 
   const publicCustomerCode = extractCode(text, rawText, sourceFormat, 'publicCustomer');
-  if (publicCustomerCode.value) {
+  if (publicCustomerCode.value && isValidExtractedDestinationCode(publicCustomerCode.value, references)) {
     fields.publicCustomerCode = publicCustomerCode.value;
     fieldConfidences.push(publicCustomerCode.confidence ?? 0.6);
   }

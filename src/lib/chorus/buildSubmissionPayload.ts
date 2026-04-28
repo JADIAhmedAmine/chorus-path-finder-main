@@ -78,8 +78,9 @@ export function buildChorusSubmissionPayload(
     },
     fournisseur: {
       codeCoordonneesBancairesFournisseur: asInteger(chorusContext.codeCoordonneesBancairesFournisseur),
-      idFournisseur: FIXED_CHORUS_SUPPLIER_ID,
+      idFournisseur: asInteger(chorusContext.idFournisseur) ?? FIXED_CHORUS_SUPPLIER_ID,
     },
+    idUtilisateurCourant: asInteger(chorusContext.idUtilisateurCourant),
     lignePoste,
     ligneTva,
     modeDepot,
@@ -94,7 +95,12 @@ export function buildChorusSubmissionPayload(
     pieceJointePrincipale,
     references: {
       deviseFacture: sanitizeText(normalized.currencyCode) || 'EUR',
-      modePaiement: chorusContext.modePaiement ?? normalized.paymentMode ?? 'VIREMENT',
+      modePaiement: normalized.paymentMode ?? chorusContext.modePaiement ?? 'VIREMENT',
+      motifExonerationTva: sanitizeText(chorusContext.motifExonerationTva),
+      numeroBonCommande: sanitizeText(normalized.engagementNumber),
+      numeroFactureOrigine: sanitizeText(chorusContext.numeroFactureOrigine)
+        ?? sanitizeText(context.extraction?.fields.supplierInvoiceNumber),
+      numeroMarche: sanitizeText(normalized.marketNumber),
       typeFacture: chorusContext.typeFacture ?? 'FACTURE',
       typeTva,
     },

@@ -1,4 +1,5 @@
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
+import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
 import type {
   ChorusApiDebugEntry,
   ChorusConfig,
@@ -225,8 +226,33 @@ function parseStructureAttachments(body: unknown): ChorusResolvedStructureAttach
     .filter((item): item is ChorusResolvedStructureAttachment => item !== null);
 }
 
+async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === 'function') {
+    return file.arrayBuffer();
+  }
+
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error('Impossible de lire le fichier.'));
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(reader.result);
+          return;
+        }
+
+        reject(new Error('Lecture fichier invalide.'));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  const text = typeof file.text === 'function' ? await file.text() : '';
+  return new TextEncoder().encode(text).buffer;
+}
+
 async function readFileAsBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
+  const buffer = await readFileAsArrayBuffer(file);
   const bytes = new Uint8Array(buffer);
   const chunkSize = 0x8000;
   let binary = '';
@@ -528,6 +554,13 @@ export class DirectChorusConnector implements ChorusConnector {
   }
 
   async submitInvoice(input: ChorusSubmitInvoiceInput): Promise<ChorusSubmitInvoiceResult> {
+    if (input.debugBypassValidation !== true) {
+      const validation = validateChorusSubmissionPayload(input.invoiceData);
+      if (!validation.valid) {
+        throw new Error(`Payload Chorus invalide: ${validation.errors.map((error) => `${error.path} ${error.message}`).join('; ')}`);
+      }
+    }
+
     if (this.config.submissionBridgeUrl.trim()) {
       return this.submitInvoiceViaPythonBridge(input);
     }

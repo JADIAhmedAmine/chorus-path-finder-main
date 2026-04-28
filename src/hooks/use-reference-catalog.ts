@@ -1,6 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { loadChorusConfig } from '@/lib/chorus/storage';
-import { ReferenceCatalogClient, type ReferenceCatalog, type ReferenceCatalogLoadOptions } from '@/lib/references/client';
+import {
+  clearReferenceCatalogCaches,
+  ReferenceCatalogClient,
+  type ReferenceCatalog,
+  type ReferenceCatalogLoadOptions,
+} from '@/lib/references/client';
 import type { ChorusConfig } from '@/types/chorus';
 
 const EMPTY_REFERENCE_CATALOG: ReferenceCatalog = {
@@ -20,6 +25,7 @@ export function useReferenceCatalog(
   configOverride?: ChorusConfig,
   options: ReferenceCatalogLoadOptions = {},
 ) {
+  const [refreshIndex, setRefreshIndex] = useState(0);
   const [catalog, setCatalog] = useState<ReferenceCatalog>(() => {
     const config = configOverride ?? loadChorusConfig();
     const client = new ReferenceCatalogClient(config);
@@ -27,6 +33,11 @@ export function useReferenceCatalog(
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    clearReferenceCatalogCaches();
+    setRefreshIndex((value) => value + 1);
+  }, []);
 
   useEffect(() => {
     const config = configOverride ?? loadChorusConfig();
@@ -84,11 +95,12 @@ export function useReferenceCatalog(
     return () => {
       cancelled = true;
     };
-  }, [configOverride, options.includeSuppliers, options.includePublicCustomers, options.includePublicServices, options.includeAnnuaire]);
+  }, [configOverride, options.includeSuppliers, options.includePublicCustomers, options.includePublicServices, options.includeAnnuaire, refreshIndex]);
 
   return {
     ...catalog,
     loading,
     error,
+    refresh,
   };
 }

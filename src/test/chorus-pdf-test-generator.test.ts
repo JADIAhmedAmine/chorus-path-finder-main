@@ -9,10 +9,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { buildUploadPdfPayload, validateUploadPdfPayload, createMockUploadPdfPayload } from '@/lib/chorus/buildUploadPdfPayload';
-import { buildChorusSubmissionPayload } from '@/lib/chorus/buildSubmissionPayload';
 import { finalizeChorusSubmissionPayloadForPdfDeposit } from '@/lib/chorus/buildSubmissionPayload';
+import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
 import { createEmptyInvoiceDraft } from '@/lib/chorus/normalization';
+import type { ChorusSubmissionPayload } from '@/lib/chorus/types';
 
 describe('Chorus PDF Test Payload Generation', () => {
   /**
@@ -39,6 +40,7 @@ describe('Chorus PDF Test Payload Generation', () => {
   it('generates a valid SAISIE_API submission payload without PDF', () => {
     const invoiceDraft = createEmptyInvoiceDraft();
     invoiceDraft.supplierInvoiceNumber = 'FAC-2026-SAISIE-001';
+    invoiceDraft.publicCustomerCode = '23440003400026';
     invoiceDraft.invoiceDate = '2026-04-17';
     invoiceDraft.currencyCode = 'EUR';
     invoiceDraft.totalAmountHt = '1750.00';
@@ -63,7 +65,7 @@ describe('Chorus PDF Test Payload Generation', () => {
       },
     ];
 
-    const payload = buildChorusSubmissionPayload(invoiceDraft, {
+    const payload = buildInvoiceSubmissionPayload(invoiceDraft, {
       chorus: {
         idUtilisateurCourant: 331,
         idFournisseur: 160,
@@ -93,6 +95,7 @@ describe('Chorus PDF Test Payload Generation', () => {
   it('generates a valid DEPOT_PDF_API submission payload with PDF ID', () => {
     const invoiceDraft = createEmptyInvoiceDraft();
     invoiceDraft.supplierInvoiceNumber = '2026-003-00565';
+    invoiceDraft.publicCustomerCode = '23440003400026';
     invoiceDraft.invoiceDate = '2026-03-16';
     invoiceDraft.currencyCode = 'EUR';
     invoiceDraft.totalAmountHt = '45903.52';
@@ -111,10 +114,10 @@ describe('Chorus PDF Test Payload Generation', () => {
         taxAmount: 9180.7,
       },
     ];
-    invoiceDraft.purchaseOrderNumber = 'BC2025/25-007915';
+    invoiceDraft.engagementNumber = 'BC2025/25-007915';
 
     // First, build base payload in DEPOT_PDF_API mode
-    const payload = buildChorusSubmissionPayload(invoiceDraft, {
+    const payload = buildInvoiceSubmissionPayload(invoiceDraft, {
       chorus: {
         idUtilisateurCourant: 331,
         idFournisseur: 160,
@@ -127,13 +130,13 @@ describe('Chorus PDF Test Payload Generation', () => {
 
     // Then finalize with the PDF file ID
     const finalPayload = finalizeChorusSubmissionPayloadForPdfDeposit(payload, {
-      mainFileId: 'pie-abc123-xyz789',
+      mainFileId: 28093,
       mainFileName: 'facture-2026-001-GIGALIS.pdf',
     });
 
-    expect(finalPayload.modeDepot).toBe('DEPOT_PDF_API');
+    expect(finalPayload.modeDepot).toBe('DEPOT_PDF_SIGNE_API');
     expect(finalPayload.pieceJointePrincipale).toHaveLength(1);
-    expect(finalPayload.pieceJointePrincipale[0]?.pieceJointePrincipaleId).toBe('pie-abc123-xyz789');
+    expect(finalPayload.pieceJointePrincipale[0]?.pieceJointePrincipaleId).toBe(28093);
     expect(finalPayload.montantTotal.montantHtTotal).toBe(45903.52);
 
     const validation = validateChorusSubmissionPayload(finalPayload);
@@ -165,7 +168,7 @@ describe('Chorus PDF Test Payload Generation', () => {
         montantTtcTotal: 0,
         montantAPayer: 0,
       },
-    } as any;
+    } as ChorusSubmissionPayload;
 
     const validation = validateChorusSubmissionPayload(invalidPayload);
     expect(validation.valid).toBe(false);
@@ -185,24 +188,25 @@ describe('Chorus PDF Test Payload Generation', () => {
     const uploadPayload = createMockUploadPdfPayload('facture-2026-001-GIGALIS.pdf');
     console.log('  POST /cpro/transverses/v1/ajouter/fichier');
     console.log('  Body:', JSON.stringify(uploadPayload, null, 4).split('\n').slice(0, 10).join('\n') + '...');
-    console.log('  Expected Response: { "pieceJointeId": "pie-abc123..." }\n');
+    console.log('  Expected Response: { "pieceJointeId": 28093 }\n');
 
     // Step 2: Use the returned ID in invoice submission
     console.log('Step 2: Extract pieceJointeId from response');
-    const pieceJointeId = 'pie-abc123-xyz789';
+    const pieceJointeId = 28093;
     console.log(`  Extracted ID: ${pieceJointeId}\n`);
 
     // Step 3: Generate invoice submission payload
     console.log('Step 3: Submit invoice with PDF reference');
     const invoiceDraft = createEmptyInvoiceDraft();
     invoiceDraft.supplierInvoiceNumber = '2026-003-00565';
+    invoiceDraft.publicCustomerCode = '23440003400026';
     invoiceDraft.invoiceDate = '2026-03-16';
     invoiceDraft.totalAmountHt = '45903.52';
     invoiceDraft.totalAmountTtc = '55084.22';
     invoiceDraft.lineItems = [{ description: 'Services', totalHt: 45903.52, vatRate: 20 }];
     invoiceDraft.vatLines = [{ rate: 20, baseHt: 45903.52, taxAmount: 9180.7 }];
 
-    const payload = buildChorusSubmissionPayload(invoiceDraft, {
+    const payload = buildInvoiceSubmissionPayload(invoiceDraft, {
       chorus: {
         idUtilisateurCourant: 331,
         idFournisseur: 160,

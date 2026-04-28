@@ -14,7 +14,18 @@ from .files import detect_extension, detect_mime_type, pdf_to_base64
 
 
 TVA_CODE_FALLBACK_BY_PERCENT = {
+    Decimal("1.05"): "TVA20",
+    Decimal("2.1"): "TVA7",
+    Decimal("5"): "TV20",
+    Decimal("5.5"): "TVA8",
+    Decimal("7"): "TVA9",
+    Decimal("8.5"): "TVA4",
+    Decimal("10"): "TV10",
+    Decimal("13"): "TV11",
+    Decimal("16"): "TV21",
+    Decimal("19.6"): "TVA5",
     Decimal("20"): "TV12",
+    Decimal("20.6"): "TV13",
 }
 
 
@@ -274,6 +285,22 @@ class ChorusClient:
         )
         return body.get("listeServices", []) if isinstance(body, dict) else []
 
+    def download_destinataires_annuaire(self) -> Any:
+        return self._post_json(
+            "/transverses/v1/telecharger/annuaire/destinataire",
+            {},
+            "Téléchargement de l'annuaire destinataires",
+        )
+
+    def consult_siret_information(self, siret_structure: str) -> Any:
+        return self._post_json(
+            "/transverses/v1/consulter/information/siret",
+            {
+                "siretStructure": siret_structure,
+            },
+            "Consultation des informations SIRET",
+        )
+
     def resolve_recipient_and_service(
         self,
         code_destinataire: str,
@@ -422,4 +449,11 @@ class ChorusClient:
             "/factures/v1/soumettre",
             payload,
             "Soumission de la facture",
+        )
+
+    def search_supplier_invoices(self, payload: dict[str, Any]) -> Any:
+        return self._post_json(
+            "/factures/v1/rechercher/fournisseur",
+            payload,
+            "Recherche des factures fournisseur",
         )

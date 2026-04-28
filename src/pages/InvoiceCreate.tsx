@@ -46,6 +46,10 @@ function formatExtractedAmountForDisplay(value?: number): string | undefined {
   return value.toFixed(2).replace('.', ',');
 }
 
+function normalizeReferenceLookup(value?: string): string {
+  return value?.trim().replace(/\s/g, '').toLowerCase() ?? '';
+}
+
 function ExtractionInfoRow({ label, value }: { label: string; value?: string }) {
   return (
     <div className="rounded-lg border bg-muted/20 p-3">
@@ -169,9 +173,20 @@ export default function InvoiceCreate() {
 
   const rawChorusConfig = loadChorusConfig();
   const chorusConfig = resolveChorusRuntimeConfig(rawChorusConfig);
-  const services = formData.publicCustomerId ? publicServices.filter((service) => service.publicCustomerId === formData.publicCustomerId && service.active) : [];
   const selectedSupplier = suppliers.find((supplier) => supplier.id === formData.supplierOrganizationId);
-  const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === formData.publicCustomerId);
+  const typedPublicCustomerCode = normalizeReferenceLookup(formData.publicCustomerCode);
+  const selectedPublicCustomer = publicCustomers.find((customer) => customer.id === formData.publicCustomerId)
+    ?? publicCustomers.find((customer) => {
+      if (!typedPublicCustomerCode) {
+        return false;
+      }
+
+      return normalizeReferenceLookup(customer.codeDestinataire) === typedPublicCustomerCode
+        || normalizeReferenceLookup(customer.siret) === typedPublicCustomerCode;
+    });
+  const services = selectedPublicCustomer
+    ? publicServices.filter((service) => service.publicCustomerId === selectedPublicCustomer.id && service.active)
+    : [];
   const selectedPublicService = publicServices.find((service) => service.id === formData.publicServiceId);
   const detectedSupplierName = selectedSupplier?.legalName || extractionResult?.fields.supplierName;
   const detectedPublicCustomerName = selectedPublicCustomer?.legalName || extractionResult?.fields.publicCustomerName;
@@ -193,6 +208,7 @@ export default function InvoiceCreate() {
     supplier: selectedSupplier,
     publicCustomer: selectedPublicCustomer,
     publicService: selectedPublicService,
+    availableServices: services,
     extraction: extractionResult,
     chorus: chorusTechnicalContext,
     mainFileName: mainFile?.name,
@@ -201,6 +217,7 @@ export default function InvoiceCreate() {
     selectedSupplier,
     selectedPublicCustomer,
     selectedPublicService,
+    services,
     extractionResult,
     chorusTechnicalContext,
     mainFile,
@@ -905,9 +922,9 @@ export default function InvoiceCreate() {
             </div>
             <div className="space-y-2">
               <Label>Service destinataire</Label>
-              <Select value={formData.publicServiceId} onValueChange={(value) => setFormData((current) => ({ ...current, publicServiceId: value }))} disabled={!formData.publicCustomerId}>
+              <Select value={formData.publicServiceId} onValueChange={(value) => setFormData((current) => ({ ...current, publicServiceId: value }))} disabled={!selectedPublicCustomer}>
                 <SelectTrigger>
-                  <SelectValue placeholder={formData.publicCustomerId ? 'Sélectionner...' : 'Choisir un client d\'abord'} />
+                  <SelectValue placeholder={selectedPublicCustomer ? 'Sélectionner...' : 'Choisir un client d\'abord'} />
                 </SelectTrigger>
                 <SelectContent>
                   {services.map(s => <SelectItem key={s.id} value={s.id}>{s.codeServiceExecutant} — {s.label}</SelectItem>)}

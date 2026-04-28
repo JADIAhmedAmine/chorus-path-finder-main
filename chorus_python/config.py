@@ -72,7 +72,7 @@ class ChorusFixedValues:
     devise_facture: str = "EUR"
     mode_paiement: str = "VIREMENT"
     type_facture: str = "FACTURE"
-    type_tva: str = "TVA_SUR_ENCAISSEMENT"
+    type_tva: str = "TVA_SUR_DEBIT"
 
 
 @dataclass(slots=True)

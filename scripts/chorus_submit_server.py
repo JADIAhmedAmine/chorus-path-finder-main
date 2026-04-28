@@ -15,8 +15,8 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Dépendances minimales nécessaires pour le bridge + extraction Docling
-REQUIRED_MODULES = ("requests", "fitz")
+# Dépendances minimales nécessaires pour le bridge + extraction PDF
+REQUIRED_MODULES = ("requests", "fitz", "pdfplumber")
 
 
 def _module_available(module_name: str) -> bool:
@@ -90,6 +90,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from chorus_python import ChorusSubmissionService, load_chorus_settings
+from chorus_python.annuaire import build_annuaire_files_from_api_response, relative_to_repo
+from chorus_python.client import ChorusClient
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
 
 
@@ -97,6 +99,92 @@ HOST = "127.0.0.1"
 PORT = 8008
 SUBMIT_PATH = "/api/chorus/submit"
 EXTRACT_PDF_PATH = "/api/extract-pdf-text"
+SYNC_ANNUAIRE_PATH = "/api/chorus/annuaire/sync"
+SIRET_INFO_PATH = "/api/chorus/siret/info"
+SUPPLIER_INVOICES_SEARCH_PATH = "/api/chorus/invoices/supplier/search"
+
+
+def _as_positive_int(value: Any) -> int | None:
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, float) and value.is_integer() and value > 0:
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = int(value)
+        except ValueError:
+            return None
+        return parsed if parsed > 0 else None
+    return None
+
+
+def _build_supplier_invoice_search_payload(
+    *,
+    supplier_id: int,
+    page_size: int,
+) -> dict[str, Any]:
+    return {
+        "cadreFacturation": "A1_FACTURE_FOURNISSEUR",
+        "idFournisseur": supplier_id,
+        "rechercheFactureParFournisseur": {
+            "nbResultatsMaximum": page_size,
+            "nbResultatsParPage": page_size,
+            "triColonne": "TypeDemandePaiement",
+            "triSens": "Descendant",
+        },
+        "typeFacture": "FACTURE",
+    }
+
+
+def _deep_find_first_list(value: Any, candidate_keys: set[str]) -> list[Any]:
+    if isinstance(value, dict):
+        for key, nested_value in value.items():
+            if key in candidate_keys and isinstance(nested_value, list):
+                return nested_value
+
+        for nested_value in value.values():
+            nested_result = _deep_find_first_list(nested_value, candidate_keys)
+            if nested_result:
+                return nested_result
+
+    if isinstance(value, list):
+        return value
+
+    return []
+
+
+def _extract_supplier_invoice_items(response_body: Any) -> list[Any]:
+    return _deep_find_first_list(
+        response_body,
+        {
+            "factures",
+            "listeFacture",
+            "listeFactures",
+            "listeDemandePaiement",
+            "listeDemandesPaiement",
+            "demandesPaiement",
+            "resultats",
+            "results",
+            "items",
+            "data",
+        },
+    )
+
+
+def _extract_supplier_invoice_total(response_body: Any, fallback: int) -> int:
+    if isinstance(response_body, dict):
+        parametres_retour = response_body.get("parametresRetour")
+        if isinstance(parametres_retour, dict):
+            total = _as_positive_int(parametres_retour.get("total"))
+            if total is not None:
+                return total
+
+        for key in ("total", "nbTotalResultats", "nombreTotalResultats"):
+            total = _as_positive_int(response_body.get(key))
+            if total is not None:
+                return total
+
+    return fallback
 
 
 def _extract_external_id(response: Any) -> str | None:
@@ -160,6 +248,18 @@ class ChorusSubmitHandler(BaseHTTPRequestHandler):
 
         if self.path == SUBMIT_PATH:
             self._handle_submit()
+            return
+
+        if self.path == SYNC_ANNUAIRE_PATH:
+            self._handle_sync_annuaire()
+            return
+
+        if self.path == SIRET_INFO_PATH:
+            self._handle_siret_info()
+            return
+
+        if self.path == SUPPLIER_INVOICES_SEARCH_PATH:
+            self._handle_supplier_invoice_search()
             return
 
         self._write_json(
@@ -255,6 +355,232 @@ class ChorusSubmitHandler(BaseHTTPRequestHandler):
                 {
                     "ok": False,
                     "error": f"Erreur lors de l'extraction PDF: {error}",
+                },
+            )
+
+    def _handle_supplier_invoice_search(self) -> None:
+        try:
+            body = self._read_json_body()
+        except Exception as error:  # noqa: BLE001
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "error": f"JSON invalide: {error}",
+                },
+            )
+            return
+
+        started_at = perf_counter()
+        self._debug("Recherche factures fournisseur start")
+
+        try:
+            settings = load_chorus_settings()
+            client = ChorusClient(settings)
+            supplier_id = (
+                _as_positive_int(body.get("idFournisseur"))
+                or _as_positive_int(settings.default_supplier_id)
+                or 26359578
+            )
+
+            initial_payload = _build_supplier_invoice_search_payload(
+                supplier_id=supplier_id,
+                page_size=2,
+            )
+            initial_response = client.search_supplier_invoices(initial_payload)
+            initial_items = _extract_supplier_invoice_items(initial_response)
+            total = _extract_supplier_invoice_total(initial_response, len(initial_items))
+            page_size = total if total > 0 else 2
+
+            if total > len(initial_items) or page_size > len(initial_items):
+                final_payload = _build_supplier_invoice_search_payload(
+                    supplier_id=supplier_id,
+                    page_size=page_size,
+                )
+                final_response = client.search_supplier_invoices(final_payload)
+            else:
+                final_payload = initial_payload
+                final_response = initial_response
+
+            invoices = _extract_supplier_invoice_items(final_response)
+            total = _extract_supplier_invoice_total(final_response, total or len(invoices))
+            requested_page_size = final_payload["rechercheFactureParFournisseur"]["nbResultatsParPage"]
+            duration_ms = round((perf_counter() - started_at) * 1000)
+            self._debug(
+                "Recherche factures fournisseur success: supplier=%s, total=%s, returned=%s, duration=%s ms",
+                supplier_id,
+                total,
+                len(invoices),
+                duration_ms,
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "idFournisseur": supplier_id,
+                    "total": total,
+                    "returned": len(invoices),
+                    "requestedPageSize": requested_page_size,
+                    "payload": final_payload,
+                    "invoices": invoices,
+                    "rawResponse": final_response,
+                    "initialResponse": initial_response,
+                    "apiCalls": client.api_calls,
+                },
+            )
+        except Exception as error:  # noqa: BLE001
+            message = str(error) or error.__class__.__name__
+            api_calls = list(client.api_calls) if "client" in locals() else []
+            duration_ms = round((perf_counter() - started_at) * 1000)
+            self._debug(
+                "Recherche factures fournisseur error: duration=%s ms, error=%s",
+                duration_ms,
+                message,
+            )
+            self._write_json(
+                HTTPStatus.BAD_GATEWAY,
+                {
+                    "ok": False,
+                    "error": message,
+                    "apiCalls": api_calls,
+                },
+            )
+
+    def _handle_siret_info(self) -> None:
+        try:
+            body = self._read_json_body()
+        except Exception as error:  # noqa: BLE001
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "error": f"JSON invalide: {error}",
+                },
+            )
+            return
+
+        raw_siret = body.get("siretStructure") or body.get("siret")
+        if not isinstance(raw_siret, str) or not raw_siret.strip():
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "error": "Le champ siretStructure est obligatoire.",
+                },
+            )
+            return
+
+        siret_structure = "".join(character for character in raw_siret if character.isdigit())
+        if not siret_structure:
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "error": "Le champ siretStructure doit contenir des chiffres.",
+                },
+            )
+            return
+
+        started_at = perf_counter()
+        self._debug("Consultation SIRET start: siret=%s", siret_structure)
+
+        try:
+            settings = load_chorus_settings()
+            client = ChorusClient(settings)
+            response_body = client.consult_siret_information(siret_structure)
+            duration_ms = round((perf_counter() - started_at) * 1000)
+            self._debug(
+                "Consultation SIRET success: siret=%s, duration=%s ms",
+                siret_structure,
+                duration_ms,
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "siretStructure": siret_structure,
+                    "info": response_body,
+                    "apiCalls": client.api_calls,
+                },
+            )
+        except Exception as error:  # noqa: BLE001
+            message = str(error) or error.__class__.__name__
+            api_calls = list(client.api_calls) if "client" in locals() else []
+            duration_ms = round((perf_counter() - started_at) * 1000)
+            self._debug(
+                "Consultation SIRET error: siret=%s, duration=%s ms, error=%s",
+                siret_structure,
+                duration_ms,
+                message,
+            )
+            self._write_json(
+                HTTPStatus.BAD_GATEWAY,
+                {
+                    "ok": False,
+                    "error": message,
+                    "apiCalls": api_calls,
+                },
+            )
+
+    def _handle_sync_annuaire(self) -> None:
+        try:
+            self._read_json_body()
+        except Exception as error:  # noqa: BLE001
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "ok": False,
+                    "error": f"JSON invalide: {error}",
+                },
+            )
+            return
+
+        started_at = perf_counter()
+        self._debug("Synchronisation annuaire start")
+
+        try:
+            settings = load_chorus_settings()
+            client = ChorusClient(settings)
+            response_body = client.download_destinataires_annuaire()
+            build_result = build_annuaire_files_from_api_response(response_body)
+            metadata = build_result.payload.get("metadata", {})
+            duration_ms = round((perf_counter() - started_at) * 1000)
+            self._debug(
+                "Synchronisation annuaire success: structures=%s, services=%s, duration=%s ms",
+                metadata.get("structureCount"),
+                metadata.get("serviceCount"),
+                duration_ms,
+            )
+            self._write_json(
+                HTTPStatus.OK,
+                {
+                    "ok": True,
+                    "codeRetour": response_body.get("codeRetour") if isinstance(response_body, dict) else None,
+                    "libelle": response_body.get("libelle") if isinstance(response_body, dict) else None,
+                    "generatedAt": metadata.get("generatedAt"),
+                    "sourceFile": metadata.get("sourceFile"),
+                    "structureCount": metadata.get("structureCount", 0),
+                    "serviceCount": metadata.get("serviceCount", 0),
+                    "jsonPath": relative_to_repo(build_result.json_path),
+                    "xmlPath": relative_to_repo(build_result.xml_path),
+                    "apiCalls": client.api_calls,
+                },
+            )
+        except Exception as error:  # noqa: BLE001
+            message = str(error) or error.__class__.__name__
+            api_calls = list(client.api_calls) if "client" in locals() else []
+            duration_ms = round((perf_counter() - started_at) * 1000)
+            self._debug(
+                "Synchronisation annuaire error: duration=%s ms, error=%s",
+                duration_ms,
+                message,
+            )
+            self._write_json(
+                HTTPStatus.BAD_GATEWAY,
+                {
+                    "ok": False,
+                    "error": message,
+                    "apiCalls": api_calls,
                 },
             )
 
@@ -383,6 +709,9 @@ def main() -> int:
     print(f"Bridge listening on http://{HOST}:{PORT}")
     print(f"  - Submit:      {SUBMIT_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")
+    print(f"  - Annuaire:    {SYNC_ANNUAIRE_PATH}")
+    print(f"  - SIRET info:  {SIRET_INFO_PATH}")
+    print(f"  - Invoices:    {SUPPLIER_INVOICES_SEARCH_PATH}")
 
     server = ThreadingHTTPServer((HOST, PORT), ChorusSubmitHandler)
 

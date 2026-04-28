@@ -244,6 +244,7 @@ export async function submitInvoiceFromDetail(invoiceId: string): Promise<Chorus
     supplier,
     publicCustomer,
     publicService,
+    availableServices: publicService ? [publicService] : [],
     extraction: null,
   });
 
@@ -251,6 +252,7 @@ export async function submitInvoiceFromDetail(invoiceId: string): Promise<Chorus
     supplier,
     publicCustomer,
     publicService,
+    availableServices: publicService ? [publicService] : [],
     chorus: chorusTechnicalContext,
     mainFileName: attachments.find((attachment) => attachment.attachmentRole === 'MAIN')?.filename,
   });
