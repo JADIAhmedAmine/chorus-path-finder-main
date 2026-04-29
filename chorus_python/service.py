@@ -17,6 +17,9 @@ from .soumission import (
 )
 
 
+DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = "DIVERS"
+
+
 def mode_depot_for_pdf(is_signed: bool) -> str:
     return SIGNED_PDF_MODE_DEPOT if is_signed else DEFAULT_MODE_DEPOT
 
@@ -148,17 +151,32 @@ class ChorusSubmissionService:
             existing_additional_attachments = []
 
         for attachment in attachments or []:
+            designation = str(attachment.get("designation") or attachment["name"]).strip()
+            attachment_payload: dict[str, Any] = {
+                "pieceJointeComplementaireDesignation": designation,
+            }
+            attachment_type = attachment.get("type")
+            attachment_payload["pieceJointeComplementaireType"] = (
+                attachment_type.strip()
+                if isinstance(attachment_type, str) and attachment_type.strip()
+                else DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE
+            )
+
+            line_number = attachment.get("lineNumber")
+            if line_number not in (None, ""):
+                attachment_payload["pieceJointeComplementaireNumeroLigneFacture"] = int(line_number)
+
+            liaison_id = attachment.get("liaisonId")
+            if liaison_id not in (None, ""):
+                attachment_payload["pieceJointeComplementaireIdLiaison"] = int(liaison_id)
+
             upload_result = self.client.upload_attachment_content(
                 file_name=str(attachment["name"]),
                 file_base64=str(attachment["base64"]),
                 mime_type=str(attachment.get("mimeType") or "application/octet-stream"),
             )
-            existing_additional_attachments.append(
-                {
-                    "pieceJointeComplementaireDesignation": str(attachment["name"]),
-                    "pieceJointeComplementaireId": upload_result.piece_jointe_id,
-                }
-            )
+            attachment_payload["pieceJointeComplementaireId"] = upload_result.piece_jointe_id
+            existing_additional_attachments.append(attachment_payload)
             additional_uploads.append((attachment, upload_result))
 
         if existing_additional_attachments:
@@ -173,6 +191,7 @@ class ChorusSubmissionService:
                 {
                     "id": str(main_upload_result.piece_jointe_id),
                     "filename": str(main_file["name"]),
+                    "role": "MAIN",
                     "response": main_upload_result.response,
                 }
             )
@@ -181,6 +200,11 @@ class ChorusSubmissionService:
                 {
                     "id": str(upload_result.piece_jointe_id),
                     "filename": str(attachment["name"]),
+                    "role": "COMPLEMENTARY",
+                    "designation": str(attachment.get("designation") or attachment["name"]),
+                    "type": attachment.get("type"),
+                    "lineNumber": attachment.get("lineNumber"),
+                    "liaisonId": attachment.get("liaisonId"),
                     "response": upload_result.response,
                 }
             )

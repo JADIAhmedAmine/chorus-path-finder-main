@@ -78,6 +78,25 @@ def find_first_integer(value: Any, candidate_keys: tuple[str, ...]) -> int | Non
     return None
 
 
+def chorus_code_retour(value: Any) -> str | None:
+    if not isinstance(value, dict) or "codeRetour" not in value:
+        return None
+
+    code_retour = value.get("codeRetour")
+    if isinstance(code_retour, int):
+        return str(code_retour)
+    if isinstance(code_retour, str) and code_retour.strip():
+        return code_retour.strip()
+    return None
+
+
+def is_success_code_retour(value: str) -> bool:
+    try:
+        return int(value) == 0
+    except ValueError:
+        return False
+
+
 @dataclass(slots=True)
 class ChorusRecipientMatch:
     code_destinataire: str
@@ -194,6 +213,14 @@ class ChorusClient:
 
         if status_code >= 400:
             raise ChorusApiError(f"{label} échoué ({status_code}): {body}")
+
+        code_retour = chorus_code_retour(body)
+        if code_retour is not None and not is_success_code_retour(code_retour):
+            libelle = body.get("libelle") if isinstance(body, dict) else None
+            message = f"{label} refusé par Chorus: codeRetour={code_retour}"
+            if isinstance(libelle, str) and libelle.strip():
+                message += f", libelle={libelle.strip()}"
+            raise ChorusApiError(message)
 
         return body
 

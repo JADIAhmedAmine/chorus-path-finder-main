@@ -112,6 +112,31 @@ export default function Dashboard() {
       });
   }, [statusCounts]);
 
+  const statusAmounts = useMemo(() => {
+    const amounts = new Map<string, number>();
+
+    for (const invoice of invoices) {
+      const status = getInvoiceStatusLabel(invoice);
+      amounts.set(status, (amounts.get(status) ?? 0) + invoice.totalTtc);
+    }
+
+    return amounts;
+  }, [invoices]);
+
+  const amountPieData = useMemo(() => {
+    return [...statusAmounts.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .map(([status, value]) => {
+        const config = getChorusRawStatusConfig(status);
+        return {
+          name: config.label,
+          value,
+          count: statusCounts.get(status) ?? 0,
+          color: config.color,
+        };
+      });
+  }, [statusAmounts, statusCounts]);
+
   const barData = useMemo(() => {
     const counts = new Map<string, number>();
 
@@ -226,19 +251,19 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         <Card>
           <CardHeader><CardTitle className="text-base">Répartition par statut Chorus</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[220px]">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={3} dataKey="value">
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={0} dataKey="value" stroke="none" strokeWidth={0}>
                     {pieData.map((entry, index) => (
-                      <Cell key={index} fill={entry.color} />
+                      <Cell key={index} fill={entry.color} stroke="none" strokeWidth={0} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip formatter={(value) => [`${value} facture(s)`, 'Factures']} />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -250,6 +275,33 @@ export default function Dashboard() {
                 </div>
               ))}
               {pieData.length === 0 && <span className="text-sm text-muted-foreground">Aucun statut Chorus chargé</span>}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">Montant TTC par statut Chorus</CardTitle></CardHeader>
+          <CardContent>
+            <div className="h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={amountPieData} cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={0} dataKey="value" stroke="none" strokeWidth={0}>
+                    {amountPieData.map((entry, index) => (
+                      <Cell key={index} fill={entry.color} stroke="none" strokeWidth={0} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value) => [formatCurrency(Number(value)), 'Montant TTC']} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="flex flex-wrap gap-3 mt-2 justify-center">
+              {amountPieData.map((item) => (
+                <div key={item.name} className="flex items-center gap-1.5 text-xs">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                  {item.name} ({formatCurrency(item.value)})
+                </div>
+              ))}
+              {amountPieData.length === 0 && <span className="text-sm text-muted-foreground">Aucun montant Chorus chargé</span>}
             </div>
           </CardContent>
         </Card>

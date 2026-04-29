@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Badge } from '@/components/ui/badge';
 import { useAsyncResource } from '@/hooks/use-async-resource';
 import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
-import { Shield } from 'lucide-react';
+import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -88,12 +88,10 @@ export default function Login() {
       <Card className="w-full max-w-2xl">
         <CardHeader className="text-center space-y-4">
           <div className="flex justify-center">
-            <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
-              <Shield className="h-7 w-7 text-primary-foreground" />
-            </div>
+            <AppSymbol className="h-12 w-12 rounded-xl" />
           </div>
           <div>
-            <CardTitle className="text-xl">FacturX Pro</CardTitle>
+            <CardTitle className="text-xl">{APP_NAME}</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
               {existingSession ? 'Mettre à jour la session locale et le contexte Chorus' : 'Connexion locale et contexte utile au flux Chorus'}
             </p>

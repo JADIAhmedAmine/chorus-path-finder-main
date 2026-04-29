@@ -1,12 +1,13 @@
 import { useLocation, Link } from 'react-router-dom';
 import {
-  LayoutDashboard, FileText, Upload, Building2, Settings, Shield,
+  LayoutDashboard, FileText, Upload, Building2, Settings,
   Archive, Cog, ClipboardList, History, UserCircle2
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar,
 } from '@/components/ui/sidebar';
+import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
 
 const mainItems = [
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
@@ -59,8 +60,8 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <div className="flex h-14 items-center gap-2 px-4 border-b border-sidebar-border">
-        <Shield className="h-6 w-6 text-sidebar-primary shrink-0" />
-        {!collapsed && <span className="font-semibold text-sidebar-primary text-sm">FacturX Pro</span>}
+        <AppSymbol className="h-8 w-8 rounded-lg" />
+        {!collapsed && <span className="font-semibold text-sidebar-primary text-sm">{APP_NAME}</span>}
       </div>
       <SidebarContent>
         {renderGroup('Principal', mainItems)}

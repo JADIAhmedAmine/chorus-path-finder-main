@@ -9,9 +9,11 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye, FolderOpen } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
+import { ChorusApiReturnSummaryPanel } from '@/components/common/ChorusApiReturnSummaryPanel';
 import { getInvoice, getInvoiceAttachments } from '@/data/mock-data';
 import { ChorusSubmitApiError, createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
@@ -23,12 +25,43 @@ import { buildChorusTechnicalContext } from '@/lib/chorus/technicalContext';
 import { ChorusTransversesClient } from '@/lib/chorus/transversesClient';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
 import { buildChorusDebugFile } from '@/lib/chorus/debug';
+import { describeChorusSubmissionApiReturn, type ChorusApiReturnSummary } from '@/lib/chorus/submissionApiReturn';
 import {
   resolveAndHydrateChorusSubmissionPayload,
   type ChorusPayloadHydrationResult,
 } from '@/lib/chorus/hydrateSubmissionPayload';
 import type { InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
 import type { ChorusApiDebugEntry, ChorusSubmissionReferenceSnapshot, ChorusSubmitInvoiceResult } from '@/types/chorus';
+
+type BatchSubmissionStatus = 'pending' | 'extracting' | 'submitting' | 'success' | 'error';
+
+interface BatchSubmissionResult {
+  id: string;
+  file: File;
+  displayPath: string;
+  status: BatchSubmissionStatus;
+  message?: string;
+  invoiceNumber?: string;
+  externalId?: string;
+  summary?: ChorusApiReturnSummary | null;
+  apiCalls: ChorusApiDebugEntry[];
+}
+
+interface ComplementaryAttachmentDraft {
+  id: string;
+  file: File;
+  designation: string;
+  type: string;
+  lineNumber: string;
+  liaisonId: string;
+}
+
+const DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = 'DIVERS';
+const COMPLEMENTARY_ATTACHMENT_TYPES = [
+  { value: 'DIVERS', label: 'DIVERS - Pièce jointe complémentaire' },
+  { value: 'FACTURE_PDF', label: 'FACTURE_PDF - Facture PDF' },
+  { value: 'FACTURE_XML', label: 'FACTURE_XML - Facture XML' },
+] as const;
 
 function formatAmountForDisplay(value?: string): string {
   if (!value?.trim()) {
@@ -48,6 +81,80 @@ function formatExtractedAmountForDisplay(value?: number): string | undefined {
 
 function normalizeReferenceLookup(value?: string): string {
   return value?.trim().replace(/\s/g, '').toLowerCase() ?? '';
+}
+
+function isSupportedInvoiceFile(file: File): boolean {
+  const lowerName = file.name.toLowerCase();
+  return file.type === 'application/pdf'
+    || file.type === 'text/xml'
+    || lowerName.endsWith('.pdf')
+    || lowerName.endsWith('.xml');
+}
+
+function getFileDisplayPath(file: File): string {
+  const fileWithPath = file as File & { webkitRelativePath?: string };
+  return fileWithPath.webkitRelativePath || file.name;
+}
+
+function buildBatchResultId(file: File, index: number): string {
+  return `${file.name}-${file.size}-${file.lastModified}-${index}`;
+}
+
+function buildComplementaryAttachmentDraft(file: File, index: number): ComplementaryAttachmentDraft {
+  return {
+    id: `${file.name}-${file.size}-${file.lastModified}-${index}-${Date.now()}`,
+    file,
+    designation: file.name,
+    type: DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE,
+    lineNumber: '',
+    liaisonId: '',
+  };
+}
+
+function parseOptionalPositiveInteger(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function getBatchStatusLabel(status: BatchSubmissionStatus): string {
+  if (status === 'extracting') {
+    return 'Extraction';
+  }
+
+  if (status === 'submitting') {
+    return 'Soumission';
+  }
+
+  if (status === 'success') {
+    return 'Réussie';
+  }
+
+  if (status === 'error') {
+    return 'Échec';
+  }
+
+  return 'En attente';
+}
+
+function getBatchStatusBadgeVariant(status: BatchSubmissionStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'success') {
+    return 'default';
+  }
+
+  if (status === 'error') {
+    return 'destructive';
+  }
+
+  if (status === 'pending') {
+    return 'outline';
+  }
+
+  return 'secondary';
 }
 
 function ExtractionInfoRow({ label, value }: { label: string; value?: string }) {
@@ -132,7 +239,7 @@ export default function InvoiceCreate() {
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const [mainFile, setMainFile] = useState<File | null>(null);
-  const [attachments, setAttachments] = useState<File[]>([]);
+  const [attachments, setAttachments] = useState<ComplementaryAttachmentDraft[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [formData, setFormData] = useState<InvoiceDraftFormData>(createEmptyInvoiceDraft);
   const [extracting, setExtracting] = useState(false);
@@ -151,11 +258,17 @@ export default function InvoiceCreate() {
   const [showOptionalExtractionInfo, setShowOptionalExtractionInfo] = useState(false);
   const [showOptionalMetadata, setShowOptionalMetadata] = useState(false);
   const [showAdvancedTools, setShowAdvancedTools] = useState(false);
+  const [showSubmissionApiReturn, setShowSubmissionApiReturn] = useState(false);
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
+  const [batchResults, setBatchResults] = useState<BatchSubmissionResult[]>([]);
+  const [batchSubmitting, setBatchSubmitting] = useState(false);
+  const [batchCurrentFile, setBatchCurrentFile] = useState<string | null>(null);
   const [prefilledInvoiceId, setPrefilledInvoiceId] = useState<string | null>(null);
   const [skipNextExtraction, setSkipNextExtraction] = useState(false);
   const treatmentDetailsRef = useRef<HTMLDivElement | null>(null);
   const submissionErrorRef = useRef<HTMLDivElement | null>(null);
   const submissionResultRef = useRef<HTMLDivElement | null>(null);
+  const batchFolderInputRef = useRef<HTMLInputElement | null>(null);
   const editingInvoiceId = searchParams.get('invoiceId');
   const {
     suppliers,
@@ -234,6 +347,16 @@ export default function InvoiceCreate() {
     () => lastApiCalls.filter((apiCall) => apiCall.url.includes('/v1/soumettre')),
     [lastApiCalls],
   );
+  const submissionApiReturnSummary = useMemo(
+    () => describeChorusSubmissionApiReturn(lastSubmissionResult?.response, lastApiCalls),
+    [lastSubmissionResult?.response, lastApiCalls],
+  );
+  const batchSummary = useMemo(() => ({
+    total: batchResults.length,
+    success: batchResults.filter((result) => result.status === 'success').length,
+    error: batchResults.filter((result) => result.status === 'error').length,
+    running: batchResults.filter((result) => result.status === 'extracting' || result.status === 'submitting').length,
+  }), [batchResults]);
   const debugSnapshot = useMemo(() => JSON.stringify({
     chorusConfig: {
       mode: chorusConfig.mode,
@@ -286,6 +409,12 @@ export default function InvoiceCreate() {
         ? `Soumission verrouillée : ${blockingIssues[0] ?? 'des champs obligatoires restent incomplets.'}`
         : undefined;
   const isSubmissionBlocked = extracting || submitting || hasBlockingSubmissionAlerts;
+
+  const updateBatchResult = useCallback((id: string, patch: Partial<BatchSubmissionResult>) => {
+    setBatchResults((currentResults) => currentResults.map((result) => (
+      result.id === id ? { ...result, ...patch } : result
+    )));
+  }, []);
 
   const handleViewTreatmentDetails = useCallback(() => {
     const target = treatmentDetailsRef.current
@@ -358,6 +487,16 @@ export default function InvoiceCreate() {
       cancelled = true;
     };
   }, [mainFile, suppliers, publicCustomers, publicServices]);
+
+  useEffect(() => {
+    const folderInput = batchFolderInputRef.current;
+    if (!folderInput) {
+      return;
+    }
+
+    folderInput.setAttribute('webkitdirectory', '');
+    folderInput.setAttribute('directory', '');
+  }, []);
 
   useEffect(() => {
     if (!editingInvoiceId || prefilledInvoiceId === editingInvoiceId) {
@@ -471,6 +610,167 @@ export default function InvoiceCreate() {
     }
   }, []);
 
+  const handleBatchFilesSelected = useCallback((fileList: FileList | null) => {
+    const selectedFiles = Array.from(fileList ?? [])
+      .filter(isSupportedInvoiceFile)
+      .sort((left, right) => getFileDisplayPath(left).localeCompare(getFileDisplayPath(right)));
+
+    setBatchFiles(selectedFiles);
+    setBatchResults([]);
+    setBatchCurrentFile(null);
+
+    if (fileList && selectedFiles.length === 0) {
+      toast({
+        title: 'Aucune facture compatible',
+        description: 'Sélectionnez des fichiers PDF ou XML.',
+        variant: 'destructive',
+      });
+    }
+  }, [toast]);
+
+  const handleBatchSubmit = async () => {
+    if (batchFiles.length === 0) {
+      toast({
+        title: 'Lot vide',
+        description: 'Ajoutez plusieurs factures ou un dossier contenant des PDF/XML avant de lancer le lot.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const initialResults = batchFiles.map((file, index): BatchSubmissionResult => ({
+      id: buildBatchResultId(file, index),
+      file,
+      displayPath: getFileDisplayPath(file),
+      status: 'pending',
+      apiCalls: [],
+    }));
+
+    setBatchResults(initialResults);
+    setBatchSubmitting(true);
+    setBatchCurrentFile(null);
+
+    const connector = createChorusConnector(chorusConfig);
+
+    for (const batchItem of initialResults) {
+      setBatchCurrentFile(batchItem.displayPath);
+      updateBatchResult(batchItem.id, { status: 'extracting', message: 'Extraction des champs facture.' });
+
+      try {
+        const extraction = await extractInvoiceData(batchItem.file, {
+          suppliers,
+          publicCustomers,
+          publicServices,
+        });
+        const batchDraft = mergeExtractionIntoDraft({
+          ...createEmptyInvoiceDraft(),
+          supplierOrganizationId: formData.supplierOrganizationId,
+          supplierSiret: formData.supplierSiret,
+          publicCustomerId: formData.publicCustomerId,
+          publicCustomerCode: formData.publicCustomerCode,
+          publicServiceId: formData.publicServiceId,
+          publicServiceCode: formData.publicServiceCode,
+          currencyCode: formData.currencyCode || 'EUR',
+        }, extraction);
+        const batchSupplier = suppliers.find((supplier) => supplier.id === batchDraft.supplierOrganizationId);
+        const typedBatchPublicCustomerCode = normalizeReferenceLookup(batchDraft.publicCustomerCode);
+        const batchPublicCustomer = publicCustomers.find((customer) => customer.id === batchDraft.publicCustomerId)
+          ?? publicCustomers.find((customer) => {
+            if (!typedBatchPublicCustomerCode) {
+              return false;
+            }
+
+            return normalizeReferenceLookup(customer.codeDestinataire) === typedBatchPublicCustomerCode
+              || normalizeReferenceLookup(customer.siret) === typedBatchPublicCustomerCode;
+          });
+        const batchAvailableServices = batchPublicCustomer
+          ? publicServices.filter((service) => service.publicCustomerId === batchPublicCustomer.id && service.active)
+          : [];
+        const batchPublicService = publicServices.find((service) => service.id === batchDraft.publicServiceId);
+        const batchPreparation = prepareInvoiceSubmission({
+          formData: batchDraft,
+          supplier: batchSupplier,
+          publicCustomer: batchPublicCustomer,
+          publicService: batchPublicService,
+          availableServices: batchAvailableServices,
+          extraction,
+        });
+
+        if (batchPreparation.validation.errors.length > 0) {
+          throw new Error(batchPreparation.validation.errors[0]?.message || 'Facture incomplète pour la soumission.');
+        }
+
+        let payloadForBatchSubmission = buildInvoiceSubmissionPayload(batchDraft, {
+          supplier: batchSupplier,
+          publicCustomer: batchPublicCustomer,
+          publicService: batchPublicService,
+          availableServices: batchAvailableServices,
+          extraction,
+          chorus: chorusTechnicalContext,
+          mainFileName: batchItem.file.name,
+        });
+        let validationForBatchSubmission = validateChorusSubmissionPayload(payloadForBatchSubmission);
+
+        if (isDirectMode) {
+          try {
+            const transverseClient = new ChorusTransversesClient(chorusConfig);
+            const hydrationResult = await resolveAndHydrateChorusSubmissionPayload(
+              transverseClient,
+              payloadForBatchSubmission,
+              batchPreparation.normalized,
+            );
+            payloadForBatchSubmission = hydrationResult.payload;
+            validationForBatchSubmission = hydrationResult.validation;
+          } catch {
+            validationForBatchSubmission = validateChorusSubmissionPayload(payloadForBatchSubmission);
+          }
+        }
+
+        if (!validationForBatchSubmission.valid) {
+          throw new Error(validationForBatchSubmission.errors[0]?.message || 'Payload Chorus invalide.');
+        }
+
+        updateBatchResult(batchItem.id, {
+          status: 'submitting',
+          invoiceNumber: payloadForBatchSubmission.numeroFactureSaisi,
+          message: 'Envoi à Chorus en cours.',
+        });
+
+        const result = await connector.submitInvoice({
+          invoiceData: payloadForBatchSubmission,
+          mainFile: batchItem.file,
+          attachments: [],
+        });
+        const summary = describeChorusSubmissionApiReturn(result.response, result.apiCalls);
+
+        updateBatchResult(batchItem.id, {
+          status: 'success',
+          message: result.externalId ? `Référence retournée: ${result.externalId}` : 'Soumission acceptée.',
+          invoiceNumber: payloadForBatchSubmission.numeroFactureSaisi,
+          externalId: result.externalId,
+          summary,
+          apiCalls: result.apiCalls,
+        });
+      } catch (error) {
+        const apiCalls = error instanceof ChorusSubmitApiError ? error.apiCalls : [];
+        const summary = describeChorusSubmissionApiReturn(undefined, apiCalls);
+        updateBatchResult(batchItem.id, {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Erreur inconnue pendant la soumission.',
+          summary,
+          apiCalls,
+        });
+      }
+    }
+
+    setBatchSubmitting(false);
+    setBatchCurrentFile(null);
+    toast({
+      title: 'Soumission par lot terminée',
+      description: 'Le résultat est disponible dans le tableau dédié.',
+    });
+  };
+
   const handleSubmit = async (options?: { forceDebug?: boolean }) => {
     const forceDebug = options?.forceDebug === true;
     if (!mainFile) {
@@ -543,7 +843,13 @@ export default function InvoiceCreate() {
       const result = await connector.submitInvoice({
         invoiceData: payloadForSubmission,
         mainFile,
-        attachments,
+        attachments: attachments.map((attachment) => ({
+          file: attachment.file,
+          designation: attachment.designation.trim() || attachment.file.name,
+          type: attachment.type.trim() || DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE,
+          lineNumber: parseOptionalPositiveInteger(attachment.lineNumber),
+          liaisonId: parseOptionalPositiveInteger(attachment.liaisonId),
+        })),
         debugBypassValidation: forceDebug,
       });
       setLastSubmissionResult(result);
@@ -552,8 +858,8 @@ export default function InvoiceCreate() {
       toast({
         title: chorusConfig.mode === 'mock' ? 'Facture mockée' : 'Facture envoyée à Chorus',
         description: result.externalId
-          ? `Référence retournée: ${result.externalId}. Les détails de traitement sont affichés ci-dessous.`
-          : 'La facture a été transmise. Les détails de traitement sont affichés ci-dessous.',
+          ? `Référence retournée: ${result.externalId}. Le résultat est affiché dans le bloc dédié.`
+          : 'La facture a été transmise. Le résultat est affiché dans le bloc dédié.',
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inconnue';
@@ -695,26 +1001,100 @@ export default function InvoiceCreate() {
 
       {showAdvancedTools && (
         <Card>
-          <CardHeader><CardTitle className="text-base">Pièces jointes complémentaires</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-base">Pièces jointes complémentaires</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Chaque fichier est téléversé avant la soumission pour récupérer son identifiant Chorus, puis l’ajouter à `pieceJointeComplementaire`.
+            </p>
+          </CardHeader>
           <CardContent>
             <div className="space-y-3">
               {attachments.length === 0 && (
                 <p className="text-sm text-muted-foreground">Aucune pièce complémentaire ajoutée.</p>
               )}
-              {attachments.map((file, i) => (
-                <div key={i} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <FileText className="h-5 w-5 text-muted-foreground" />
-                    <span className="text-sm">{file.name}</span>
+              {attachments.map((attachment) => (
+                <div key={attachment.id} className="space-y-3 rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{attachment.file.name}</p>
+                        <p className="text-xs text-muted-foreground">{(attachment.file.size / 1024).toFixed(0)} Ko</p>
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setAttachments((prev) => prev.filter((item) => item.id !== attachment.id))}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <Button variant="ghost" size="sm" onClick={() => setAttachments(prev => prev.filter((_, j) => j !== i))}><X className="h-4 w-4" /></Button>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Désignation Chorus</Label>
+                      <Input
+                        value={attachment.designation}
+                        onChange={(event) => setAttachments((prev) => prev.map((item) => (
+                          item.id === attachment.id ? { ...item, designation: event.target.value } : item
+                        )))}
+                        placeholder={attachment.file.name}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Type</Label>
+                      <Select
+                        value={attachment.type}
+                        onValueChange={(value) => setAttachments((prev) => prev.map((item) => (
+                          item.id === attachment.id ? { ...item, type: value } : item
+                        )))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {COMPLEMENTARY_ATTACHMENT_TYPES.map((type) => (
+                            <SelectItem key={type.value} value={type.value}>
+                              {type.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>N° ligne</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={attachment.lineNumber}
+                        onChange={(event) => setAttachments((prev) => prev.map((item) => (
+                          item.id === attachment.id ? { ...item, lineNumber: event.target.value } : item
+                        )))}
+                        placeholder="Optionnel"
+                      />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>ID liaison</Label>
+                      <Input
+                        inputMode="numeric"
+                        value={attachment.liaisonId}
+                        onChange={(event) => setAttachments((prev) => prev.map((item) => (
+                          item.id === attachment.id ? { ...item, liaisonId: event.target.value } : item
+                        )))}
+                        placeholder="Optionnel"
+                      />
+                    </div>
+                  </div>
                 </div>
               ))}
               <Button variant="outline" onClick={() => document.getElementById('att-upload')?.click()}>
                 <Upload className="mr-2 h-4 w-4" /> Ajouter un fichier
               </Button>
               <input id="att-upload" type="file" className="hidden" multiple onChange={e => {
-                if (e.target.files) setAttachments(prev => [...prev, ...Array.from(e.target.files)]);
+                if (e.target.files) {
+                  const nextAttachments = Array.from(e.target.files).map((file, index) => buildComplementaryAttachmentDraft(file, index));
+                  setAttachments(prev => [...prev, ...nextAttachments]);
+                  e.target.value = '';
+                }
               }} />
             </div>
           </CardContent>
@@ -1229,29 +1609,330 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
-      {hasTreatmentDetails && (
-      <div ref={treatmentDetailsRef} className="space-y-4">
-        {lastSubmissionError && (
-          <div ref={submissionErrorRef}>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle className="text-base">Soumission par lot</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Ajoutez plusieurs factures ou un dossier complet, puis suivez le résultat facture par facture.
+              </p>
+            </div>
+            <Badge variant={batchSubmitting ? 'secondary' : 'outline'}>
+              {batchSubmitting ? 'Lot en cours' : `${batchFiles.length} fichier(s)`}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => document.getElementById('batch-files-upload')?.click()}
+              disabled={batchSubmitting}
+            >
+              <Upload className="mr-2 h-4 w-4" />
+              Ajouter des factures
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => document.getElementById('batch-folder-upload')?.click()}
+              disabled={batchSubmitting}
+            >
+              <FolderOpen className="mr-2 h-4 w-4" />
+              Ajouter un dossier
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleBatchSubmit()}
+              disabled={batchSubmitting || batchFiles.length === 0}
+            >
+              {batchSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              Lancer le lot
+            </Button>
+            {batchFiles.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => {
+                  setBatchFiles([]);
+                  setBatchResults([]);
+                  setBatchCurrentFile(null);
+                }}
+                disabled={batchSubmitting}
+              >
+                Vider
+              </Button>
+            )}
+            <input
+              id="batch-files-upload"
+              type="file"
+              multiple
+              className="hidden"
+              accept=".pdf,.xml,application/pdf,text/xml"
+              onChange={(event) => handleBatchFilesSelected(event.target.files)}
+            />
+            <input
+              id="batch-folder-upload"
+              ref={batchFolderInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              accept=".pdf,.xml,application/pdf,text/xml"
+              onChange={(event) => handleBatchFilesSelected(event.target.files)}
+            />
+          </div>
+
+          {batchCurrentFile && (
+            <Alert>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <AlertTitle>Traitement du lot</AlertTitle>
+              <AlertDescription>{batchCurrentFile}</AlertDescription>
+            </Alert>
+          )}
+
+          {batchFiles.length > 0 && batchResults.length === 0 && (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <p className="text-sm font-medium">Fichiers prêts pour le lot</p>
+              <div className="mt-3 max-h-48 space-y-2 overflow-auto">
+                {batchFiles.map((file, index) => (
+                  <div key={buildBatchResultId(file, index)} className="flex items-center justify-between gap-3 rounded-md border bg-background p-2">
+                    <span className="min-w-0 truncate text-sm">{getFileDisplayPath(file)}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} Ko</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {batchResults.length > 0 && (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium">Résultat du lot</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {batchSummary.success} réussie(s), {batchSummary.error} en échec, {batchSummary.running} en cours sur {batchSummary.total}.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="default">{batchSummary.success} OK</Badge>
+                  <Badge variant={batchSummary.error > 0 ? 'destructive' : 'outline'}>{batchSummary.error} KO</Badge>
+                </div>
+              </div>
+
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="p-2 text-left font-medium">Facture</th>
+                      <th className="p-2 text-left font-medium">Statut</th>
+                      <th className="p-2 text-left font-medium">N° facture</th>
+                      <th className="p-2 text-left font-medium">Référence</th>
+                      <th className="p-2 text-left font-medium">Retour</th>
+                      <th className="p-2 text-left font-medium">Message</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {batchResults.map((result) => (
+                      <tr key={result.id} className="border-b align-top">
+                        <td className="max-w-[220px] p-2">
+                          <p className="truncate font-medium">{result.displayPath}</p>
+                        </td>
+                        <td className="p-2">
+                          <Badge variant={getBatchStatusBadgeVariant(result.status)}>
+                            {getBatchStatusLabel(result.status)}
+                          </Badge>
+                        </td>
+                        <td className="p-2">{result.invoiceNumber || '-'}</td>
+                        <td className="p-2">{result.externalId || '-'}</td>
+                        <td className="p-2">
+                          <div className="flex flex-wrap gap-1">
+                            {result.summary?.httpStatus !== undefined && (
+                              <Badge variant="outline">HTTP {result.summary.httpStatus}</Badge>
+                            )}
+                            {result.summary?.codeRetour !== undefined && (
+                              <Badge variant={result.status === 'error' ? 'destructive' : 'outline'}>
+                                codeRetour {result.summary.codeRetour}
+                              </Badge>
+                            )}
+                            {result.summary?.statutFacture && (
+                              <Badge variant="secondary">{result.summary.statutFacture}</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="max-w-[280px] p-2 text-xs text-muted-foreground">
+                          {result.message || result.summary?.libelle || '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card ref={treatmentDetailsRef}>
+        <CardHeader>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <CardTitle className="text-base">Résultat de la soumission Chorus</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Le statut métier Chorus apparaît ici après chaque soumission.
+              </p>
+            </div>
+            {hasTreatmentDetails && (
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="show-submission-api-return"
+                  checked={showSubmissionApiReturn}
+                  onCheckedChange={setShowSubmissionApiReturn}
+                />
+                <Label htmlFor="show-submission-api-return" className="text-sm">
+                  Afficher retour API
+                </Label>
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!hasTreatmentDetails && (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <p className="text-sm font-medium">Aucune soumission lancée</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Le résultat de la prochaine soumission sera affiché dans cet espace.
+              </p>
+            </div>
+          )}
+
+          {lastSubmissionError && (
             <Alert variant="destructive">
               <TriangleAlert className="h-4 w-4" />
-              <AlertTitle>Dernière erreur Chorus</AlertTitle>
-              <AlertDescription>
-                <p>{lastSubmissionError}</p>
-                {lastSubmissionError.includes('Soumission Chorus échouée (500)') && (
-                  <p className="mt-2 text-xs">
-                    Le jeton OAuth2 et le bridge Python répondent. Le blocage restant est désormais côté soumission métier Chorus.
-                  </p>
-                )}
-              </AlertDescription>
+              <AlertTitle>Soumission échouée</AlertTitle>
+              <AlertDescription>{lastSubmissionError}</AlertDescription>
             </Alert>
-          </div>
-        )}
+          )}
+
+          {lastSubmissionResult && (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              <ExtractionInfoRow label="Traitement" value={lastSubmissionResult.ok ? 'Réussi' : 'Échoué'} />
+              <ExtractionInfoRow label="Référence Chorus" value={lastSubmissionResult.externalId} />
+              <ExtractionInfoRow label="Pièces jointes uploadées" value={String(lastSubmissionResult.uploadedFiles.length)} />
+            </div>
+          )}
+
+          {submissionApiReturnSummary && (
+            <ChorusApiReturnSummaryPanel summary={submissionApiReturnSummary} />
+          )}
+
+          {showSubmissionApiReturn && lastSubmissionResult && (
+            <div className="rounded-lg border bg-muted/20 p-4">
+              <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
+              <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                {JSON.stringify(lastSubmissionResult.response ?? null, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {showSubmissionApiReturn && lastApiCalls.length > 0 && (
+            <div className="space-y-3">
+              {lastApiCalls.map((apiCall, index) => (
+                <div key={`${apiCall.label}-${apiCall.url}-dedicated-${index}`} className="rounded-lg border bg-muted/20 p-4">
+                  <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <p className="text-sm font-medium">{apiCall.label}</p>
+                    <span className="text-xs text-muted-foreground">{apiCall.method} · HTTP {apiCall.responseStatus ?? 'n/a'}</span>
+                  </div>
+                  <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                    {JSON.stringify(apiCall.responseBody ?? null, null, 2)}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {showAdvancedTools && hasTreatmentDetails && (
+        <div className="space-y-4">
+          {lastSubmissionError && (
+            <div ref={submissionErrorRef}>
+              <Alert variant="destructive">
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>Dernière erreur Chorus</AlertTitle>
+                <AlertDescription>
+                  <p>{lastSubmissionError}</p>
+                  {lastSubmissionError.includes('Soumission Chorus échouée (500)') && (
+                    <p className="mt-2 text-xs">
+                      Le jeton OAuth2 et le bridge Python répondent. Le blocage restant est désormais côté soumission métier Chorus.
+                    </p>
+                  )}
+                </AlertDescription>
+              </Alert>
+              {lastApiCalls.length > 0 && (
+                <div className="mt-3 flex justify-end">
+                  <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-2">
+                    <Switch
+                      id="show-submission-error-api-return"
+                      checked={showSubmissionApiReturn}
+                      onCheckedChange={setShowSubmissionApiReturn}
+                    />
+                    <Label htmlFor="show-submission-error-api-return" className="text-sm">
+                      Afficher retour API
+                    </Label>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {showSubmissionApiReturn && !lastSubmissionResult && lastApiCalls.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Retour API après soumission</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {submissionApiReturnSummary && (
+                  <ChorusApiReturnSummaryPanel summary={submissionApiReturnSummary} />
+                )}
+                {lastApiCalls.map((apiCall, index) => (
+                  <div
+                    key={`${apiCall.label}-${apiCall.url}-error-return-${index}`}
+                    className="rounded-lg border bg-muted/20 p-4"
+                  >
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <p className="text-sm font-medium">{apiCall.label}</p>
+                      <span className="text-xs text-muted-foreground">
+                        {apiCall.method} · HTTP {apiCall.responseStatus ?? 'n/a'}
+                      </span>
+                    </div>
+                    <p className="mt-2 break-all text-xs text-muted-foreground">{apiCall.url}</p>
+                    <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                      {JSON.stringify(apiCall.responseBody ?? null, null, 2)}
+                    </pre>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
 
           {lastSubmissionResult && (
             <div ref={submissionResultRef}>
               <Card>
-                <CardHeader><CardTitle className="text-base">Résultat du traitement Chorus</CardTitle></CardHeader>
+                <CardHeader>
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <CardTitle className="text-base">Résultat du traitement Chorus</CardTitle>
+                    <div className="flex items-center gap-2">
+                      <Switch
+                        id="show-submission-api-return-advanced"
+                        checked={showSubmissionApiReturn}
+                        onCheckedChange={setShowSubmissionApiReturn}
+                      />
+                      <Label htmlFor="show-submission-api-return-advanced" className="text-sm">
+                        Afficher retour API
+                      </Label>
+                    </div>
+                  </div>
+                </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
                     <ExtractionInfoRow label="Traitement" value={lastSubmissionResult.ok ? 'Réussi' : 'Échoué'} />
@@ -1259,7 +1940,11 @@ export default function InvoiceCreate() {
                     <ExtractionInfoRow label="Pièces jointes uploadées" value={String(lastSubmissionResult.uploadedFiles.length)} />
                   </div>
 
-                  {lastSubmissionResult.uploadedFiles.length > 0 && (
+                  {showSubmissionApiReturn && submissionApiReturnSummary && (
+                    <ChorusApiReturnSummaryPanel summary={submissionApiReturnSummary} />
+                  )}
+
+                  {showSubmissionApiReturn && lastSubmissionResult.uploadedFiles.length > 0 && (
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <p className="text-sm font-medium">Retour upload des pièces jointes</p>
                       <div className="mt-3 space-y-3">
@@ -1281,22 +1966,26 @@ export default function InvoiceCreate() {
                     </div>
                   )}
 
-                  <div className="rounded-lg border bg-muted/20 p-4">
-                    <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
-                    <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
-                      {JSON.stringify(lastSubmissionResult.response ?? null, null, 2)}
-                    </pre>
-                  </div>
+                  {showSubmissionApiReturn && (
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
+                      <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                        {JSON.stringify(lastSubmissionResult.response ?? null, null, 2)}
+                      </pre>
+                    </div>
+                  )}
 
-                  <div className="rounded-lg border bg-muted/20 p-4">
-                    <p className="text-sm font-medium">Payload final soumis par le bridge Python</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Ce JSON correspond au payload réellement envoyé après l’upload du PDF. C’est ici que `pieceJointePrincipale` doit apparaître.
-                    </p>
-                    <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
-                      {JSON.stringify(lastSubmissionResult.submittedPayload ?? null, null, 2)}
-                    </pre>
-                  </div>
+                  {showAdvancedTools && (
+                    <div className="rounded-lg border bg-muted/20 p-4">
+                      <p className="text-sm font-medium">Payload final soumis par le bridge Python</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Ce JSON correspond au payload réellement envoyé après l’upload du PDF. C’est ici que `pieceJointePrincipale` doit apparaître.
+                      </p>
+                      <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                        {JSON.stringify(lastSubmissionResult.submittedPayload ?? null, null, 2)}
+                      </pre>
+                    </div>
+                  )}
 
                 </CardContent>
               </Card>

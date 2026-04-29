@@ -180,6 +180,18 @@ function refreshInvoiceCaches(invoiceId: string): void {
   ]);
 }
 
+function extractChorusSubmissionStatus(response: unknown): string {
+  if (response && typeof response === 'object') {
+    const record = response as Record<string, unknown>;
+    const status = record.statutCourant ?? record.statutFacture;
+    if (typeof status === 'string' && status.trim()) {
+      return status.trim();
+    }
+  }
+
+  return 'DEPOSEE';
+}
+
 export async function markInvoiceReadyForSubmission(invoiceId: string): Promise<Invoice> {
   const invoice = await getInvoice(invoiceId);
   if (!invoice) {
@@ -286,9 +298,7 @@ export async function submitInvoiceFromDetail(invoiceId: string): Promise<Chorus
     const submittedAt = nowIso();
     upsertInvoiceRuntimePatch(invoice.id, {
       statusInternal: 'SUBMITTED_TO_CHORUS',
-      statusChorus: typeof result.response === 'object' && result.response !== null && 'statutCourant' in result.response
-        ? String((result.response as Record<string, unknown>).statutCourant)
-        : 'DEPOSEE',
+      statusChorus: extractChorusSubmissionStatus(result.response),
       chorusInvoiceNumber: result.externalId || invoice.chorusInvoiceNumber,
       submittedAt,
       lastStatusSyncAt: submittedAt,

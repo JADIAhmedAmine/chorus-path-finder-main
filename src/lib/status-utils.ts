@@ -154,6 +154,59 @@ const CHORUS_INFO_STATUS_CODES = new Set<string>([
   'MISE_A_DISPOSITION_MOA',
 ]);
 
+const CHORUS_STATUS_COLORS: Record<string, string> = {
+  BROUILLON: '#64748b',
+  A_VALIDER_1: '#eab308',
+  A_VALIDER_2: '#ca8a04',
+  A_VALIDER_MOE: '#d97706',
+  A_RECYCLER: '#f59e0b',
+  SUSPENDUE: '#ea580c',
+  EN_ATTENTE_RECYCLAGE_FOURNISSEUR: '#f97316',
+  A_ASSOCIER_MOE: '#fb923c',
+  A_ASSOCIER_MOA: '#fdba74',
+  A_ASSOCIER_FOURNISSEUR: '#f97316',
+  A_COMPLETER: '#fbbf24',
+  DUPLIQUE_APRES_REFUS: '#f97316',
+  VALIDEE_1: '#22c55e',
+  VALIDEE_2: '#16a34a',
+  MANDATEE: '#65a30d',
+  MISE_EN_PAIEMENT: '#059669',
+  COMPTABILISEE: '#0d9488',
+  SERVICE_FAIT: '#84cc16',
+  PRISE_EN_COMPTE_MOE: '#10b981',
+  PRISE_EN_COMPTE_MOA: '#14b8a6',
+  PRISE_EN_COMPTE_DESTINATAIRE: '#06b6d4',
+  DEPOSEE: '#6366f1',
+  EN_COURS_ACHEMINEMENT: '#8b5cf6',
+  MISE_A_DISPOSITION: '#3b82f6',
+  MISE_A_DISPOSITION_COMPTABLE: '#2563eb',
+  MISE_A_DISPOSITION_MOE: '#60a5fa',
+  MISE_A_DISPOSITION_MOA: '#1d4ed8',
+  ASSOCIEE: '#0ea5e9',
+  EN_COURS_TRAITEMENT_PIVOT_S: '#7c3aed',
+  INTERPRETEE_OCR: '#0891b2',
+  COMPLETEE: '#0284c7',
+  TRANSMISE_MOA: '#2563eb',
+  REMPLACEE_PAR_A22: '#475569',
+  REJETEE: '#ef4444',
+  REFUSEE_1: '#dc2626',
+  REFUSEE_2: '#b91c1c',
+  REFUSEE_MOE: '#e11d48',
+  REFUSEE_MOA: '#be123c',
+  REFUSEE_FOURNISSEUR: '#f43f5e',
+  ABANDONNEE: '#991b1b',
+  SUPPRIMEE: '#7f1d1d',
+  NON_CONFORME: '#fb7185',
+  ABSENCE_VALIDATION_1_HORS_DELAI: '#dc2626',
+  ABSENCE_VALIDATION_2_HORS_DELAI: '#b91c1c',
+  ABSENCE_VALIDATION_MOE_DELAI_REGLEMENTAIRE: '#9f1239',
+  TECHNIQUE_INCONNU: '#6b7280',
+};
+
+function getChorusStatusColor(status: string, fallback: string): string {
+  return CHORUS_STATUS_COLORS[status] ?? fallback;
+}
+
 export function getStatusConfig(status: InvoiceStatusInternal): StatusConfig {
   return invoiceStatusConfig[status] || { label: status, color: '#6b7280', bgClass: 'bg-muted', textClass: 'text-muted-foreground' };
 }
@@ -163,22 +216,22 @@ export function getChorusRawStatusConfig(status: string): StatusConfig {
   const normalized = label.toUpperCase();
 
   if (CHORUS_ERROR_STATUS_CODES.has(normalized)) {
-    return { label, color: '#ef4444', bgClass: 'bg-destructive/10', textClass: 'text-destructive' };
+    return { label, color: getChorusStatusColor(normalized, '#ef4444'), bgClass: 'bg-destructive/10', textClass: 'text-destructive' };
   }
 
   if (CHORUS_SUCCESS_STATUS_CODES.has(normalized)) {
-    return { label, color: '#16a34a', bgClass: 'bg-success/10', textClass: 'text-success' };
+    return { label, color: getChorusStatusColor(normalized, '#16a34a'), bgClass: 'bg-success/10', textClass: 'text-success' };
   }
 
   if (CHORUS_WARNING_STATUS_CODES.has(normalized)) {
-    return { label, color: '#f59e0b', bgClass: 'bg-warning/10', textClass: 'text-warning' };
+    return { label, color: getChorusStatusColor(normalized, '#f59e0b'), bgClass: 'bg-warning/10', textClass: 'text-warning' };
   }
 
   if (CHORUS_INFO_STATUS_CODES.has(normalized)) {
-    return { label, color: '#3b82f6', bgClass: 'bg-info/10', textClass: 'text-info' };
+    return { label, color: getChorusStatusColor(normalized, '#3b82f6'), bgClass: 'bg-info/10', textClass: 'text-info' };
   }
 
-  return { label, color: '#6b7280', bgClass: 'bg-muted', textClass: 'text-muted-foreground' };
+  return { label, color: getChorusStatusColor(normalized, '#6b7280'), bgClass: 'bg-muted', textClass: 'text-muted-foreground' };
 }
 
 export function getJobStatusConfig(status: JobStatus): StatusConfig {
