@@ -438,6 +438,51 @@ describe('chorus connector', () => {
     })).rejects.toThrow(/piece jointe 28093/i);
   });
 
+  it('rejects Chorus business failures returned with HTTP 200', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        uploadedFiles: [],
+        payload: createValidPayload(),
+        response: {
+          codeRetour: 42,
+          libelle: 'TRA_MSG_TEST.KO',
+          statutFacture: 'REJETEE',
+          numeroFacture: 'FAC-2026-001',
+        },
+        apiCalls: [{
+          label: 'Soumission facture Chorus',
+          method: 'POST',
+          url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/soumettre',
+          responseStatus: 200,
+          responseBody: {
+            codeRetour: 42,
+            libelle: 'TRA_MSG_TEST.KO',
+            statutFacture: 'REJETEE',
+          },
+        }],
+      }));
+
+    const connector = new DirectChorusConnector({
+      ...getDefaultChorusConfig(),
+      mode: 'direct',
+      enabled: true,
+      tokenUrl: 'https://oauth.example.test/token',
+      apiBaseUrl: 'https://sandbox-api.piste.gouv.fr/cpro/factures',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      uploadFilePath: '/v1/deposer/pdf',
+      submitInvoicePath: '/v1/soumettre',
+      submissionBridgeUrl: 'https://bridge.example.test/submit',
+    }, fetchMock);
+
+    await expect(connector.submitInvoice({
+      invoiceData: createValidPayload(),
+      mainFile: new File(['PDF'], 'invoice.pdf', { type: 'application/pdf' }),
+      attachments: [],
+    })).rejects.toThrow(/Code retour Chorus 42.*TRA_MSG_TEST\.KO.*REJETEE/i);
+  });
+
   it('fails fast when the payload is invalid before the HTTP POST', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'token-upload-pdf' }))

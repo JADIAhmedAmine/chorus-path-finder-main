@@ -368,7 +368,13 @@ def _extract_external_id(response: Any) -> str | None:
     if not isinstance(response, dict):
         return None
 
-    candidate = response.get("invoiceId") or response.get("numeroFactureChorus") or response.get("id")
+    candidate = (
+        response.get("invoiceId")
+        or response.get("numeroFactureChorus")
+        or response.get("identifiantFactureCPP")
+        or response.get("numeroFacture")
+        or response.get("id")
+    )
     if isinstance(candidate, str) and candidate.strip():
         return candidate
     if isinstance(candidate, int):

@@ -1,4 +1,9 @@
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
+import {
+  describeChorusSubmissionApiReturn,
+  formatChorusApiReturnFailureMessage,
+  isChorusApiReturnFailure,
+} from '@/lib/chorus/submissionApiReturn';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
 import type {
   ChorusApiDebugEntry,
@@ -6,6 +11,7 @@ import type {
   ChorusConnectionResult,
   ChorusResolvedAttachmentService,
   ChorusResolvedStructureAttachment,
+  ChorusSubmitAttachmentInput,
   ChorusSubmitInvoiceInput,
   ChorusSubmitInvoiceResult,
   ChorusTechnicalContextResolutionInput,
@@ -114,6 +120,20 @@ function stripCurrentUserIdFromSubmissionPayload(input: ChorusSubmitInvoiceInput
   return payloadWithoutCurrentUserId;
 }
 
+function normalizeSubmitAttachment(input: ChorusSubmitAttachmentInput): {
+  file: File;
+  designation?: string;
+  type?: string;
+  lineNumber?: number;
+  liaisonId?: number;
+} {
+  if (input instanceof File) {
+    return { file: input };
+  }
+
+  return input;
+}
+
 function inferPieceJointeId(response: unknown): string | undefined {
   if (!response || typeof response !== 'object') {
     return undefined;
@@ -125,6 +145,29 @@ function inferPieceJointeId(response: unknown): string | undefined {
 
   if (typeof candidate === 'string' && candidate.trim()) {
     return candidate;
+  }
+
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+    return String(candidate);
+  }
+
+  return undefined;
+}
+
+function inferSubmissionExternalId(response: unknown): string | undefined {
+  if (!response || typeof response !== 'object') {
+    return undefined;
+  }
+
+  const record = response as Record<string, unknown>;
+  const candidate = record.invoiceId
+    ?? record.numeroFactureChorus
+    ?? record.identifiantFactureCPP
+    ?? record.numeroFacture
+    ?? record.id;
+
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return candidate.trim();
   }
 
   if (typeof candidate === 'number' && Number.isFinite(candidate)) {
@@ -477,11 +520,19 @@ export class DirectChorusConnector implements ChorusConnector {
         base64: await readFileAsBase64(input.mainFile),
       },
       attachments: await Promise.all(
-        input.attachments.map(async (file) => ({
-          name: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          base64: await readFileAsBase64(file),
-        })),
+        input.attachments.map(async (attachmentInput) => {
+          const attachment = normalizeSubmitAttachment(attachmentInput);
+
+          return {
+            name: attachment.file.name,
+            mimeType: attachment.file.type || 'application/octet-stream',
+            base64: await readFileAsBase64(attachment.file),
+            designation: attachment.designation,
+            type: attachment.type,
+            lineNumber: attachment.lineNumber,
+            liaisonId: attachment.liaisonId,
+          };
+        }),
       ),
     };
     const requestBodyForDebug = {
@@ -536,12 +587,17 @@ export class DirectChorusConnector implements ChorusConnector {
       throw new ChorusSubmitApiError(message, combinedApiCalls);
     }
 
+    const apiReturnSummary = describeChorusSubmissionApiReturn(record?.response ?? body, combinedApiCalls);
+    if (isChorusApiReturnFailure(apiReturnSummary)) {
+      throw new ChorusSubmitApiError(formatChorusApiReturnFailureMessage(apiReturnSummary), combinedApiCalls);
+    }
+
     const uploadedFiles = Array.isArray(record?.uploadedFiles)
       ? (record?.uploadedFiles as ChorusUploadedFile[])
       : [];
     const externalId = typeof record?.externalId === 'string'
       ? record.externalId
-      : undefined;
+      : inferSubmissionExternalId(record?.response);
 
     return {
       ok: true,
@@ -595,11 +651,25 @@ export class MockChorusConnector implements ChorusConnector {
   }
 
   async submitInvoice(input: ChorusSubmitInvoiceInput): Promise<ChorusSubmitInvoiceResult> {
-    const uploadedFiles: ChorusUploadedFile[] = [input.mainFile, ...input.attachments].map((file, index) => ({
-      id: `mock-file-${index + 1}`,
-      filename: file.name,
-      response: { mocked: true },
-    }));
+    const complementaryAttachments = input.attachments.map(normalizeSubmitAttachment);
+    const uploadedFiles: ChorusUploadedFile[] = [
+      {
+        id: 'mock-file-1',
+        filename: input.mainFile.name,
+        role: 'MAIN',
+        response: { mocked: true },
+      },
+      ...complementaryAttachments.map((attachment, index) => ({
+        id: `mock-file-${index + 2}`,
+        filename: attachment.file.name,
+        role: 'COMPLEMENTARY' as const,
+        designation: attachment.designation || attachment.file.name,
+        type: attachment.type,
+        lineNumber: attachment.lineNumber,
+        liaisonId: attachment.liaisonId,
+        response: { mocked: true },
+      })),
+    ];
 
     return {
       ok: true,

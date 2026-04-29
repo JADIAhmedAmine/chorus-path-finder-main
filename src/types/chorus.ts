@@ -96,6 +96,11 @@ export interface ChorusTechnicalContextResolutionResult {
 export interface ChorusUploadedFile {
   id: string;
   filename: string;
+  role?: 'MAIN' | 'COMPLEMENTARY';
+  designation?: string;
+  type?: string;
+  lineNumber?: number;
+  liaisonId?: number;
   response?: unknown;
 }
 
@@ -111,9 +116,17 @@ export interface ChorusApiDebugEntry {
 export interface ChorusSubmitInvoiceInput {
   invoiceData: ChorusSubmissionPayload;
   mainFile: File;
-  attachments: File[];
+  attachments: ChorusSubmitAttachmentInput[];
   debugBypassValidation?: boolean;
 }
+
+export type ChorusSubmitAttachmentInput = File | {
+  file: File;
+  designation?: string;
+  type?: string;
+  lineNumber?: number;
+  liaisonId?: number;
+};
 
 export interface ChorusSubmitInvoiceResult {
   ok: boolean;
