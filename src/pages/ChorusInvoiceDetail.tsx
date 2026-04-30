@@ -9,6 +9,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { getChorusLiveInvoiceDetail } from '@/lib/chorus/liveInvoiceDetails';
 
+const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -91,6 +93,11 @@ export default function ChorusInvoiceDetail() {
   }
 
   const { invoice, supplier, customer, raw, search } = detail;
+  const rawStatus = (invoice.statusChorus || invoice.statusInternal).toUpperCase();
+  const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS'
+    || invoice.statusInternal === 'REJECTED_TECHNICAL'
+    || rawStatus.includes('REJET')
+    || rawStatus.includes('REFUS');
   const rawEntries = isRecord(raw)
     ? Object.entries(raw).sort(([left], [right]) => left.localeCompare(right, 'fr'))
     : [];
@@ -117,11 +124,22 @@ export default function ChorusInvoiceDetail() {
         </Button>
       </div>
 
+      {isRejected && invoice.statusReasonLabel && (
+        <Alert className="border-destructive/30 bg-destructive/5">
+          <AlertDescription>
+            <p className="font-medium text-destructive">
+              {invoice.statusReasonCode ? `Motif de rejet : ${invoice.statusReasonCode}` : 'Motif de rejet'}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">{invoice.statusReasonLabel}</p>
+          </AlertDescription>
+        </Alert>
+      )}
+
       <Tabs defaultValue="summary">
         <TabsList>
           <TabsTrigger value="summary"><Info className="mr-2 h-4 w-4" /> Synthèse</TabsTrigger>
-          <TabsTrigger value="chorus"><Hash className="mr-2 h-4 w-4" /> Champs Chorus</TabsTrigger>
-          <TabsTrigger value="json"><FileJson className="mr-2 h-4 w-4" /> JSON brut</TabsTrigger>
+          {SHOW_DEV_TOOLS && <TabsTrigger value="chorus"><Hash className="mr-2 h-4 w-4" /> Champs Chorus</TabsTrigger>}
+          {SHOW_DEV_TOOLS && <TabsTrigger value="json"><FileJson className="mr-2 h-4 w-4" /> JSON brut</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="summary" className="mt-4">
@@ -136,6 +154,7 @@ export default function ChorusInvoiceDetail() {
                 <InfoRow label="Dernier statut" value={formatOptionalDate(invoice.lastStatusSyncAt, true)} />
                 <InfoRow label="Mode dépôt" value={invoice.depositMode || '-'} />
                 <InfoRow label="Statut Chorus brut" value={invoice.statusChorus || '-'} />
+                {invoice.statusReasonLabel && <InfoRow label="Motif de rejet" value={invoice.statusReasonLabel} />}
               </CardContent>
             </Card>
 
@@ -172,19 +191,22 @@ export default function ChorusInvoiceDetail() {
               </CardContent>
             </Card>
 
-            <Card className="xl:col-span-2">
-              <CardHeader><CardTitle className="text-base">Contexte de récupération</CardTitle></CardHeader>
-              <CardContent className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2 xl:grid-cols-5">
-                <Metric label="Chargé le" value={formatOptionalDate(search.fetchedAt, true)} />
-                <Metric label="Total Chorus" value={String(search.total)} />
-                <Metric label="Lignes reçues" value={String(search.returned)} />
-                <Metric label="Taille demandée" value={String(search.requestedPageSize)} />
-                <Metric label="ID fournisseur" value={String(search.idFournisseur)} />
-              </CardContent>
-            </Card>
+            {SHOW_DEV_TOOLS && (
+              <Card className="xl:col-span-2">
+                <CardHeader><CardTitle className="text-base">Contexte de récupération</CardTitle></CardHeader>
+                <CardContent className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2 xl:grid-cols-5">
+                  <Metric label="Chargé le" value={formatOptionalDate(search.fetchedAt, true)} />
+                  <Metric label="Total Chorus" value={String(search.total)} />
+                  <Metric label="Lignes reçues" value={String(search.returned)} />
+                  <Metric label="Taille demandée" value={String(search.requestedPageSize)} />
+                  <Metric label="ID fournisseur" value={String(search.idFournisseur)} />
+                </CardContent>
+              </Card>
+            )}
           </div>
         </TabsContent>
 
+        {SHOW_DEV_TOOLS && (
         <TabsContent value="chorus" className="mt-4">
           <Card>
             <CardHeader>
@@ -206,7 +228,9 @@ export default function ChorusInvoiceDetail() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
 
+        {SHOW_DEV_TOOLS && (
         <TabsContent value="json" className="mt-4">
           <Card>
             <CardHeader>
@@ -219,6 +243,7 @@ export default function ChorusInvoiceDetail() {
             </CardContent>
           </Card>
         </TabsContent>
+        )}
       </Tabs>
     </div>
   );

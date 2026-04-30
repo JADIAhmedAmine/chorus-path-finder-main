@@ -1068,23 +1068,33 @@ function detectCurrency(text: string, rawText: string, sourceFormat: InvoiceSour
     };
   }
 
-  const explicitLabelMatch = pickFirstMatch(text, [
-    { regex: /\b(?:currency|devise)\s*[:#-]?\s*(EUR|USD|GBP|CHF)\b/i, confidence: 0.92 },
-    { regex: /\b(?:montant|total|net\s+a\s+payer|net\s+à\s+payer)[^A-Z]{0,25}(EUR|USD|GBP|CHF)\b/i, confidence: 0.82 },
-  ]);
+  for (const candidateText of uniqueValues([text, rawText])) {
+    const explicitLabelMatch = pickFirstMatch(candidateText, [
+      { regex: /\b(?:currency|devise)\s*[:#-]?\s*(EUR|USD|GBP|CHF)\b/i, confidence: 0.92 },
+      { regex: /\b(?:montant|total|net\s+a\s+payer|net\s+à\s+payer)[^A-Z]{0,25}(EUR|USD|GBP|CHF)\b/i, confidence: 0.82 },
+    ]);
 
-  if (explicitLabelMatch.value) {
-    return {
-      value: explicitLabelMatch.value.toUpperCase(),
-      confidence: explicitLabelMatch.confidence,
-    };
+    if (explicitLabelMatch.value) {
+      return {
+        value: explicitLabelMatch.value.toUpperCase(),
+        confidence: explicitLabelMatch.confidence,
+      };
+    }
+
+    const amountWithCurrency = candidateText.match(/\b[0-9][0-9\s.,']{0,20}\s*(EUR|USD|GBP|CHF)\b/i);
+    if (amountWithCurrency?.[1]) {
+      return {
+        value: amountWithCurrency[1].toUpperCase(),
+        confidence: 0.8,
+      };
+    }
   }
 
-  const amountWithCurrency = text.match(/\b[0-9][0-9\s.,']{0,20}\s*(EUR|USD|GBP|CHF)\b/i);
-  if (amountWithCurrency?.[1]) {
+  const rawCurrencyCode = rawText.match(/\b(EUR|USD|GBP|CHF)\b/i);
+  if (rawCurrencyCode?.[1]) {
     return {
-      value: amountWithCurrency[1].toUpperCase(),
-      confidence: 0.8,
+      value: rawCurrencyCode[1].toUpperCase(),
+      confidence: 0.72,
     };
   }
 
@@ -1311,7 +1321,8 @@ function extractCode(text: string, rawText: string, sourceFormat: InvoiceSourceF
       { regex: /\b(?:code\s+service|service\s+destinataire|service\s+executant|service\s+exécutant|service\s+code)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{1,19})/i, confidence: 0.92 },
     ],
     publicCustomer: [
-      { regex: /\b(?:code\s+destinataire|destinataire)\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{2,19})/i, confidence: 0.9 },
+      { regex: /\bcode\s+destinataire\s*[:#-]?\s*([A-Z0-9][A-Z0-9-]{2,19})/i, confidence: 0.93 },
+      { regex: /\bdestinataire\s*[:#-]\s*([A-Z0-9][A-Z0-9-]{2,19})/i, confidence: 0.86 },
     ],
   };
 
@@ -1326,7 +1337,14 @@ function extractCode(text: string, rawText: string, sourceFormat: InvoiceSourceF
     };
   }
 
-  return pickFirstMatch(text, regexes[field]);
+  for (const candidateText of uniqueValues([text, rawText])) {
+    const match = pickFirstMatch(candidateText, regexes[field]);
+    if (match.value) {
+      return match;
+    }
+  }
+
+  return {};
 }
 
 function extractAmount(text: string, rawText: string, sourceFormat: InvoiceSourceFormat, field: 'ht' | 'ttc'): CandidateMatch<number> {

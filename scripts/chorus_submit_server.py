@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -10,13 +11,12 @@ import sys
 from time import perf_counter
 import traceback
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Dépendances minimales nécessaires pour le bridge + extraction PDF
-REQUIRED_MODULES = ("requests", "fitz", "pdfplumber")
+REQUIRED_MODULES = ("fastapi", "uvicorn", "requests", "fitz", "pdfplumber")
 
 
 def _module_available(module_name: str) -> bool:
@@ -89,19 +89,51 @@ _maybe_reexec_with_repo_python()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import uvicorn
+from fastapi import Body, FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
 from chorus_python import ChorusSubmissionService, load_chorus_settings
 from chorus_python.annuaire import build_annuaire_files_from_api_response, relative_to_repo
-from chorus_python.client import ChorusClient
+from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
 
 
-HOST = "127.0.0.1"
-PORT = 8008
+HOST = os.environ.get("CHORUS_HOST", "127.0.0.1")
+PORT = int(os.environ.get("CHORUS_PORT", "8008"))
 SUBMIT_PATH = "/api/chorus/submit"
 EXTRACT_PDF_PATH = "/api/extract-pdf-text"
+OAUTH_TOKEN_PATH = "/api/chorus/oauth-token"
 SYNC_ANNUAIRE_PATH = "/api/chorus/annuaire/sync"
 SIRET_INFO_PATH = "/api/chorus/siret/info"
+ACTIVE_RECIPIENT_STRUCTURES_PATH = "/api/chorus/structures/active-destinataire"
 SUPPLIER_INVOICES_SEARCH_PATH = "/api/chorus/invoices/supplier/search"
+
+logger = logging.getLogger("chorus_submit_server")
+
+app = FastAPI(title="Chorus Path Finder API", version="2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+
+def _print_received_post_debug(path: str, body: Any) -> None:
+    print(f"\n[debug] POST reçu par le bridge - {path}", flush=True)
+    print("[debug] Body:", flush=True)
+    print(
+        json.dumps(
+            sanitize_debug_value(body),
+            ensure_ascii=False,
+            indent=2,
+        ),
+        flush=True,
+    )
 
 
 def _as_positive_int(value: Any) -> int | None:
@@ -364,6 +396,63 @@ def _extract_supplier_invoice_total(response_body: Any, fallback: int) -> int:
     return fallback
 
 
+def _extract_structure_items(response_body: Any) -> list[Any]:
+    return _deep_find_first_list(
+        response_body,
+        {
+            "listeStructures",
+            "structures",
+            "listeStructure",
+            "resultats",
+            "results",
+            "items",
+            "data",
+        },
+    )
+
+
+def _extract_structure_cpp_id(structure: Any) -> int | None:
+    if not isinstance(structure, dict):
+        return None
+
+    for key in ("idStructureCPP", "idStructure", "idFournisseur", "idDestinataireCPP", "idDestinataire"):
+        value = _as_positive_int(structure.get(key))
+        if value is not None:
+            return value
+
+    return None
+
+
+def _resolve_supplier_id_from_active_recipient_structures(
+    client: ChorusClient,
+    preferred_supplier_id: int | None = None,
+) -> tuple[int, list[Any], Any]:
+    response_body = client.download_active_recipient_structures()
+    structures = _extract_structure_items(response_body)
+
+    if preferred_supplier_id is not None:
+        matching_structure = next(
+            (
+                structure
+                for structure in structures
+                if _extract_structure_cpp_id(structure) == preferred_supplier_id
+            ),
+            None,
+        )
+        if matching_structure is not None:
+            return preferred_supplier_id, structures, response_body
+
+    resolved_ids = [
+        structure_id
+        for structure_id in (_extract_structure_cpp_id(structure) for structure in structures)
+        if structure_id is not None
+    ]
+    if resolved_ids:
+        return resolved_ids[0], structures, response_body
+
+    raise ValueError("Aucun idStructureCPP/idFournisseur exploitable dans les structures actives destinataire.")
+
+
 def _extract_external_id(response: Any) -> str | None:
     if not isinstance(response, dict):
         return None
@@ -382,530 +471,475 @@ def _extract_external_id(response: Any) -> str | None:
     return None
 
 
-class ChorusSubmitHandler(BaseHTTPRequestHandler):
-    server_version = "ChorusPythonBridge/1.1"
+def _json_response(status: int, payload: dict[str, Any]) -> JSONResponse:
+    return JSONResponse(status_code=int(status), content=jsonable_encoder(payload))
 
-    def _client_connection_closed(self, error: OSError) -> bool:
-        return isinstance(error, (BrokenPipeError, ConnectionResetError)) or getattr(error, "errno", None) in {32, 104}
 
-    def _write_json(self, status: int, payload: dict[str, Any]) -> bool:
-        encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        try:
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-            self.end_headers()
-            self.wfile.write(encoded)
-            return True
-        except OSError as error:
-            if not self._client_connection_closed(error):
-                raise
+def _extract_environment_override(body: dict[str, Any]) -> str | None:
+    raw = body.get("environment") or body.get("chorusEnv") or body.get("env")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip().lower()
+    return None
 
-            self.close_connection = True
-            log_method = self._debug if self.path == EXTRACT_PDF_PATH else self.log_message
-            log_method(
-                "Client disconnected before receiving %s %s response (%s).",
-                status,
-                self.path,
-                error.__class__.__name__,
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "service": "chorus-path-finder-api"}
+
+
+@app.post(OAUTH_TOKEN_PATH)
+def handle_oauth_token(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug("OAuth token start (env=%s)", environment_override or "default")
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        if not settings.token_url or not settings.client_id or not settings.client_secret:
+            raise ValueError(
+                "Configuration OAuth2 serveur incomplète: CHORUS_TOKEN_URL, "
+                "CHORUS_CLIENT_ID et CHORUS_CLIENT_SECRET sont requis."
             )
-            return False
 
-    def _debug(self, message: str, *args: Any) -> None:
-        self.log_message(f"[debug] {message}", *args)
+        client = ChorusClient(settings)
+        token_body = client.fetch_oauth_token_payload()
+        access_token = token_body.get("access_token")
+        if not isinstance(access_token, str) or not access_token.strip():
+            raise ValueError("Réponse OAuth2 invalide: access_token absent.")
 
-    def do_OPTIONS(self) -> None:  # noqa: N802
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
-        self.end_headers()
-
-    def do_POST(self) -> None:  # noqa: N802
-        if self.path == EXTRACT_PDF_PATH:
-            self._handle_extract_pdf()
-            return
-
-        if self.path == SUBMIT_PATH:
-            self._handle_submit()
-            return
-
-        if self.path == SYNC_ANNUAIRE_PATH:
-            self._handle_sync_annuaire()
-            return
-
-        if self.path == SIRET_INFO_PATH:
-            self._handle_siret_info()
-            return
-
-        if self.path == SUPPLIER_INVOICES_SEARCH_PATH:
-            self._handle_supplier_invoice_search()
-            return
-
-        self._write_json(
-            HTTPStatus.NOT_FOUND,
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("OAuth token success: duration=%s ms", duration_ms)
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "access_token": access_token,
+                "token_type": token_body.get("token_type") or "Bearer",
+                "expires_in": token_body.get("expires_in"),
+                "scope": token_body.get("scope") or settings.scope,
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("OAuth token error: duration=%s ms, error=%s", duration_ms, message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
             {
                 "ok": False,
-                "error": f"Route inconnue: {self.path}",
+                "error": message,
             },
         )
 
-    def _read_json_body(self) -> dict[str, Any]:
-        content_length = int(self.headers.get("Content-Length", "0"))
-        raw_body = self.rfile.read(content_length) if content_length > 0 else b"{}"
-        decoded = raw_body.decode("utf-8")
-        body = json.loads(decoded)
 
-        if not isinstance(body, dict):
-            raise ValueError("Le corps JSON doit être un objet JSON.")
-
-        return body
-
-    def _handle_extract_pdf(self) -> None:
-        """Handle PDF text extraction via Docling."""
-        try:
-            body = self._read_json_body()
-        except Exception as error:  # noqa: BLE001
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": f"JSON invalide: {error}",
-                },
-            )
-            return
-
-        pdf_base64 = body.get("pdfBase64")
-        if not isinstance(pdf_base64, str) or not pdf_base64.strip():
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Le champ pdfBase64 est obligatoire et doit être une chaîne.",
-                },
-            )
-            return
-
-        started_at = perf_counter()
-        self._debug(
-            "Extraction PDF start: base64=%s chars",
-            len(pdf_base64),
+@app.post(EXTRACT_PDF_PATH)
+def handle_extract_pdf(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    pdf_base64 = body.get("pdfBase64")
+    if not isinstance(pdf_base64, str) or not pdf_base64.strip():
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ pdfBase64 est obligatoire et doit être une chaîne.",
+            },
         )
 
-        try:
-            extracted_text = extract_pdf_text_from_base64_docling(pdf_base64)
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Extraction PDF success: text=%s chars, duration=%s ms",
-                len(extracted_text),
-                duration_ms,
-            )
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "text": extracted_text,
-                },
-            )
-        except ImportError as error:
-            self._write_json(
-                HTTPStatus.NOT_IMPLEMENTED,
-                {
-                    "ok": False,
-                    "error": f"Dépendance d'extraction PDF manquante: {error}",
-                },
-            )
-        except RuntimeError as error:
-            traceback.print_exc()
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug("Extraction PDF runtime error after %s ms: %s", duration_ms, error)
-            self._write_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "ok": False,
-                    "error": f"Erreur Docling lors de l'extraction: {error}",
-                },
-            )
-        except Exception as error:  # noqa: BLE001
-            traceback.print_exc()
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug("Extraction PDF error after %s ms: %s", duration_ms, error)
-            self._write_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "ok": False,
-                    "error": f"Erreur lors de l'extraction PDF: {error}",
-                },
-            )
+    started_at = perf_counter()
+    logger.debug("Extraction PDF start: base64=%s chars", len(pdf_base64))
 
-    def _handle_supplier_invoice_search(self) -> None:
-        try:
-            body = self._read_json_body()
-        except Exception as error:  # noqa: BLE001
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": f"JSON invalide: {error}",
-                },
-            )
-            return
+    try:
+        extracted_text = extract_pdf_text_from_base64_docling(pdf_base64)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Extraction PDF success: text=%s chars, duration=%s ms", len(extracted_text), duration_ms)
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "text": extracted_text,
+            },
+        )
+    except ImportError as error:
+        return _json_response(
+            HTTPStatus.NOT_IMPLEMENTED,
+            {
+                "ok": False,
+                "error": f"Dépendance d'extraction PDF manquante: {error}",
+            },
+        )
+    except RuntimeError as error:
+        traceback.print_exc()
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Extraction PDF runtime error after %s ms: %s", duration_ms, error)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": f"Erreur Docling lors de l'extraction: {error}",
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        traceback.print_exc()
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Extraction PDF error after %s ms: %s", duration_ms, error)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": f"Erreur lors de l'extraction PDF: {error}",
+            },
+        )
 
-        started_at = perf_counter()
-        self._debug("Recherche factures fournisseur start")
 
-        try:
-            settings = load_chorus_settings()
-            client = ChorusClient(settings)
-            supplier_id = (
-                _as_positive_int(body.get("idFournisseur"))
-                or _as_positive_int(settings.default_supplier_id)
-                or 26359578
-            )
+@app.post(SUPPLIER_INVOICES_SEARCH_PATH)
+def handle_supplier_invoice_search(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug("Recherche factures fournisseur start (env=%s)", environment_override or "default")
 
-            initial_payload = _build_supplier_invoice_search_payload(
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        client = ChorusClient(settings)
+        supplier_id = (
+            _as_positive_int(body.get("idFournisseur"))
+            or _as_positive_int(settings.default_supplier_id)
+        )
+        if supplier_id is None:
+            supplier_id, _structures, _raw_response = _resolve_supplier_id_from_active_recipient_structures(client)
+
+        initial_payload = _build_supplier_invoice_search_payload(
+            supplier_id=supplier_id,
+            page_size=2,
+            criteria=body,
+        )
+        initial_response = client.search_supplier_invoices(initial_payload)
+        initial_items = _extract_supplier_invoice_items(initial_response)
+        total = _extract_supplier_invoice_total(initial_response, len(initial_items))
+        page_size = total if total > 0 else 2
+
+        if total > len(initial_items) or page_size > len(initial_items):
+            final_payload = _build_supplier_invoice_search_payload(
                 supplier_id=supplier_id,
-                page_size=2,
+                page_size=page_size,
                 criteria=body,
             )
-            initial_response = client.search_supplier_invoices(initial_payload)
-            initial_items = _extract_supplier_invoice_items(initial_response)
-            total = _extract_supplier_invoice_total(initial_response, len(initial_items))
-            page_size = total if total > 0 else 2
+            final_response = client.search_supplier_invoices(final_payload)
+        else:
+            final_payload = initial_payload
+            final_response = initial_response
 
-            if total > len(initial_items) or page_size > len(initial_items):
-                final_payload = _build_supplier_invoice_search_payload(
-                    supplier_id=supplier_id,
-                    page_size=page_size,
-                    criteria=body,
-                )
-                final_response = client.search_supplier_invoices(final_payload)
-            else:
-                final_payload = initial_payload
-                final_response = initial_response
+        invoices = _extract_supplier_invoice_items(final_response)
+        total = _extract_supplier_invoice_total(final_response, total or len(invoices))
+        requested_page_size = final_payload["rechercheFactureParFournisseur"]["nbResultatsParPage"]
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Recherche factures fournisseur success: supplier=%s, total=%s, returned=%s, duration=%s ms",
+            supplier_id,
+            total,
+            len(invoices),
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "idFournisseur": supplier_id,
+                "total": total,
+                "returned": len(invoices),
+                "requestedPageSize": requested_page_size,
+                "payload": final_payload,
+                "invoices": invoices,
+                "rawResponse": final_response,
+                "initialResponse": initial_response,
+                "apiCalls": client.api_calls,
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = list(client.api_calls) if "client" in locals() else []
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Recherche factures fournisseur error: duration=%s ms, error=%s", duration_ms, message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
 
-            invoices = _extract_supplier_invoice_items(final_response)
-            total = _extract_supplier_invoice_total(final_response, total or len(invoices))
-            requested_page_size = final_payload["rechercheFactureParFournisseur"]["nbResultatsParPage"]
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Recherche factures fournisseur success: supplier=%s, total=%s, returned=%s, duration=%s ms",
-                supplier_id,
-                total,
-                len(invoices),
-                duration_ms,
-            )
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "idFournisseur": supplier_id,
-                    "total": total,
-                    "returned": len(invoices),
-                    "requestedPageSize": requested_page_size,
-                    "payload": final_payload,
-                    "invoices": invoices,
-                    "rawResponse": final_response,
-                    "initialResponse": initial_response,
-                    "apiCalls": client.api_calls,
-                },
-            )
-        except Exception as error:  # noqa: BLE001
-            message = str(error) or error.__class__.__name__
-            api_calls = list(client.api_calls) if "client" in locals() else []
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Recherche factures fournisseur error: duration=%s ms, error=%s",
-                duration_ms,
-                message,
-            )
-            self._write_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "ok": False,
-                    "error": message,
-                    "apiCalls": api_calls,
-                },
-            )
 
-    def _handle_siret_info(self) -> None:
-        try:
-            body = self._read_json_body()
-        except Exception as error:  # noqa: BLE001
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": f"JSON invalide: {error}",
-                },
-            )
-            return
+@app.post(SIRET_INFO_PATH)
+def handle_siret_info(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    raw_siret = body.get("siretStructure") or body.get("siret")
+    if not isinstance(raw_siret, str) or not raw_siret.strip():
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ siretStructure est obligatoire.",
+            },
+        )
 
-        raw_siret = body.get("siretStructure") or body.get("siret")
-        if not isinstance(raw_siret, str) or not raw_siret.strip():
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Le champ siretStructure est obligatoire.",
-                },
-            )
-            return
+    siret_structure = "".join(character for character in raw_siret if character.isdigit())
+    if not siret_structure:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ siretStructure doit contenir des chiffres.",
+            },
+        )
 
-        siret_structure = "".join(character for character in raw_siret if character.isdigit())
-        if not siret_structure:
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Le champ siretStructure doit contenir des chiffres.",
-                },
-            )
-            return
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug("Consultation SIRET start: siret=%s, env=%s", siret_structure, environment_override or "default")
 
-        started_at = perf_counter()
-        self._debug("Consultation SIRET start: siret=%s", siret_structure)
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        client = ChorusClient(settings)
+        response_body = client.consult_siret_information(siret_structure)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Consultation SIRET success: siret=%s, duration=%s ms", siret_structure, duration_ms)
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "siretStructure": siret_structure,
+                "info": response_body,
+                "apiCalls": client.api_calls,
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = list(client.api_calls) if "client" in locals() else []
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Consultation SIRET error: siret=%s, duration=%s ms, error=%s",
+            siret_structure,
+            duration_ms,
+            message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
 
-        try:
-            settings = load_chorus_settings()
-            client = ChorusClient(settings)
-            response_body = client.consult_siret_information(siret_structure)
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Consultation SIRET success: siret=%s, duration=%s ms",
-                siret_structure,
-                duration_ms,
-            )
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "siretStructure": siret_structure,
-                    "info": response_body,
-                    "apiCalls": client.api_calls,
-                },
-            )
-        except Exception as error:  # noqa: BLE001
-            message = str(error) or error.__class__.__name__
-            api_calls = list(client.api_calls) if "client" in locals() else []
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Consultation SIRET error: siret=%s, duration=%s ms, error=%s",
-                siret_structure,
-                duration_ms,
-                message,
-            )
-            self._write_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "ok": False,
-                    "error": message,
-                    "apiCalls": api_calls,
-                },
-            )
 
-    def _handle_sync_annuaire(self) -> None:
-        try:
-            self._read_json_body()
-        except Exception as error:  # noqa: BLE001
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": f"JSON invalide: {error}",
-                },
-            )
-            return
+@app.post(ACTIVE_RECIPIENT_STRUCTURES_PATH)
+def handle_active_recipient_structures(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug("Structures actives destinataire start (env=%s)", environment_override or "default")
 
-        started_at = perf_counter()
-        self._debug("Synchronisation annuaire start")
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        client = ChorusClient(settings)
+        preferred_supplier_id = _as_positive_int(body.get("idFournisseur")) or _as_positive_int(settings.default_supplier_id)
+        supplier_id, structures, response_body = _resolve_supplier_id_from_active_recipient_structures(
+            client,
+            preferred_supplier_id=preferred_supplier_id,
+        )
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Structures actives destinataire success: supplier=%s, structures=%s, duration=%s ms",
+            supplier_id,
+            len(structures),
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "idFournisseur": supplier_id,
+                "idStructureCPP": supplier_id,
+                "structures": structures,
+                "rawResponse": response_body,
+                "apiCalls": client.api_calls,
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = list(client.api_calls) if "client" in locals() else []
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Structures actives destinataire error: duration=%s ms, error=%s", duration_ms, message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
 
-        try:
-            settings = load_chorus_settings()
-            client = ChorusClient(settings)
-            response_body = client.download_destinataires_annuaire()
-            build_result = build_annuaire_files_from_api_response(response_body)
-            metadata = build_result.payload.get("metadata", {})
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Synchronisation annuaire success: structures=%s, services=%s, duration=%s ms",
-                metadata.get("structureCount"),
-                metadata.get("serviceCount"),
-                duration_ms,
-            )
-            self._write_json(
-                HTTPStatus.OK,
-                {
-                    "ok": True,
-                    "codeRetour": response_body.get("codeRetour") if isinstance(response_body, dict) else None,
-                    "libelle": response_body.get("libelle") if isinstance(response_body, dict) else None,
-                    "generatedAt": metadata.get("generatedAt"),
-                    "sourceFile": metadata.get("sourceFile"),
-                    "structureCount": metadata.get("structureCount", 0),
-                    "serviceCount": metadata.get("serviceCount", 0),
-                    "jsonPath": relative_to_repo(build_result.json_path),
-                    "xmlPath": relative_to_repo(build_result.xml_path),
-                    "apiCalls": client.api_calls,
-                },
-            )
-        except Exception as error:  # noqa: BLE001
-            message = str(error) or error.__class__.__name__
-            api_calls = list(client.api_calls) if "client" in locals() else []
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Synchronisation annuaire error: duration=%s ms, error=%s",
-                duration_ms,
-                message,
-            )
-            self._write_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "ok": False,
-                    "error": message,
-                    "apiCalls": api_calls,
-                },
-            )
 
-    def _handle_submit(self) -> None:
-        """Handle Chorus submission."""
-        try:
-            body = self._read_json_body()
-        except Exception as error:  # noqa: BLE001
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": f"JSON invalide: {error}",
-                },
-            )
-            return
+@app.post(SYNC_ANNUAIRE_PATH)
+def handle_sync_annuaire(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug("Synchronisation annuaire start (env=%s)", environment_override or "default")
 
-        payload = body.get("payload")
-        main_file = body.get("mainFile")
-        attachments = body.get("attachments") or []
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        client = ChorusClient(settings)
+        response_body = client.download_destinataires_annuaire()
+        build_result = build_annuaire_files_from_api_response(response_body)
+        metadata = build_result.payload.get("metadata", {})
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Synchronisation annuaire success: structures=%s, services=%s, duration=%s ms",
+            metadata.get("structureCount"),
+            metadata.get("serviceCount"),
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "codeRetour": response_body.get("codeRetour") if isinstance(response_body, dict) else None,
+                "libelle": response_body.get("libelle") if isinstance(response_body, dict) else None,
+                "generatedAt": metadata.get("generatedAt"),
+                "sourceFile": metadata.get("sourceFile"),
+                "structureCount": metadata.get("structureCount", 0),
+                "serviceCount": metadata.get("serviceCount", 0),
+                "jsonPath": relative_to_repo(build_result.json_path),
+                "xmlPath": relative_to_repo(build_result.xml_path),
+                "apiCalls": client.api_calls,
+            },
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = list(client.api_calls) if "client" in locals() else []
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Synchronisation annuaire error: duration=%s ms, error=%s", duration_ms, message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
 
-        if not isinstance(payload, dict):
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Le champ payload est obligatoire et doit être un objet JSON.",
-                },
-            )
-            return
 
-        if main_file is not None and not isinstance(main_file, dict):
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Le champ mainFile doit être un objet JSON s'il est fourni.",
-                },
-            )
-            return
+@app.post(SUBMIT_PATH)
+def handle_submit(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    _print_received_post_debug(SUBMIT_PATH, body)
+    payload = body.get("payload")
+    main_file = body.get("mainFile")
+    attachments = body.get("attachments") or []
 
-        if not isinstance(attachments, list):
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Le champ attachments doit être une liste JSON s'il est fourni.",
-                },
-            )
-            return
+    if not isinstance(payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload est obligatoire et doit être un objet JSON.",
+            },
+        )
 
-        invalid_attachment = next((item for item in attachments if not isinstance(item, dict)), None)
-        if invalid_attachment is not None:
-            self._write_json(
-                HTTPStatus.BAD_REQUEST,
-                {
-                    "ok": False,
-                    "error": "Chaque pièce jointe complémentaire doit être un objet JSON.",
-                },
-            )
-            return
+    if main_file is not None and not isinstance(main_file, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ mainFile doit être un objet JSON s'il est fourni.",
+            },
+        )
 
-        started_at = perf_counter()
-        self._debug(
-            "Soumission start: numero=%s, mainFile=%s, attachments=%s",
+    if not isinstance(attachments, list):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ attachments doit être une liste JSON s'il est fourni.",
+            },
+        )
+
+    invalid_attachment = next((item for item in attachments if not isinstance(item, dict)), None)
+    if invalid_attachment is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Chaque pièce jointe complémentaire doit être un objet JSON.",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Soumission start: numero=%s, mainFile=%s, attachments=%s, env=%s",
+        payload.get("numeroFactureSaisi"),
+        isinstance(main_file, dict),
+        len(attachments),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.submit_prepared_payload(
+            payload,
+            main_file=main_file,
+            attachments=attachments,
+        )
+        result["externalId"] = _extract_external_id(result.get("response"))
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Soumission success: numero=%s, externalId=%s, duration=%s ms",
             payload.get("numeroFactureSaisi"),
-            isinstance(main_file, dict),
-            len(attachments),
+            result.get("externalId"),
+            duration_ms,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Soumission error: numero=%s, duration=%s ms, error=%s",
+            payload.get("numeroFactureSaisi"),
+            duration_ms,
+            message,
         )
 
-        try:
-            settings = load_chorus_settings()
-            service = ChorusSubmissionService(settings)
-            result = service.submit_prepared_payload(
-                payload,
-                main_file=main_file,
-                attachments=attachments,
-            )
-            result["externalId"] = _extract_external_id(result.get("response"))
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Soumission success: numero=%s, externalId=%s, duration=%s ms",
-                payload.get("numeroFactureSaisi"),
-                result.get("externalId"),
-                duration_ms,
-            )
-            self._write_json(HTTPStatus.OK, result)
-        except Exception as error:  # noqa: BLE001
-            message = str(error) or error.__class__.__name__
-            api_calls = []
-            if "service" in locals():
-                api_calls = list(service.client.api_calls)
-            duration_ms = round((perf_counter() - started_at) * 1000)
-            self._debug(
-                "Soumission error: numero=%s, duration=%s ms, error=%s",
-                payload.get("numeroFactureSaisi"),
-                duration_ms,
-                message,
-            )
-
-            self._write_json(
-                HTTPStatus.BAD_GATEWAY,
-                {
-                    "ok": False,
-                    "error": message,
-                    "apiCalls": api_calls,
-                },
-            )
-
-    def log_message(self, format: str, *args: Any) -> None:
-        """Réduit un peu le bruit console tout en gardant les logs utiles."""
-        sys.stdout.write(
-            "%s - - [%s] %s\n"
-            % (
-                self.address_string(),
-                self.log_date_time_string(),
-                format % args,
-            )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
         )
-        sys.stdout.flush()
 
 
 def main() -> int:
+    logging.basicConfig(level=os.environ.get("CHORUS_LOG_LEVEL", "INFO").upper())
     print(f"Python executable: {sys.executable}")
     print(f"Repository root:    {REPO_ROOT}")
-    print(f"Bridge listening on http://{HOST}:{PORT}")
+    print(f"FastAPI listening on http://{HOST}:{PORT}")
+    print(f"  - OAuth token: {OAUTH_TOKEN_PATH}")
     print(f"  - Submit:      {SUBMIT_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")
     print(f"  - Annuaire:    {SYNC_ANNUAIRE_PATH}")
     print(f"  - SIRET info:  {SIRET_INFO_PATH}")
+    print(f"  - Structures:  {ACTIVE_RECIPIENT_STRUCTURES_PATH}")
     print(f"  - Invoices:    {SUPPLIER_INVOICES_SEARCH_PATH}")
 
-    server = ThreadingHTTPServer((HOST, PORT), ChorusSubmitHandler)
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    uvicorn.run(app, host=HOST, port=PORT)
 
     return 0
 

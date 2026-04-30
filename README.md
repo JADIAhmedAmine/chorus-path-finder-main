@@ -44,6 +44,26 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+API serveur locale :
+
+```bash
+python scripts/chorus_submit_server.py
+```
+
+Le serveur lit `.env.local` par défaut. `.env.example` reste seulement un modèle.
+
+Endpoints principaux :
+
+- `POST /api/chorus/oauth-token` : récupère un token OAuth2 court depuis les secrets serveur
+- `POST /api/chorus/submit` : soumet une facture préparée
+- `POST /api/extract-pdf-text` : extrait le texte d’un PDF encodé en base64
+
+Conteneur :
+
+```bash
+docker compose up --build chorus-api
+```
+
 Variables minimales à renseigner :
 
 - `CHORUS_BASE_URL`
@@ -53,7 +73,7 @@ Authentification API :
 
 - soit `CHORUS_API_KEY` si tu as déjà un bearer token
 - soit `CHORUS_TOKEN_URL` + `CHORUS_CLIENT_ID` + `CHORUS_CLIENT_SECRET`
-- si ces variables `CHORUS_*` ne sont pas définies, le script réutilise automatiquement `VITE_CHORUS_TOKEN_URL`, `VITE_CHORUS_CLIENT_ID`, `VITE_CHORUS_CLIENT_SECRET` et `VITE_CHORUS_SCOPE` depuis `.env.local`
+- les secrets restent côté serveur/Python : ne les expose pas en `VITE_*`
 
 Variables utiles pour éviter de ressaisir le contexte :
 

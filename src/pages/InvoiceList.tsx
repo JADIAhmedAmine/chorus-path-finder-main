@@ -12,7 +12,6 @@ import {
   type ChorusSupplierInvoicesSearchInput,
   type ChorusSupplierInvoicesSearchResult,
 } from '@/lib/chorus/backendAutomation';
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import { saveChorusLiveInvoiceDetails } from '@/lib/chorus/liveInvoiceDetails';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import type { Invoice, InvoiceStatusInternal, PublicCustomer, SupplierOrganization } from '@/types';
@@ -148,6 +147,31 @@ function extractChorusStatus(record: Record<string, unknown>): string {
   return '';
 }
 
+function extractChorusStatusReason(record: Record<string, unknown>): { code?: string; label?: string } {
+  const code = firstString(record, [
+    'statusReasonCode',
+    'codeMotifRejet',
+    'codeRejet',
+    'motifRejetCode',
+    'codeEtatCourant',
+  ]);
+  const label = firstString(record, [
+    'statusReasonLabel',
+    'commentaireEtatCourant',
+    'commentaireStatutCourant',
+    'commentaireEtat',
+    'motifRejet',
+    'motifRefus',
+    'libelleMotifRejet',
+    'messageRejet',
+  ]);
+
+  return {
+    code: code || undefined,
+    label: label || undefined,
+  };
+}
+
 function firstNumber(record: Record<string, unknown>, keys: string[]): number {
   for (const key of keys) {
     const rawValue = record[key];
@@ -191,16 +215,18 @@ function countChorusSearchCriteria(form: ChorusInvoiceSearchForm): number {
 
 function buildChorusSupplierInvoiceSearchInput(
   form: ChorusInvoiceSearchForm,
-  idFournisseur: number,
+  idFournisseur?: number,
 ): ChorusSupplierInvoicesSearchInput {
   const payload: ChorusSupplierInvoicesSearchInput = {
-    idFournisseur,
     typeFacture: 'FACTURE',
     rechercheFactureParFournisseur: {
       triColonne: form.triColonne,
       triSens: form.triSens,
     },
   };
+  if (idFournisseur !== undefined) {
+    payload.idFournisseur = idFournisseur;
+  }
 
   addTextCriterion(payload, 'numeroFacture', form.numeroFacture);
   addTextCriterion(payload, 'destinataire', form.destinataire);
@@ -331,7 +357,17 @@ function normalizeChorusStatus(value: string): InvoiceStatusInternal {
   if (normalized.includes('PAY') || normalized.includes('MISE_EN_PAIEMENT')) {
     return 'PAID';
   }
-  if (normalized.includes('REJET')) {
+  if (normalized.includes('TECHNIQUE')) {
+    return 'REJECTED_TECHNICAL';
+  }
+  if (
+    normalized.includes('REJET')
+    || normalized.includes('REFUS')
+    || normalized.includes('NON_CONFORME')
+    || normalized.includes('ERREUR')
+    || normalized.includes('ABANDON')
+    || normalized.includes('SUPPRIM')
+  ) {
     return 'REJECTED_BUSINESS';
   }
   if (normalized.includes('ACCEPT') || normalized.includes('VALID')) {
@@ -341,6 +377,10 @@ function normalizeChorusStatus(value: string): InvoiceStatusInternal {
     return 'ARCHIVED';
   }
   return 'SUBMITTED_TO_CHORUS';
+}
+
+function isRejectedInvoice(invoice: Invoice): boolean {
+  return invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL';
 }
 
 function buildChorusSupplier(idFournisseur: number, records: unknown[]): SupplierOrganization {
@@ -437,6 +477,7 @@ function normalizeChorusInvoiceRecord(
   );
   const updatedAt = normalizeDate(firstString(record, ['dateHeureEtatCourant', 'dateEtatCourant', 'dateDerniereModification', 'dateDepot']) || dateFacture);
   const statusChorus = extractChorusStatus(record);
+  const statusReason = extractChorusStatusReason(record);
   const stableKey = firstString(record, ['idFacture', 'idDemandePaiement', 'id']) || invoiceNumber || String(index + 1);
 
   return {
@@ -458,6 +499,8 @@ function normalizeChorusInvoiceRecord(
     depositMode: firstString(record, ['modeDepot']) || 'CHORUS',
     statusInternal: normalizeChorusStatus(statusChorus),
     statusChorus: statusChorus || undefined,
+    statusReasonCode: statusReason.code,
+    statusReasonLabel: statusReason.label,
     requiresHumanReview: false,
     currentRevision: 1,
     submittedAt: dateDepot,
@@ -501,6 +544,7 @@ export default function InvoiceList() {
         supplier?.siret,
         customer?.legalName,
         inv.statusChorus,
+        inv.statusReasonLabel,
       ].some(v => v?.toLowerCase().includes(search.toLowerCase()));
 
       return matchSearch;
@@ -516,7 +560,7 @@ export default function InvoiceList() {
   );
 
   const exportCSV = () => {
-    const headers = ['Numéro', 'Fournisseur', 'SIRET', 'Client', 'Date facture', 'Date dépôt / heure statut', 'Montant TTC', 'Statut'];
+    const headers = ['Numéro', 'Fournisseur', 'SIRET', 'Client', 'Date facture', 'Date dépôt / heure statut', 'Montant TTC', 'Statut', 'Motif rejet'];
     const rows = filtered.map(inv => {
       const supplier = supplierById.get(inv.supplierOrganizationId);
       const customer = customerById.get(inv.publicCustomerId);
@@ -529,6 +573,7 @@ export default function InvoiceList() {
         formatOptionalTableDateTime(inv.submittedAt),
         inv.totalTtc,
         inv.statusChorus || inv.statusInternal,
+        inv.statusReasonLabel || '',
       ].join(';');
     });
     const csv = [headers.join(';'), ...rows].join('\n');
@@ -560,12 +605,13 @@ export default function InvoiceList() {
 
     try {
       const config = loadChorusConfig();
-      const idFournisseur = Number(config.submissionSupplierId || FIXED_CHORUS_SUPPLIER_ID_TEXT);
+      const configuredSupplierId = asNumber(config.submissionSupplierId);
+      const idFournisseur = configuredSupplierId > 0 ? configuredSupplierId : undefined;
       const client = new ChorusBackendAutomationClient(config);
       const result = await client.searchSupplierInvoices(
         buildChorusSupplierInvoiceSearchInput(chorusSearchForm, idFournisseur),
       );
-      const resolvedSupplierId = result.idFournisseur || idFournisseur;
+      const resolvedSupplierId = result.idFournisseur || idFournisseur || 0;
       const nextInvoices = result.invoices.map((item, index) => normalizeChorusInvoiceRecord(item, index, resolvedSupplierId));
       const nextSupplier = buildChorusSupplier(resolvedSupplierId, result.invoices);
       const nextCustomers = buildChorusCustomers(result.invoices);
@@ -879,7 +925,14 @@ export default function InvoiceList() {
                         <span className="text-xs px-2 py-0.5 rounded bg-muted">{inv.sourceFormat}</span>
                       </td>
                       <td className="p-3">
-                        <ChorusStatusPill value={inv.statusChorus || inv.statusInternal} />
+                        <div className="space-y-1">
+                          <ChorusStatusPill value={inv.statusChorus || inv.statusInternal} />
+                          {isRejectedInvoice(inv) && inv.statusReasonLabel && (
+                            <p className="max-w-[260px] text-xs text-destructive">
+                              {inv.statusReasonLabel}
+                            </p>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 text-xs text-muted-foreground hidden lg:table-cell">{formatDate(inv.updatedAt)}</td>
                     </tr>

@@ -4,8 +4,8 @@ from copy import deepcopy
 from decimal import Decimal
 from typing import Any
 
-from .client import ChorusClient, ChorusUploadAttachmentResult
-from .config import ChorusSettings, FIXED_SUPPLIER_ID
+from .client import ChorusClient, ChorusUploadAttachmentResult, as_int
+from .config import ChorusSettings
 from .files import is_signed_pdf_base64, is_signed_pdf_path
 from .models import ChorusMinimalInvoiceInput
 from .payload import build_minimal_submission_payload
@@ -29,8 +29,20 @@ class ChorusSubmissionService:
         self.settings = settings
         self.client = client or ChorusClient(settings)
 
+    def _resolve_real_supplier_id(self, *preferred_ids: int | None) -> int:
+        preferred_id = next((item for item in preferred_ids if item is not None), None)
+        additional_preferred_ids = tuple(
+            item
+            for item in preferred_ids
+            if item is not None and item != preferred_id
+        )
+        return self.client.resolve_active_recipient_structure_id(
+            preferred_id,
+            additional_preferred_ids=additional_preferred_ids,
+        )
+
     def _prepare_submission(self, invoice: ChorusMinimalInvoiceInput) -> tuple[dict[str, Any], ChorusUploadAttachmentResult | None]:
-        supplier_id = self.client.resolve_supplier_id(FIXED_SUPPLIER_ID)
+        supplier_id = self._resolve_real_supplier_id(invoice.supplier_id, self.settings.default_supplier_id)
         recipient_code = invoice.recipient_code or self.settings.default_code_destinataire
         if not recipient_code:
             raise ValueError("codeDestinataire manquant.")
@@ -100,13 +112,18 @@ class ChorusSubmissionService:
         payload, _upload_result = self._prepare_submission(invoice)
         return payload
 
-    def _enforce_fixed_supplier_id(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _enforce_configured_supplier_id(self, payload: dict[str, Any]) -> dict[str, Any]:
         fournisseur = payload.get("fournisseur")
         if not isinstance(fournisseur, dict):
             fournisseur = {}
             payload["fournisseur"] = fournisseur
 
-        fournisseur["idFournisseur"] = FIXED_SUPPLIER_ID
+        supplier_id = self._resolve_real_supplier_id(
+            self.settings.default_supplier_id,
+            as_int(fournisseur.get("idFournisseur")),
+        )
+
+        fournisseur["idFournisseur"] = supplier_id
         return payload
 
     def submit_prepared_payload(
@@ -117,7 +134,7 @@ class ChorusSubmissionService:
         attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         self.client.reset_api_calls()
-        final_payload = self._enforce_fixed_supplier_id(deepcopy(payload))
+        final_payload = self._enforce_configured_supplier_id(deepcopy(payload))
         main_upload_result: ChorusUploadAttachmentResult | None = None
         additional_uploads: list[tuple[dict[str, Any], ChorusUploadAttachmentResult]] = []
 

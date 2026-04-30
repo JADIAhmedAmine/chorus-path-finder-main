@@ -257,6 +257,52 @@ function asTimestamp(value: unknown): string {
   return text || new Date(0).toISOString();
 }
 
+function firstRecordString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = asString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function inferChorusInvoiceStatus(value: unknown): Invoice['statusInternal'] | undefined {
+  const text = asString(value).toUpperCase();
+  if (!text) {
+    return undefined;
+  }
+
+  if (text.includes('PAY') || text.includes('MISE_EN_PAIEMENT')) {
+    return 'PAID';
+  }
+  if (text.includes('TECHNIQUE')) {
+    return 'REJECTED_TECHNICAL';
+  }
+  if (
+    text.includes('REJET')
+    || text.includes('REFUS')
+    || text.includes('NON_CONFORME')
+    || text.includes('ERREUR')
+    || text.includes('ABANDON')
+    || text.includes('SUPPRIM')
+  ) {
+    return 'REJECTED_BUSINESS';
+  }
+  if (text.includes('ACCEPT') || text.includes('VALID')) {
+    return 'ACCEPTED_BY_CHORUS';
+  }
+  if (text.includes('ARCHIV')) {
+    return 'ARCHIVED';
+  }
+  if (text.includes('DEPOSE') || text.includes('MISE_A_DISPOSITION') || text.includes('TRANSMISE')) {
+    return 'SUBMITTED_TO_CHORUS';
+  }
+
+  return undefined;
+}
+
 function normalizeInvoiceStatus(value: unknown): Invoice['statusInternal'] {
   const text = asString(value);
   const allowed: Invoice['statusInternal'][] = [
@@ -419,6 +465,21 @@ function normalizePublicService(record: Record<string, unknown>, index: number):
 }
 
 function normalizeInvoice(record: Record<string, unknown>, index: number): Invoice {
+  const statusChorus = firstRecordString(record, [
+    'statusChorus',
+    'libelleStatutCourant',
+    'statutCourant',
+    'statutFacture',
+    'statut',
+    'etatCourant',
+    'codeStatutCourant',
+    'libelleEtatCourant',
+  ]);
+  const normalizedStatus = normalizeInvoiceStatus(record.statusInternal);
+  const inferredStatus = normalizedStatus === 'DRAFT_UPLOADED'
+    ? inferChorusInvoiceStatus(statusChorus || record.statusInternal)
+    : undefined;
+
   return {
     id: asString(record.id) || `invoice-${index + 1}`,
     tenantId: asString(record.tenantId) || 'external',
@@ -440,10 +501,19 @@ function normalizeInvoice(record: Record<string, unknown>, index: number): Invoi
     purchaseOrderNumber: asString(record.purchaseOrderNumber) || undefined,
     marketNumber: asString(record.marketNumber) || undefined,
     depositMode: asString(record.depositMode) || 'API',
-    statusInternal: normalizeInvoiceStatus(record.statusInternal),
-    statusChorus: asString(record.statusChorus) || undefined,
-    statusReasonCode: asString(record.statusReasonCode) || undefined,
-    statusReasonLabel: asString(record.statusReasonLabel) || undefined,
+    statusInternal: inferredStatus || normalizedStatus,
+    statusChorus: statusChorus || undefined,
+    statusReasonCode: firstRecordString(record, ['statusReasonCode', 'codeMotifRejet', 'codeRejet', 'motifRejetCode', 'codeEtatCourant']) || undefined,
+    statusReasonLabel: firstRecordString(record, [
+      'statusReasonLabel',
+      'commentaireEtatCourant',
+      'commentaireStatutCourant',
+      'commentaireEtat',
+      'motifRejet',
+      'motifRefus',
+      'libelleMotifRejet',
+      'messageRejet',
+    ]) || undefined,
     extractionConfidence: record.extractionConfidence == null ? undefined : asNumber(record.extractionConfidence),
     requiresHumanReview: asBoolean(record.requiresHumanReview, false),
     currentRevision: asNumber(record.currentRevision, 1),

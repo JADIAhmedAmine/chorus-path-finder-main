@@ -97,6 +97,14 @@ function basicAuthValue(login, password) {
   return Buffer.from(raw, 'utf8').toString('base64');
 }
 
+function envCredential(env, environment, suffix, fallback = '') {
+  return envValue(
+    env,
+    `CHORUS_${environment.toUpperCase()}_${suffix}`,
+    envValue(env, `CHORUS_${suffix}`, fallback),
+  );
+}
+
 function readConfig() {
   const envPath = path.join(process.cwd(), '.env.local');
   if (!fs.existsSync(envPath)) {
@@ -105,6 +113,7 @@ function readConfig() {
 
   const env = parseEnvFile(fs.readFileSync(envPath, 'utf8'));
   const mode = envValue(env, 'VITE_CHORUS_MODE', 'mock') === 'direct' ? 'direct' : 'mock';
+  const chorusEnv = envValue(env, 'CHORUS_ENV', envValue(env, 'VITE_CHORUS_ENV', 'qualif')).toLowerCase();
   const connectionTestMethod = envValue(env, 'VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() === 'POST'
     ? 'POST'
     : 'GET';
@@ -112,13 +121,13 @@ function readConfig() {
   return {
     enabled: envBool(env, 'VITE_CHORUS_ENABLED', mode === 'direct'),
     mode,
-    tokenUrl: envValue(env, 'VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token'),
+    tokenUrl: envCredential(env, chorusEnv, 'TOKEN_URL', envValue(env, 'VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token')),
     apiBaseUrl: envValue(env, 'VITE_CHORUS_API_BASE_URL', ''),
-    clientId: envValue(env, 'VITE_CHORUS_CLIENT_ID', ''),
-    clientSecret: envValue(env, 'VITE_CHORUS_CLIENT_SECRET', ''),
-    scope: envValue(env, 'VITE_CHORUS_SCOPE', 'openid'),
-    technicalLogin: envValue(env, 'VITE_CHORUS_TECHNICAL_LOGIN', ''),
-    technicalPassword: envValue(env, 'VITE_CHORUS_TECHNICAL_PASSWORD', ''),
+    clientId: envCredential(env, chorusEnv, 'CLIENT_ID'),
+    clientSecret: envCredential(env, chorusEnv, 'CLIENT_SECRET'),
+    scope: envCredential(env, chorusEnv, 'SCOPE', envValue(env, 'VITE_CHORUS_SCOPE', 'openid')),
+    technicalLogin: envCredential(env, chorusEnv, 'TECHNICAL_LOGIN'),
+    technicalPassword: envCredential(env, chorusEnv, 'TECHNICAL_PASSWORD'),
     connectionTestPath: envValue(env, 'VITE_CHORUS_CONNECTION_TEST_PATH', ''),
     connectionTestMethod,
     uploadFilePath: envValue(env, 'VITE_CHORUS_UPLOAD_FILE_PATH', ''),
@@ -131,9 +140,9 @@ function validateConfig(config) {
 
   if (!config.enabled) missing.push('VITE_CHORUS_ENABLED=true');
   if (config.mode !== 'direct') missing.push('VITE_CHORUS_MODE=direct');
-  if (!config.tokenUrl) missing.push('VITE_CHORUS_TOKEN_URL');
-  if (!config.clientId) missing.push('VITE_CHORUS_CLIENT_ID');
-  if (!config.clientSecret) missing.push('VITE_CHORUS_CLIENT_SECRET');
+  if (!config.tokenUrl) missing.push('CHORUS_TOKEN_URL');
+  if (!config.clientId) missing.push('CHORUS_CLIENT_ID');
+  if (!config.clientSecret) missing.push('CHORUS_CLIENT_SECRET');
 
   if (missing.length > 0) {
     throw new Error(`Configuration live incomplète: ${missing.join(', ')}`);

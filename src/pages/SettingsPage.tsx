@@ -10,15 +10,25 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
+import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadAuthSession } from '@/lib/auth/session';
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
-import { loadChorusConfig, maskSecret, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
-import type { ChorusConfig, ChorusConnectionResult, ChorusTechnicalContextResolutionResult } from '@/types/chorus';
+import { applyEnvironmentPreset, loadChorusConfig, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
+import type {
+  ChorusConfig,
+  ChorusConnectionResult,
+  ChorusEnvironment,
+  ChorusTechnicalContextResolutionResult,
+} from '@/types/chorus';
 import { Loader2, PlugZap } from 'lucide-react';
 
 const connectorModeLabels = {
   mock: 'Mock / démonstration',
   direct: 'Connexion directe (dev uniquement)',
+} as const;
+
+const environmentLabels = {
+  qualif: 'Qualification (sandbox PISTE)',
+  prod: 'Production (PISTE)',
 } as const;
 
 const connectionMethodLabels = {
@@ -55,6 +65,7 @@ export default function SettingsPage() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [lastConnectionResult, setLastConnectionResult] = useState<ChorusConnectionResult | null>(null);
   const [resolvingTechnicalContext, setResolvingTechnicalContext] = useState(false);
+  const [resolvingSupplierId, setResolvingSupplierId] = useState(false);
   const [lastTechnicalContextResult, setLastTechnicalContextResult] = useState<ChorusTechnicalContextResolutionResult | null>(null);
   const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? '');
   const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState('');
@@ -86,13 +97,25 @@ export default function SettingsPage() {
     setConfig((previous) => {
       const nextConfig = {
         ...previous,
-        [field]: field === 'submissionSupplierId'
-          ? FIXED_CHORUS_SUPPLIER_ID_TEXT as ChorusConfig[K]
-          : value,
+        [field]: value,
       };
 
       saveChorusConfig(nextConfig);
       return nextConfig;
+    });
+  };
+
+  const handleEnvironmentChange = (env: ChorusEnvironment) => {
+    setConfig((previous) => {
+      const nextConfig = applyEnvironmentPreset(previous, env);
+      saveChorusConfig(nextConfig);
+      return nextConfig;
+    });
+    toast({
+      title: 'Environnement changé',
+      description: env === 'prod'
+        ? 'URLs PISTE de production appliquées. Pense à renseigner des credentials prod.'
+        : 'URLs PISTE qualification (sandbox) appliquées.',
     });
   };
 
@@ -147,7 +170,7 @@ export default function SettingsPage() {
       const nextConfig: ChorusConfig = {
         ...config,
         submissionCurrentUserId: result.userId !== undefined ? String(result.userId) : config.submissionCurrentUserId,
-        submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
+        submissionSupplierId: result.supplierStructureId !== undefined ? String(result.supplierStructureId) : config.submissionSupplierId,
         submissionSupplierServiceId: result.supplierServiceId !== undefined ? String(result.supplierServiceId) : config.submissionSupplierServiceId,
       };
 
@@ -168,6 +191,35 @@ export default function SettingsPage() {
       });
     } finally {
       setResolvingTechnicalContext(false);
+    }
+  };
+
+  const handleResolveSupplierId = async () => {
+    setResolvingSupplierId(true);
+
+    try {
+      const client = new ChorusBackendAutomationClient(config);
+      const result = await client.getActiveRecipientStructures(config.submissionSupplierId || undefined);
+      const nextConfig: ChorusConfig = {
+        ...config,
+        submissionSupplierId: String(result.idFournisseur),
+      };
+
+      setConfig(nextConfig);
+      saveChorusConfig(nextConfig);
+      toast({
+        title: 'idFournisseur récupéré',
+        description: `${result.idFournisseur} depuis les structures actives destinataire.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      toast({
+        title: 'Échec récupération idFournisseur',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setResolvingSupplierId(false);
     }
   };
 
@@ -210,6 +262,21 @@ export default function SettingsPage() {
               </Select>
             </div>
 
+            <div className="space-y-2 md:col-span-2">
+              <Label>Environnement Chorus</Label>
+              <Select value={config.environment} onValueChange={(value: ChorusEnvironment) => handleEnvironmentChange(value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="qualif">{environmentLabels.qualif}</SelectItem>
+                  <SelectItem value="prod">{environmentLabels.prod}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Bascule automatiquement les URLs OAuth2, API factures et services utilisateurs Chorus.
+                Les secrets PISTE et le compte technique sont lus par l&apos;API serveur, jamais par le navigateur.
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="token-url">URL OAuth2</Label>
               <Input id="token-url" value={config.tokenUrl} onChange={(e) => handleFieldChange('tokenUrl', e.target.value)} placeholder="https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token" />
@@ -218,26 +285,6 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <Label htmlFor="api-base-url">Base API</Label>
               <Input id="api-base-url" value={config.apiBaseUrl} onChange={(e) => handleFieldChange('apiBaseUrl', e.target.value)} placeholder="https://..." />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="client-id">Client ID PISTE</Label>
-              <Input id="client-id" value={config.clientId} onChange={(e) => handleFieldChange('clientId', e.target.value)} placeholder="client-id" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="client-secret">Client secret PISTE</Label>
-              <Input id="client-secret" type="password" value={config.clientSecret} onChange={(e) => handleFieldChange('clientSecret', e.target.value)} placeholder="client-secret" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="technical-login">Login compte technique</Label>
-              <Input id="technical-login" value={config.technicalLogin} onChange={(e) => handleFieldChange('technicalLogin', e.target.value)} placeholder="login technique" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="technical-password">Mot de passe compte technique</Label>
-              <Input id="technical-password" type="password" value={config.technicalPassword} onChange={(e) => handleFieldChange('technicalPassword', e.target.value)} placeholder="mot de passe technique" />
             </div>
 
             <div className="space-y-2">
@@ -424,8 +471,8 @@ export default function SettingsPage() {
                   <p className="mt-1 text-muted-foreground">
                     Les endpoints configurés pointent vers la qualification / sandbox. Dans ton contexte actuel, la récupération automatique
                     via `consulter/compte` et `monCompte/recuperer/rattachements` doit être considérée comme indisponible.
-                    Renseigne donc `idUtilisateurCourant` et `idServiceFournisseur` manuellement dans ce bloc.
-                    `idFournisseur` reste fixé à `26359578`.
+                    Renseigne donc `idUtilisateurCourant`, `idFournisseur` et `idServiceFournisseur` manuellement dans ce bloc
+                    ou via `.env.local`.
                   </p>
                 </div>
               )}
@@ -435,15 +482,9 @@ export default function SettingsPage() {
                   <p className="font-medium">{lastTechnicalContextResult.message}</p>
                   <p className="text-muted-foreground">
                     `idUtilisateurCourant`: {lastTechnicalContextResult.userId ?? 'non trouvé'} ·
-                    `idFournisseur`: {FIXED_CHORUS_SUPPLIER_ID_TEXT} (fixe) ·
+                    `idFournisseur`: {(lastTechnicalContextResult.supplierStructureId ?? config.submissionSupplierId) || 'non trouvé'} ·
                     `idServiceFournisseur`: {lastTechnicalContextResult.supplierServiceId ?? 'non trouvé'}
                   </p>
-                  {lastTechnicalContextResult.supplierStructureId !== undefined
-                    && String(lastTechnicalContextResult.supplierStructureId) !== FIXED_CHORUS_SUPPLIER_ID_TEXT && (
-                    <p className="text-xs text-muted-foreground">
-                      Chorus a retourné `{lastTechnicalContextResult.supplierStructureId}`, mais l&apos;application conserve la valeur fixe `{FIXED_CHORUS_SUPPLIER_ID_TEXT}`.
-                    </p>
-                  )}
                   <p className="text-xs text-muted-foreground">
                     Le rapprochement du fournisseur par SIRET est {lastTechnicalContextResult.matchedOnSupplierSiret ? 'réussi' : 'approximatif'}.
                   </p>
@@ -459,9 +500,15 @@ export default function SettingsPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="submission-supplier-id">idFournisseur</Label>
-                <Input id="submission-supplier-id" value={config.submissionSupplierId} readOnly />
+                <div className="flex gap-2">
+                  <Input id="submission-supplier-id" value={config.submissionSupplierId} onChange={(e) => handleFieldChange('submissionSupplierId', e.target.value)} placeholder="Auto via Chorus" />
+                  <Button type="button" variant="outline" onClick={handleResolveSupplierId} disabled={resolvingSupplierId}>
+                    {resolvingSupplierId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Récupérer
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Valeur fixee pour toutes les soumissions: `26359578`.
+                  Appelle `recuperer/structures/actives/destinataire` côté serveur si le champ est vide.
                 </p>
               </div>
 
@@ -552,7 +599,7 @@ export default function SettingsPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <InfoTile label="Mode" value={connectorModeLabels[config.mode]} />
             <InfoTile label="Statut" value={connectorStatus} />
-            <InfoTile label="Client secret" value={maskSecret(config.clientSecret)} />
+            <InfoTile label="Secrets Chorus" value="Côté serveur" />
           </div>
 
           <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">

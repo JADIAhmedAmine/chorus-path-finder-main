@@ -14,7 +14,9 @@ from chorus_python.client import ChorusUploadAttachmentResult
 
 
 class FakeChorusClient:
-    def __init__(self) -> None:
+    def __init__(self, active_recipient_structure_id: int = 26359578) -> None:
+        self.active_recipient_structure_id = active_recipient_structure_id
+        self.active_recipient_calls: list[dict[str, object]] = []
         self.api_calls: list[dict[str, object]] = []
         self.uploaded_paths: list[Path] = []
         self.uploaded_content: list[dict[str, str]] = []
@@ -25,6 +27,20 @@ class FakeChorusClient:
 
     def resolve_supplier_id(self, supplier_id: int | None) -> int:
         return supplier_id or 26359578
+
+    def resolve_active_recipient_structure_id(
+        self,
+        preferred_id: int | None = None,
+        *,
+        additional_preferred_ids: tuple[int, ...] = (),
+    ) -> int:
+        self.active_recipient_calls.append(
+            {
+                "preferred_id": preferred_id,
+                "additional_preferred_ids": additional_preferred_ids,
+            }
+        )
+        return self.active_recipient_structure_id
 
     def upload_attachment(self, pdf_path: Path) -> ChorusUploadAttachmentResult:
         self.uploaded_paths.append(pdf_path)
@@ -271,6 +287,59 @@ class SoumissionFactureTest(unittest.TestCase):
         )
 
         self.assertEqual(result["payload"]["modeDepot"], "DEPOT_PDF_SIGNE_API")
+
+    def test_submit_prepared_payload_resolves_real_supplier_id_from_active_recipient_structures(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient(active_recipient_structure_id=987654321)
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "REAL-SUPPLIER-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "ESPECE",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            attachments=[],
+        )
+
+        self.assertEqual(result["payload"]["fournisseur"]["idFournisseur"], 987654321)
+        self.assertEqual(fake_client.active_recipient_calls, [
+            {
+                "preferred_id": 26359578,
+                "additional_preferred_ids": (32242033407300,),
+            }
+        ])
 
 
 if __name__ == "__main__":

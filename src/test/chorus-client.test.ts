@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 describe('chorus connector', () => {
-  it('retrieves an oauth token and calls the connection endpoint with cpro-account', async () => {
+  it('retrieves an oauth token from the backend and calls the connection endpoint', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'token-123456789' }))
       .mockResolvedValueOnce(jsonResponse({ status: 'ok' }));
@@ -105,17 +105,16 @@ describe('chorus connector', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const tokenCall = fetchMock.mock.calls[0];
-    expect(tokenCall?.[0]).toBe('https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token');
+    expect(tokenCall?.[0]).toBe('http://127.0.0.1:8008/api/chorus/oauth-token');
     expect((tokenCall?.[1] as RequestInit).method).toBe('POST');
-    expect(String((tokenCall?.[1] as RequestInit).body)).toContain('grant_type=client_credentials');
-    expect(String((tokenCall?.[1] as RequestInit).body)).toContain('client_id=client-id');
+    expect(JSON.parse(String((tokenCall?.[1] as RequestInit).body))).toEqual({ environment: 'qualif' });
 
     const apiCall = fetchMock.mock.calls[1];
     expect(apiCall?.[0]).toBe('https://sandbox-api.example.test/health');
     const headers = (apiCall?.[1] as RequestInit).headers as Record<string, string>;
     expect((apiCall?.[1] as RequestInit).method).toBe('GET');
     expect(headers.Authorization).toBe('Bearer token-123456789');
-    expect(headers['cpro-account']).toBe(window.btoa('tech-user:tech-pass'));
+    expect(headers['cpro-account']).toBeUndefined();
   });
 
   it('uses POST for the connection test when configured', async () => {
@@ -308,12 +307,12 @@ describe('chorus connector', () => {
     expect(result.apiCalls[0]).toMatchObject({
       label: 'Bridge Python local',
       method: 'POST',
-      url: 'https://bridge.example.test/submit',
+      url: 'https://bridge.example.test/api/chorus/submit',
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const bridgeCall = fetchMock.mock.calls[0];
-    expect(bridgeCall?.[0]).toBe('https://bridge.example.test/submit');
+    expect(bridgeCall?.[0]).toBe('https://bridge.example.test/api/chorus/submit');
     const bridgePayload = JSON.parse(String((bridgeCall?.[1] as RequestInit).body));
     expect(bridgePayload.payload.numeroFactureSaisi).toBe('FAC-2026-001');
     expect(bridgePayload.payload.destinataire.codeDestinataire).toBe('23440003400026');
@@ -383,7 +382,7 @@ describe('chorus connector', () => {
         {
           label: 'Bridge Python local',
           method: 'POST',
-          url: 'https://bridge.example.test/submit',
+          url: 'https://bridge.example.test/api/chorus/submit',
         },
         {
           label: 'Upload fichier Chorus: invoice.pdf',
@@ -399,7 +398,7 @@ describe('chorus connector', () => {
     });
 
     const bridgeCall = fetchMock.mock.calls[0];
-    expect(bridgeCall?.[0]).toBe('https://bridge.example.test/submit');
+    expect(bridgeCall?.[0]).toBe('https://bridge.example.test/api/chorus/submit');
     const bridgeBody = JSON.parse(String((bridgeCall?.[1] as RequestInit).body));
     expect(bridgeBody.payload.numeroFactureSaisi).toBe('FAC-2026-001');
     expect(bridgeBody.mainFile.name).toBe('invoice.pdf');

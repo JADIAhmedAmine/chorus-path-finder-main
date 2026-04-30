@@ -28,7 +28,7 @@ describe('chorus technical context', () => {
 
     expect(context).toEqual({
       idUtilisateurCourant: 331,
-      idFournisseur: 26359578,
+      idFournisseur: 160,
       idServiceFournisseur: 436,
       codeCoordonneesBancairesFournisseur: 132,
       codeCadreFacturation: 'A1_FACTURE_FOURNISSEUR',
@@ -76,7 +76,7 @@ describe('chorus technical context', () => {
     });
 
     expect(context.idUtilisateurCourant).toBe(331);
-    expect(context.idFournisseur).toBe(26359578);
+    expect(context.idFournisseur).toBe(160);
     expect(context.idServiceFournisseur).toBe(436);
     expect(context.codeCoordonneesBancairesFournisseur).toBe(132);
   });

@@ -28,11 +28,59 @@ TVA_CODE_FALLBACK_BY_PERCENT = {
     Decimal("20.6"): "TV13",
 }
 
+SENSITIVE_DEBUG_KEY_PARTS = (
+    "authorization",
+    "api_key",
+    "apikey",
+    "client_secret",
+    "password",
+    "secret",
+    "token",
+)
+
+BASE64_DEBUG_KEY_PARTS = (
+    "base64",
+    "fichierfacture",
+    "file_base64",
+    "piecejointefichier",
+)
+
 
 def join_url(base_url: str, path: str) -> str:
     if not path:
         return base_url
     return f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _normalized_debug_key(key: str | None) -> str:
+    return re.sub(r"[^a-z0-9]", "", (key or "").lower())
+
+
+def sanitize_debug_value(value: Any, key: str | None = None) -> Any:
+    normalized_key = _normalized_debug_key(key)
+    if normalized_key and any(part in normalized_key for part in SENSITIVE_DEBUG_KEY_PARTS):
+        return "[masque]"
+
+    if isinstance(value, dict):
+        return {
+            item_key: sanitize_debug_value(item_value, str(item_key))
+            for item_key, item_value in value.items()
+        }
+
+    if isinstance(value, list):
+        return [sanitize_debug_value(item) for item in value]
+
+    if isinstance(value, str) and value:
+        if normalized_key and any(part in normalized_key for part in BASE64_DEBUG_KEY_PARTS):
+            preview = value[:80]
+            return f"[base64 masque, {len(value)} caracteres, apercu: {preview}...]"
+
+    return value
+
+
+def sanitize_debug_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sanitized = sanitize_debug_value(payload)
+    return sanitized if isinstance(sanitized, dict) else {}
 
 
 def parse_rate_percent(label: str | None) -> Decimal | None:
@@ -119,37 +167,58 @@ class ChorusClient:
         self.settings = settings
         self.session = session or requests.Session()
         self._access_token: str | None = None
+        self._access_token_payload: dict[str, Any] | None = None
         self.api_calls: list[dict[str, Any]] = []
 
     def reset_api_calls(self) -> None:
         self.api_calls = []
 
     def _sanitize_debug_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
-        sanitized = dict(payload)
-        for key in ("pieceJointeFichier", "fichierFacture"):
-            value = sanitized.get(key)
-            if isinstance(value, str) and value:
-                preview = value[:80]
-                sanitized[key] = f"[base64 masque, {len(value)} caracteres, apercu: {preview}...]"
-        return sanitized
+        return sanitize_debug_payload(payload)
 
-    def _fetch_oauth_token(self) -> str:
-        if self._access_token:
-            return self._access_token
+    def _print_post_debug(self, *, label: str, url: str, payload: dict[str, Any]) -> None:
+        print(f"\n[debug] POST Chorus - {label}", flush=True)
+        print(f"[debug] URL: {url}", flush=True)
+        print("[debug] Body:", flush=True)
+        print(
+            json.dumps(
+                self._sanitize_debug_payload(payload),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            flush=True,
+        )
 
+    def _print_post_response_debug(self, *, label: str, status_code: int) -> None:
+        print(f"[debug] Réponse Chorus - {label}: HTTP {status_code}", flush=True)
+
+    def fetch_oauth_token_payload(self) -> dict[str, Any]:
+        if self._access_token_payload:
+            return dict(self._access_token_payload)
+
+        token_payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.settings.client_id,
+            "client_secret": self.settings.client_secret,
+            "scope": self.settings.scope or "openid",
+        }
+        self._print_post_debug(
+            label="Récupération du token OAuth2",
+            url=self.settings.token_url,
+            payload=token_payload,
+        )
         response = self.session.post(
             self.settings.token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": self.settings.client_id,
-                "client_secret": self.settings.client_secret,
-                "scope": self.settings.scope or "openid",
-            },
+            data=token_payload,
             headers={
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
             },
             timeout=self.settings.timeout_seconds,
+        )
+        self._print_post_response_debug(
+            label="Récupération du token OAuth2",
+            status_code=response.status_code,
         )
 
         try:
@@ -165,6 +234,16 @@ class ChorusClient:
             raise ChorusApiError("Réponse OAuth2 invalide: access_token absent.")
 
         self._access_token = access_token.strip()
+        self._access_token_payload = {**body, "access_token": self._access_token}
+        return dict(self._access_token_payload)
+
+    def _fetch_oauth_token(self) -> str:
+        if self._access_token:
+            return self._access_token
+
+        self.fetch_oauth_token_payload()
+        if not self._access_token:
+            raise ChorusApiError("Réponse OAuth2 invalide: access_token absent.")
         return self._access_token
 
     def _authorization_header(self) -> str:
@@ -183,12 +262,16 @@ class ChorusClient:
 
     def _post_json_raw(self, path: str, payload: dict[str, Any], label: str) -> tuple[int, Any]:
         url = join_url(self.settings.base_url, path)
+        headers = self._headers()
+        debug_payload = self._sanitize_debug_payload(payload)
+        self._print_post_debug(label=label, url=url, payload=payload)
         response = self.session.post(
             url,
             json=payload,
-            headers=self._headers(),
+            headers=headers,
             timeout=self.settings.timeout_seconds,
         )
+        self._print_post_response_debug(label=label, status_code=response.status_code)
 
         try:
             body = response.json()
@@ -200,7 +283,7 @@ class ChorusClient:
                 "label": label,
                 "method": "POST",
                 "url": url,
-                "requestBody": self._sanitize_debug_payload(payload),
+                "requestBody": debug_payload,
                 "responseStatus": response.status_code,
                 "responseBody": body,
             }
@@ -259,6 +342,53 @@ class ChorusClient:
             "Récupération des structures actives fournisseur",
         )
         return body.get("listeStructures", []) if isinstance(body, dict) else []
+
+    def download_active_recipient_structures(self) -> Any:
+        return self._post_json(
+            "/transverses/v1/recuperer/structures/actives/destinataire",
+            {},
+            "Récupération des structures actives destinataire",
+        )
+
+    def fetch_active_recipient_structures(self) -> list[dict[str, Any]]:
+        body = self.download_active_recipient_structures()
+        return body.get("listeStructures", []) if isinstance(body, dict) else []
+
+    def _active_structure_id(self, structure: Any) -> int | None:
+        if not isinstance(structure, dict):
+            return None
+
+        for key in ("idStructureCPP", "idStructure", "idFournisseur", "idDestinataireCPP", "idDestinataire"):
+            resolved = as_int(structure.get(key))
+            if resolved is not None:
+                return resolved
+        return None
+
+    def resolve_active_recipient_structure_id(
+        self,
+        preferred_id: int | None = None,
+        *,
+        additional_preferred_ids: tuple[int, ...] = (),
+    ) -> int:
+        structures = self.fetch_active_recipient_structures()
+        preferred_ids = tuple(
+            item
+            for item in (preferred_id, *additional_preferred_ids)
+            if item is not None
+        )
+
+        for candidate_id in preferred_ids:
+            for structure in structures:
+                resolved = self._active_structure_id(structure)
+                if resolved is not None and resolved == candidate_id:
+                    return resolved
+
+        for structure in structures:
+            resolved = self._active_structure_id(structure)
+            if resolved is not None:
+                return resolved
+
+        raise ChorusApiError("Aucune structure active destinataire ne contient idStructureCPP/idFournisseur.")
 
     def resolve_supplier_id(self, supplier_id: int | None) -> int:
         if supplier_id is not None:
@@ -463,15 +593,6 @@ class ChorusClient:
         )
 
     def submit_invoice(self, payload: dict[str, Any]) -> Any:
-        print("\n[debug] Final JSON body sent to Chorus /factures/v1/soumettre:", flush=True)
-        print(
-            json.dumps(
-                self._sanitize_debug_payload(payload),
-                ensure_ascii=False,
-                indent=2,
-            ),
-            flush=True,
-        )
         return self._post_json(
             "/factures/v1/soumettre",
             payload,

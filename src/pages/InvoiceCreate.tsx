@@ -33,6 +33,8 @@ import {
 import type { InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
 import type { ChorusApiDebugEntry, ChorusSubmissionReferenceSnapshot, ChorusSubmitInvoiceResult } from '@/types/chorus';
 
+const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
+
 type BatchSubmissionStatus = 'pending' | 'extracting' | 'submitting' | 'success' | 'error';
 
 interface BatchSubmissionResult {
@@ -955,17 +957,21 @@ export default function InvoiceCreate() {
           <p className="text-sm text-muted-foreground">Déposez une facture, vérifiez l’essentiel, puis soumettez-la à Chorus.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setShowAdvancedTools((current) => !current)}
-          >
-            {showAdvancedTools ? 'Masquer l’avancé' : 'Afficher l’avancé'}
-          </Button>
-          <Badge variant={chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'default' : 'secondary'}>
-            {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Chorus direct' : 'Mode mock'}
-          </Badge>
+          {SHOW_DEV_TOOLS && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowAdvancedTools((current) => !current)}
+            >
+              {showAdvancedTools ? 'Masquer l’avancé' : 'Afficher l’avancé'}
+            </Button>
+          )}
+          {SHOW_DEV_TOOLS && (
+            <Badge variant={chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'default' : 'secondary'}>
+              {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Chorus direct' : 'Mode mock'}
+            </Badge>
+          )}
         </div>
       </div>
 
@@ -999,8 +1005,7 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
-      {showAdvancedTools && (
-        <Card>
+      <Card>
           <CardHeader>
             <CardTitle className="text-base">Pièces jointes complémentaires</CardTitle>
             <p className="text-sm text-muted-foreground">
@@ -1098,8 +1103,7 @@ export default function InvoiceCreate() {
               }} />
             </div>
           </CardContent>
-        </Card>
-      )}
+      </Card>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Extraction du document</CardTitle></CardHeader>
@@ -1208,19 +1212,19 @@ export default function InvoiceCreate() {
         <CardHeader><CardTitle className="text-base">Données facture</CardTitle></CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {showAdvancedTools && loadingReferences && (
+            {SHOW_DEV_TOOLS && showAdvancedTools && loadingReferences && (
               <div className="rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
                 Chargement des référentiels fournisseur et des éventuelles listes API configurées…
               </div>
             )}
 
-            {showAdvancedTools && !loadingReferences && !referenceCatalogError && (rawChorusConfig.referenceAnnuaireJsonUrl || rawChorusConfig.referenceAnnuaireXmlUrl) && referenceCatalogMetadata.publicCustomersSource === 'empty' && referenceCatalogMetadata.publicServicesSource === 'empty' && (
+            {SHOW_DEV_TOOLS && showAdvancedTools && !loadingReferences && !referenceCatalogError && (rawChorusConfig.referenceAnnuaireJsonUrl || rawChorusConfig.referenceAnnuaireXmlUrl) && referenceCatalogMetadata.publicCustomersSource === 'empty' && referenceCatalogMetadata.publicServicesSource === 'empty' && (
               <div className="rounded-lg border bg-warning/5 p-3 text-sm text-muted-foreground">
                 L&apos;annuaire Chorus massif n&apos;est pas chargé automatiquement sur cet écran pour éviter les plantages pendant l&apos;upload. Il reste consultable dans `Référentiels`.
               </div>
             )}
 
-            {showAdvancedTools && !loadingReferences && !referenceCatalogError && (publicCustomers.length > 0 || publicServices.length > 0 || suppliers.length > 0) && (
+            {SHOW_DEV_TOOLS && showAdvancedTools && !loadingReferences && !referenceCatalogError && (publicCustomers.length > 0 || publicServices.length > 0 || suppliers.length > 0) && (
               <div className="rounded-lg border bg-muted/10 p-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">Référentiels actifs :</span>
@@ -1473,7 +1477,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {showAdvancedTools && isDirectMode && (
+          {SHOW_DEV_TOOLS && showAdvancedTools && isDirectMode && (
             <div className="rounded-lg border bg-muted/20 p-4 space-y-3">
               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
@@ -1570,7 +1574,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {showAdvancedTools && isDirectMode && (
+          {SHOW_DEV_TOOLS && showAdvancedTools && isDirectMode && (
             <div className="rounded-lg border bg-muted/20 p-4">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -1609,6 +1613,7 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
+      {SHOW_DEV_TOOLS && (
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1773,6 +1778,7 @@ export default function InvoiceCreate() {
           )}
         </CardContent>
       </Card>
+      )}
 
       <Card ref={treatmentDetailsRef}>
         <CardHeader>
@@ -1783,7 +1789,7 @@ export default function InvoiceCreate() {
                 Le statut métier Chorus apparaît ici après chaque soumission.
               </p>
             </div>
-            {hasTreatmentDetails && (
+            {SHOW_DEV_TOOLS && hasTreatmentDetails && (
               <div className="flex items-center gap-2">
                 <Switch
                   id="show-submission-api-return"
@@ -1827,7 +1833,7 @@ export default function InvoiceCreate() {
             <ChorusApiReturnSummaryPanel summary={submissionApiReturnSummary} />
           )}
 
-          {showSubmissionApiReturn && lastSubmissionResult && (
+          {SHOW_DEV_TOOLS && showSubmissionApiReturn && lastSubmissionResult && (
             <div className="rounded-lg border bg-muted/20 p-4">
               <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
               <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
@@ -1836,7 +1842,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {showSubmissionApiReturn && lastApiCalls.length > 0 && (
+          {SHOW_DEV_TOOLS && showSubmissionApiReturn && lastApiCalls.length > 0 && (
             <div className="space-y-3">
               {lastApiCalls.map((apiCall, index) => (
                 <div key={`${apiCall.label}-${apiCall.url}-dedicated-${index}`} className="rounded-lg border bg-muted/20 p-4">
@@ -1854,7 +1860,7 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
-      {showAdvancedTools && hasTreatmentDetails && (
+      {SHOW_DEV_TOOLS && showAdvancedTools && hasTreatmentDetails && (
         <div className="space-y-4">
           {lastSubmissionError && (
             <div ref={submissionErrorRef}>
@@ -1887,7 +1893,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {showSubmissionApiReturn && !lastSubmissionResult && lastApiCalls.length > 0 && (
+          {SHOW_DEV_TOOLS && showSubmissionApiReturn && !lastSubmissionResult && lastApiCalls.length > 0 && (
             <Card>
               <CardHeader><CardTitle className="text-base">Retour API après soumission</CardTitle></CardHeader>
               <CardContent className="space-y-3">
@@ -1940,11 +1946,11 @@ export default function InvoiceCreate() {
                     <ExtractionInfoRow label="Pièces jointes uploadées" value={String(lastSubmissionResult.uploadedFiles.length)} />
                   </div>
 
-                  {showSubmissionApiReturn && submissionApiReturnSummary && (
+                  {SHOW_DEV_TOOLS && showSubmissionApiReturn && submissionApiReturnSummary && (
                     <ChorusApiReturnSummaryPanel summary={submissionApiReturnSummary} />
                   )}
 
-                  {showSubmissionApiReturn && lastSubmissionResult.uploadedFiles.length > 0 && (
+                  {SHOW_DEV_TOOLS && showSubmissionApiReturn && lastSubmissionResult.uploadedFiles.length > 0 && (
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <p className="text-sm font-medium">Retour upload des pièces jointes</p>
                       <div className="mt-3 space-y-3">
@@ -1966,7 +1972,7 @@ export default function InvoiceCreate() {
                     </div>
                   )}
 
-                  {showSubmissionApiReturn && (
+                  {SHOW_DEV_TOOLS && showSubmissionApiReturn && (
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
                       <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
@@ -1975,7 +1981,7 @@ export default function InvoiceCreate() {
                     </div>
                   )}
 
-                  {showAdvancedTools && (
+                  {SHOW_DEV_TOOLS && showAdvancedTools && (
                     <div className="rounded-lg border bg-muted/20 p-4">
                       <p className="text-sm font-medium">Payload final soumis par le bridge Python</p>
                       <p className="mt-1 text-xs text-muted-foreground">
@@ -1992,7 +1998,7 @@ export default function InvoiceCreate() {
             </div>
           )}
 
-          {showAdvancedTools && lastApiCalls.length > 0 && (
+          {SHOW_DEV_TOOLS && showAdvancedTools && lastApiCalls.length > 0 && (
             <Card>
               <CardHeader><CardTitle className="text-base">Journal des appels API Chorus</CardTitle></CardHeader>
               <CardContent className="space-y-4">
@@ -2044,7 +2050,7 @@ export default function InvoiceCreate() {
             </Card>
           )}
 
-          {showAdvancedTools && (pythonUploadCalls.length > 0 || pythonSubmitCalls.length > 0) && (
+          {SHOW_DEV_TOOLS && showAdvancedTools && (pythonUploadCalls.length > 0 || pythonSubmitCalls.length > 0) && (
             <Card>
               <CardHeader><CardTitle className="text-base">Bodies JSON construits par Python</CardTitle></CardHeader>
               <CardContent className="space-y-4">

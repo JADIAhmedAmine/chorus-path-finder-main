@@ -31,6 +31,8 @@ import { useAsyncResource } from '@/hooks/use-async-resource';
 import { ArrowLeft, Edit, CheckCircle, Send, RotateCcw, Download, FileText, Paperclip, AlertTriangle, Loader2 } from 'lucide-react';
 import type { ChorusApiDebugEntry, ChorusSubmitInvoiceResult } from '@/types/chorus';
 
+const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
+
 function formatJsonForDisplay(value: unknown): string {
   if (value === undefined) {
     return '';
@@ -178,10 +180,12 @@ export default function InvoiceDetail() {
   const invoiceAudit = data.invoiceAudit;
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL';
   const hasStoredApiReturn = apiLogs.some((log) => Boolean(log.responseBodyRedacted));
-  const canShowApiReturnOption = invoice.statusInternal === 'READY_FOR_SUBMISSION'
+  const canShowApiReturnOption = SHOW_DEV_TOOLS && (
+    invoice.statusInternal === 'READY_FOR_SUBMISSION'
     || lastSubmissionResult !== null
     || lastSubmissionApiCalls.length > 0
-    || hasStoredApiReturn;
+    || hasStoredApiReturn
+  );
 
   const handleEdit = () => {
     navigate(`/invoices/new?invoiceId=${invoice.id}`);
@@ -308,14 +312,16 @@ export default function InvoiceDetail() {
           <CardContent className="py-4 flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium text-destructive">Rejet : {invoice.statusReasonCode}</p>
+              <p className="font-medium text-destructive">
+                {invoice.statusReasonCode ? `Rejet : ${invoice.statusReasonCode}` : 'Rejet'}
+              </p>
               <p className="text-sm text-muted-foreground">{invoice.statusReasonLabel}</p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {showSubmissionApiReturn && (lastSubmissionResult || lastSubmissionApiCalls.length > 0 || lastSubmissionApiError) && (
+      {SHOW_DEV_TOOLS && showSubmissionApiReturn && (lastSubmissionResult || lastSubmissionApiCalls.length > 0 || lastSubmissionApiError) && (
         <Card>
           <CardHeader><CardTitle className="text-base">Retour API après soumission</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -382,9 +388,9 @@ export default function InvoiceDetail() {
           <TabsTrigger value="lines">Lignes ({lines.length})</TabsTrigger>
           <TabsTrigger value="attachments">Pièces jointes ({attachments.length})</TabsTrigger>
           <TabsTrigger value="history">Historique</TabsTrigger>
-          <TabsTrigger value="api">Logs API ({apiLogs.length})</TabsTrigger>
+          {SHOW_DEV_TOOLS && <TabsTrigger value="api">Logs API ({apiLogs.length})</TabsTrigger>}
           {extraction && <TabsTrigger value="extraction">Extraction</TabsTrigger>}
-          <TabsTrigger value="audit">Audit</TabsTrigger>
+          {SHOW_DEV_TOOLS && <TabsTrigger value="audit">Audit</TabsTrigger>}
         </TabsList>
 
         {/* Summary */}
@@ -521,7 +527,8 @@ export default function InvoiceDetail() {
         </TabsContent>
 
         {/* API Logs */}
-        <TabsContent value="api" className="mt-4">
+        {SHOW_DEV_TOOLS && (
+          <TabsContent value="api" className="mt-4">
           <Card>
             <CardContent className="p-0">
               <table className="w-full text-sm">
@@ -584,7 +591,8 @@ export default function InvoiceDetail() {
               </table>
             </CardContent>
           </Card>
-        </TabsContent>
+          </TabsContent>
+        )}
 
         {/* Extraction */}
         {extraction && (
@@ -625,7 +633,8 @@ export default function InvoiceDetail() {
         )}
 
         {/* Audit */}
-        <TabsContent value="audit" className="mt-4">
+        {SHOW_DEV_TOOLS && (
+          <TabsContent value="audit" className="mt-4">
           <Card>
             <CardContent className="p-0">
               <table className="w-full text-sm">
@@ -653,7 +662,8 @@ export default function InvoiceDetail() {
               </table>
             </CardContent>
           </Card>
-        </TabsContent>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

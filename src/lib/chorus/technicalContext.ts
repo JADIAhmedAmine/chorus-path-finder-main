@@ -26,7 +26,9 @@ export function buildChorusTechnicalContext(config: ChorusConfig): ChorusSubmiss
     codeCadreFacturation: trimText(config.submissionCadreCode),
     codeServiceValideur: trimText(config.submissionValidatorServiceCode),
     codeStructureValideur: trimText(config.submissionValidatorStructureCode),
-    idFournisseur: FIXED_CHORUS_SUPPLIER_ID,
+    idFournisseur: parseOptionalInteger(config.submissionSupplierId)
+      ?? parseOptionalInteger(authSession?.chorusSupplierId)
+      ?? FIXED_CHORUS_SUPPLIER_ID,
     idServiceFournisseur: parseOptionalInteger(config.submissionSupplierServiceId) ?? parseOptionalInteger(authSession?.chorusSupplierServiceId),
     codeCoordonneesBancairesFournisseur: parseOptionalInteger(config.submissionBankAccountCode) ?? parseOptionalInteger(authSession?.chorusBankAccountCode),
     modePaiement: config.submissionPaymentMode,

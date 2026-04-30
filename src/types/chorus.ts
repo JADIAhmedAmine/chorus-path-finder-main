@@ -7,10 +7,12 @@ import type {
 
 export type ChorusConnectorMode = 'mock' | 'direct';
 export type ChorusConnectionTestMethod = 'GET' | 'POST';
+export type ChorusEnvironment = 'qualif' | 'prod';
 
 export interface ChorusConfig {
   enabled: boolean;
   mode: ChorusConnectorMode;
+  environment: ChorusEnvironment;
   tokenUrl: string;
   apiBaseUrl: string;
   referenceApiBaseUrl: string;

@@ -40,11 +40,29 @@ export default defineConfig(({ mode }) => {
           secure: true,
           rewrite: (path) => path.replace(/^\/__chorus-proxy\/sandbox-api/, ""),
         }),
+        "/__chorus-proxy/prod-oauth": withSanitizedProxyHeaders({
+          target: "https://oauth.piste.gouv.fr",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/__chorus-proxy\/prod-oauth/, ""),
+        }),
+        "/__chorus-proxy/prod-api": withSanitizedProxyHeaders({
+          target: "https://api.piste.gouv.fr",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/__chorus-proxy\/prod-api/, ""),
+        }),
         "/__chorus-proxy/chorus-qualif": withSanitizedProxyHeaders({
           target: "https://chorus-pro.gouv.fr:5443",
           changeOrigin: true,
           secure: true,
           rewrite: (path) => path.replace(/^\/__chorus-proxy\/chorus-qualif/, ""),
+        }),
+        "/__chorus-proxy/chorus-prod": withSanitizedProxyHeaders({
+          target: "https://chorus-pro.gouv.fr:5443",
+          changeOrigin: true,
+          secure: true,
+          rewrite: (path) => path.replace(/^\/__chorus-proxy\/chorus-prod/, ""),
         }),
         "/__gen-proxy/ollama": withSanitizedProxyHeaders({
           target: ollamaTarget,

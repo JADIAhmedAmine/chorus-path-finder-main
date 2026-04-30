@@ -32,10 +32,14 @@ describe('chorus storage', () => {
 
     saveChorusConfig(config);
 
-    expect(window.localStorage.getItem(CHORUS_CONFIG_STORAGE_KEY)).toContain('client-id');
+    expect(window.localStorage.getItem(CHORUS_CONFIG_STORAGE_KEY)).not.toContain('super-secret');
     expect(loadChorusConfig()).toMatchObject({
-      ...config,
-      submissionSupplierId: '26359578',
+      mode: 'direct',
+      enabled: true,
+      clientId: '',
+      clientSecret: '',
+      technicalLogin: '',
+      submissionSupplierId: '160',
     });
   });
 

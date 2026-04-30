@@ -1,8 +1,11 @@
 import type { ChorusApiDebugEntry, ChorusConfig } from '@/types/chorus';
 
 export const CHORUS_BRIDGE_DEFAULT_BASE_URL = 'http://127.0.0.1:8008';
+export const CHORUS_OAUTH_TOKEN_PATH = '/api/chorus/oauth-token';
+export const CHORUS_SUBMIT_PATH = '/api/chorus/submit';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
 export const CHORUS_SIRET_INFO_PATH = '/api/chorus/siret/info';
+export const CHORUS_ACTIVE_RECIPIENT_STRUCTURES_PATH = '/api/chorus/structures/active-destinataire';
 export const CHORUS_SUPPLIER_INVOICES_SEARCH_PATH = '/api/chorus/invoices/supplier/search';
 
 export interface ChorusAnnuaireSyncResult {
@@ -22,6 +25,15 @@ export interface ChorusSiretInformationResult {
   ok: boolean;
   siretStructure: string;
   info: unknown;
+  apiCalls: ChorusApiDebugEntry[];
+}
+
+export interface ChorusActiveRecipientStructuresResult {
+  ok: boolean;
+  idFournisseur: number;
+  idStructureCPP: number;
+  structures: unknown[];
+  rawResponse?: unknown;
   apiCalls: ChorusApiDebugEntry[];
 }
 
@@ -200,6 +212,21 @@ function normalizeSupplierInvoicesSearchResult(body: unknown): ChorusSupplierInv
   };
 }
 
+function normalizeActiveRecipientStructuresResult(body: unknown): ChorusActiveRecipientStructuresResult {
+  if (!isRecord(body)) {
+    throw new ChorusBackendAutomationError('Réponse backend structures destinataire invalide.');
+  }
+
+  return {
+    ok: body.ok === true,
+    idFournisseur: asCount(body.idFournisseur),
+    idStructureCPP: asCount(body.idStructureCPP),
+    structures: Array.isArray(body.structures) ? body.structures : [],
+    rawResponse: body.rawResponse,
+    apiCalls: isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
+  };
+}
+
 export class ChorusBackendAutomationClient {
   constructor(
     private readonly config: ChorusConfig,
@@ -212,6 +239,10 @@ export class ChorusBackendAutomationClient {
 
   get siretInfoUrl(): string {
     return resolveChorusBridgeUrl(this.config, CHORUS_SIRET_INFO_PATH);
+  }
+
+  get activeRecipientStructuresUrl(): string {
+    return resolveChorusBridgeUrl(this.config, CHORUS_ACTIVE_RECIPIENT_STRUCTURES_PATH);
   }
 
   get supplierInvoicesSearchUrl(): string {
@@ -285,5 +316,29 @@ export class ChorusBackendAutomationClient {
     }
 
     return normalizeSupplierInvoicesSearchResult(body);
+  }
+
+  async getActiveRecipientStructures(idFournisseur?: number | string): Promise<ChorusActiveRecipientStructuresResult> {
+    const requestBody = idFournisseur ? { idFournisseur } : {};
+    const response = await this.fetchImpl(this.activeRecipientStructuresUrl, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const body = await parseResponseBody(response);
+    const apiCalls = isRecord(body) && isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (!response.ok || !isRecord(body) || body.ok !== true) {
+      const message = isRecord(body) && typeof body.error === 'string'
+        ? body.error
+        : `Récupération des structures actives destinataire impossible (${response.status}).`;
+      throw new ChorusBackendAutomationError(message, apiCalls);
+    }
+
+    return normalizeActiveRecipientStructuresResult(body);
   }
 }

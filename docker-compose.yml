@@ -1,0 +1,13 @@
+services:
+  chorus-api:
+    build:
+      context: .
+    env_file:
+      - .env.local
+    environment:
+      CHORUS_HOST: 0.0.0.0
+      CHORUS_PORT: 8008
+    ports:
+      - "8008:8008"
+    volumes:
+      - ./.env.local:/app/.env.local:ro

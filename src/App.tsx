@@ -14,9 +14,6 @@ import InvoiceDetail from "./pages/InvoiceDetail";
 import ChorusInvoiceDetail from "./pages/ChorusInvoiceDetail";
 import InvoiceCreate from "./pages/InvoiceCreate";
 import References from "./pages/References";
-import Jobs from "./pages/Jobs";
-import AuditPage from "./pages/AuditPage";
-import Archives from "./pages/Archives";
 import SettingsPage from "./pages/SettingsPage";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
@@ -109,9 +106,6 @@ const App = () => (
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/references/customers" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
             <Route path="/references/services" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
-            <Route path="/jobs" element={<RequireAuth><AppLayout><Jobs /></AppLayout></RequireAuth>} />
-            <Route path="/audit" element={<RequireAuth><AppLayout><AuditPage /></AppLayout></RequireAuth>} />
-            <Route path="/archives" element={<RequireAuth><AppLayout><Archives /></AppLayout></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><AppLayout><SettingsPage /></AppLayout></RequireAuth>} />
             <Route path="*" element={<NotFound />} />
           </Routes>

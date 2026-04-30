@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { ChorusBackendAutomationClient, type ChorusSupplierInvoicesSearchResult } from '@/lib/chorus/backendAutomation';
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import { normalizeChorusInvoiceSearch } from '@/lib/chorus/invoiceRecords';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
@@ -35,6 +34,11 @@ function getInvoiceStatusLabel(invoice: Invoice): string {
   return invoice.statusChorus || invoice.statusInternal;
 }
 
+function parsePositiveInteger(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+}
+
 export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,17 +54,17 @@ export default function Dashboard() {
 
     try {
       const config = loadChorusConfig();
-      const idFournisseur = Number(config.submissionSupplierId || FIXED_CHORUS_SUPPLIER_ID_TEXT);
+      const idFournisseur = parsePositiveInteger(config.submissionSupplierId);
       const client = new ChorusBackendAutomationClient(config);
       const result = await client.searchSupplierInvoices({
-        idFournisseur,
+        ...(idFournisseur !== undefined ? { idFournisseur } : {}),
         typeFacture: 'FACTURE',
         rechercheFactureParFournisseur: {
           triColonne: 'TypeDemandePaiement',
           triSens: 'Descendant',
         },
       });
-      const normalized = normalizeChorusInvoiceSearch(result, idFournisseur);
+      const normalized = normalizeChorusInvoiceSearch(result, result.idFournisseur || idFournisseur || 0);
 
       setInvoices(normalized.invoices);
       setSuppliers([normalized.supplier]);

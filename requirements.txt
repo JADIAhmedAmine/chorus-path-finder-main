@@ -1,5 +1,6 @@
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
 requests>=2.32,<3
 pdfplumber>=0.10.3
-Pymupdf
-dotenv
-
+PyMuPDF>=1.24,<2
+python-dotenv>=1.0,<2

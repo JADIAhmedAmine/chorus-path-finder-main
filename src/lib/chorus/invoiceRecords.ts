@@ -85,6 +85,31 @@ function extractChorusStatus(record: Record<string, unknown>): string {
   return '';
 }
 
+function extractChorusStatusReason(record: Record<string, unknown>): { code?: string; label?: string } {
+  const code = firstString(record, [
+    'statusReasonCode',
+    'codeMotifRejet',
+    'codeRejet',
+    'motifRejetCode',
+    'codeEtatCourant',
+  ]);
+  const label = firstString(record, [
+    'statusReasonLabel',
+    'commentaireEtatCourant',
+    'commentaireStatutCourant',
+    'commentaireEtat',
+    'motifRejet',
+    'motifRefus',
+    'libelleMotifRejet',
+    'messageRejet',
+  ]);
+
+  return {
+    code: code || undefined,
+    label: label || undefined,
+  };
+}
+
 function firstNumber(record: Record<string, unknown>, keys: string[]): number {
   for (const key of keys) {
     const rawValue = record[key];
@@ -168,7 +193,17 @@ function normalizeChorusStatus(value: string): InvoiceStatusInternal {
   if (normalized.includes('PAY') || normalized.includes('MISE_EN_PAIEMENT')) {
     return 'PAID';
   }
-  if (normalized.includes('REJET')) {
+  if (normalized.includes('TECHNIQUE')) {
+    return 'REJECTED_TECHNICAL';
+  }
+  if (
+    normalized.includes('REJET')
+    || normalized.includes('REFUS')
+    || normalized.includes('NON_CONFORME')
+    || normalized.includes('ERREUR')
+    || normalized.includes('ABANDON')
+    || normalized.includes('SUPPRIM')
+  ) {
     return 'REJECTED_BUSINESS';
   }
   if (normalized.includes('ACCEPT') || normalized.includes('VALID')) {
@@ -273,6 +308,7 @@ export function normalizeChorusInvoiceRecord(
   );
   const updatedAt = normalizeDate(firstString(record, ['dateHeureEtatCourant', 'dateEtatCourant', 'dateDerniereModification', 'dateDepot']) || dateFacture);
   const statusChorus = extractChorusStatus(record);
+  const statusReason = extractChorusStatusReason(record);
   const stableKey = firstString(record, ['idFacture', 'idDemandePaiement', 'id']) || invoiceNumber || String(index + 1);
 
   return {
@@ -294,6 +330,8 @@ export function normalizeChorusInvoiceRecord(
     depositMode: firstString(record, ['modeDepot']) || 'CHORUS',
     statusInternal: normalizeChorusStatus(statusChorus),
     statusChorus: statusChorus || undefined,
+    statusReasonCode: statusReason.code,
+    statusReasonLabel: statusReason.label,
     requiresHumanReview: false,
     currentRevision: 1,
     submittedAt: dateDepot,
