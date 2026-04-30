@@ -44,7 +44,7 @@ describe('ChorusBackendAutomationClient', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/annuaire/sync', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify({ environment: 'qualif' }),
     }));
     expect(result.structureCount).toBe(1);
     expect(result.serviceCount).toBe(2);
@@ -73,7 +73,7 @@ describe('ChorusBackendAutomationClient', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/siret/info', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ siretStructure: '23440003400026' }),
+      body: JSON.stringify({ environment: 'qualif', siretStructure: '23440003400026' }),
     }));
     expect(result.info).toMatchObject({
       raisonSociale: 'REGION DES PAYS DE LA LOIRE',
@@ -111,7 +111,7 @@ describe('ChorusBackendAutomationClient', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/invoices/supplier/search', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ idFournisseur: 26359578 }),
+      body: JSON.stringify({ idFournisseur: 26359578, environment: 'qualif' }),
     }));
     expect(result.total).toBe(83);
     expect(result.returned).toBe(83);
@@ -137,7 +137,7 @@ describe('ChorusBackendAutomationClient', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/structures/active-destinataire', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify({ environment: 'qualif' }),
     }));
     expect(result.idFournisseur).toBe(987654);
     expect(result.structures).toHaveLength(1);

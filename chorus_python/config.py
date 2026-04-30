@@ -201,7 +201,7 @@ def load_chorus_settings(
     raw_base_url = env_credential(env, environment, "BASE_URL", include_vite_fallback=False)
     base_url = normalize_base_url(raw_base_url)
     if not base_url:
-        base_url = normalize_base_url(env.get("VITE_CHORUS_API_BASE_URL", "")) or preset["base_url"]
+        base_url = normalize_base_url(env_credential(env, environment, "API_BASE_URL")) or preset["base_url"]
 
     token_url = env_credential(env, environment, "TOKEN_URL") or preset["token_url"]
 

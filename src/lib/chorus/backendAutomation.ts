@@ -256,7 +256,7 @@ export class ChorusBackendAutomationClient {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ environment: this.config.environment }),
     });
 
     const body = await parseResponseBody(response);
@@ -279,7 +279,10 @@ export class ChorusBackendAutomationClient {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ siretStructure }),
+      body: JSON.stringify({
+        environment: this.config.environment,
+        siretStructure,
+      }),
     });
 
     const body = await parseResponseBody(response);
@@ -302,7 +305,10 @@ export class ChorusBackendAutomationClient {
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(input),
+      body: JSON.stringify({
+        ...input,
+        environment: this.config.environment,
+      }),
     });
 
     const body = await parseResponseBody(response);
@@ -319,7 +325,9 @@ export class ChorusBackendAutomationClient {
   }
 
   async getActiveRecipientStructures(idFournisseur?: number | string): Promise<ChorusActiveRecipientStructuresResult> {
-    const requestBody = idFournisseur ? { idFournisseur } : {};
+    const requestBody = idFournisseur
+      ? { environment: this.config.environment, idFournisseur }
+      : { environment: this.config.environment };
     const response = await this.fetchImpl(this.activeRecipientStructuresUrl, {
       method: 'POST',
       headers: {
