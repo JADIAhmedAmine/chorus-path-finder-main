@@ -1,3 +1,4 @@
+import { authHeaders } from '@/lib/auth/session';
 import type { ChorusApiDebugEntry, ChorusConfig } from '@/types/chorus';
 
 export const CHORUS_BRIDGE_DEFAULT_BASE_URL = 'http://127.0.0.1:8008';
@@ -252,10 +253,10 @@ export class ChorusBackendAutomationClient {
   async syncAnnuaire(): Promise<ChorusAnnuaireSyncResult> {
     const response = await this.fetchImpl(this.annuaireSyncUrl, {
       method: 'POST',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({ environment: this.config.environment }),
     });
 
@@ -275,10 +276,10 @@ export class ChorusBackendAutomationClient {
   async consultSiretInformation(siretStructure: string): Promise<ChorusSiretInformationResult> {
     const response = await this.fetchImpl(this.siretInfoUrl, {
       method: 'POST',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({
         environment: this.config.environment,
         siretStructure,
@@ -301,10 +302,10 @@ export class ChorusBackendAutomationClient {
   async searchSupplierInvoices(input: ChorusSupplierInvoicesSearchInput = {}): Promise<ChorusSupplierInvoicesSearchResult> {
     const response = await this.fetchImpl(this.supplierInvoicesSearchUrl, {
       method: 'POST',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify({
         ...input,
         environment: this.config.environment,
@@ -330,10 +331,10 @@ export class ChorusBackendAutomationClient {
       : { environment: this.config.environment };
     const response = await this.fetchImpl(this.activeRecipientStructuresUrl, {
       method: 'POST',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
         'Content-Type': 'application/json',
-      },
+      }),
       body: JSON.stringify(requestBody),
     });
 

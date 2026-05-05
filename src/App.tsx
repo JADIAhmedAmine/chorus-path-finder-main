@@ -5,8 +5,9 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { loadAuthSession } from "@/lib/auth/session";
+import { hasValidAuthSession } from "@/lib/auth/session";
 import { loadChorusConfig } from "@/lib/chorus/storage";
+import { useSyncInvoicesMutation, useSyncSuppliersMutation } from "@/lib/queries/db";
 import { ReferenceCatalogClient } from "@/lib/references/client";
 import Dashboard from "./pages/Dashboard";
 import InvoiceList from "./pages/InvoiceList";
@@ -18,7 +19,18 @@ import SettingsPage from "./pages/SettingsPage";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 5 * 60 * 1000,
+      gcTime: 30 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
+      retry: 1,
+    },
+  },
+});
 
 class AppErrorBoundary extends Component<
   { children: ReactNode },
@@ -65,7 +77,7 @@ class AppErrorBoundary extends Component<
 }
 
 function ReferenceCatalogWarmup() {
-  const isAuthenticated = !!loadAuthSession();
+  const isAuthenticated = hasValidAuthSession();
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -85,8 +97,49 @@ function ReferenceCatalogWarmup() {
   return null;
 }
 
+function parsePositiveInteger(value: string): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+}
+
+function DbStartupFullSync() {
+  const isAuthenticated = hasValidAuthSession();
+  const syncInvoices = useSyncInvoicesMutation();
+  const syncSuppliers = useSyncSuppliersMutation();
+
+  useEffect(() => {
+    if (!import.meta.env.DEV || !isAuthenticated) {
+      return;
+    }
+
+    const config = loadChorusConfig();
+    const supplierId = parsePositiveInteger(config.submissionSupplierId);
+    const syncInput = {
+      environment: config.environment,
+      ...(supplierId !== undefined ? { supplierId } : {}),
+    };
+    const sessionKey = `chorus.dbStartupFullSync.${config.environment}.${supplierId ?? 'default'}`;
+    if (window.sessionStorage.getItem(sessionKey)) {
+      return;
+    }
+
+    window.sessionStorage.setItem(sessionKey, new Date().toISOString());
+    void (async () => {
+      await syncSuppliers.mutateAsync(syncInput).catch((supplierSyncError) => {
+        console.warn('[startup] sync suppliers skipped', supplierSyncError);
+      });
+      await syncInvoices.mutateAsync({ ...syncInput, mode: 'full' }).catch((invoiceSyncError) => {
+        console.warn('[startup] full invoice sync failed', invoiceSyncError);
+        window.sessionStorage.removeItem(sessionKey);
+      });
+    })();
+  }, [isAuthenticated, syncInvoices, syncSuppliers]);
+
+  return null;
+}
+
 function RequireAuth({ children }: { children: React.ReactNode }) {
-  return loadAuthSession() ? <>{children}</> : <Navigate to="/login" replace />;
+  return hasValidAuthSession() ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 const App = () => (
@@ -97,6 +150,7 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <ReferenceCatalogWarmup />
+          <DbStartupFullSync />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />

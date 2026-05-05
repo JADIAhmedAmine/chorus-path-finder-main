@@ -16,7 +16,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Dépendances minimales nécessaires pour le bridge + extraction PDF
-REQUIRED_MODULES = ("fastapi", "uvicorn", "requests", "fitz", "pdfplumber")
+REQUIRED_MODULES = ("fastapi", "uvicorn", "requests", "fitz", "pdfplumber", "jwt", "bcrypt")
 
 
 def _module_available(module_name: str) -> bool:
@@ -90,15 +90,29 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import uvicorn
-from fastapi import Body, FastAPI
+from fastapi import Body, Depends, FastAPI
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from chorus_python import ChorusSubmissionService, load_chorus_settings
 from chorus_python.annuaire import build_annuaire_files_from_api_response, relative_to_repo
+from chorus_python.auth import require_auth, router as auth_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
+
+try:
+    from chorus_python.db.api import router as db_router
+    from chorus_python.db.scheduler import (
+        load_scheduler_settings,
+        shutdown_scheduler,
+        start_scheduler,
+    )
+    _DB_ROUTER_AVAILABLE = True
+    _DB_ROUTER_IMPORT_ERROR: str | None = None
+except Exception as _db_import_error:  # noqa: BLE001
+    _DB_ROUTER_AVAILABLE = False
+    _DB_ROUTER_IMPORT_ERROR = str(_db_import_error)
 
 
 HOST = os.environ.get("CHORUS_HOST", "127.0.0.1")
@@ -121,6 +135,27 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+
+if _DB_ROUTER_AVAILABLE:
+    app.include_router(db_router)
+
+    @app.on_event("startup")
+    def _start_sync_scheduler() -> None:
+        try:
+            start_scheduler()
+        except Exception as error:  # noqa: BLE001
+            logger.exception("Echec démarrage scheduler: %s", error)
+
+    @app.on_event("shutdown")
+    def _stop_sync_scheduler() -> None:
+        shutdown_scheduler()
+else:
+    logger.warning(
+        "Routes /api/db indisponibles (DB non configurée): %s",
+        _DB_ROUTER_IMPORT_ERROR,
+    )
 
 
 def _print_received_post_debug(path: str, body: Any) -> None:
@@ -487,7 +522,7 @@ def health() -> dict[str, Any]:
     return {"ok": True, "service": "chorus-path-finder-api"}
 
 
-@app.post(OAUTH_TOKEN_PATH)
+@app.post(OAUTH_TOKEN_PATH, dependencies=[Depends(require_auth)])
 def handle_oauth_token(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     started_at = perf_counter()
@@ -533,7 +568,7 @@ def handle_oauth_token(body: dict[str, Any] | None = Body(default=None)) -> JSON
         )
 
 
-@app.post(EXTRACT_PDF_PATH)
+@app.post(EXTRACT_PDF_PATH, dependencies=[Depends(require_auth)])
 def handle_extract_pdf(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     pdf_base64 = body.get("pdfBase64")
@@ -592,7 +627,7 @@ def handle_extract_pdf(body: dict[str, Any] | None = Body(default=None)) -> JSON
         )
 
 
-@app.post(SUPPLIER_INVOICES_SEARCH_PATH)
+@app.post(SUPPLIER_INVOICES_SEARCH_PATH, dependencies=[Depends(require_auth)])
 def handle_supplier_invoice_search(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     started_at = perf_counter()
@@ -671,7 +706,7 @@ def handle_supplier_invoice_search(body: dict[str, Any] | None = Body(default=No
         )
 
 
-@app.post(SIRET_INFO_PATH)
+@app.post(SIRET_INFO_PATH, dependencies=[Depends(require_auth)])
 def handle_siret_info(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     raw_siret = body.get("siretStructure") or body.get("siret")
@@ -733,7 +768,7 @@ def handle_siret_info(body: dict[str, Any] | None = Body(default=None)) -> JSONR
         )
 
 
-@app.post(ACTIVE_RECIPIENT_STRUCTURES_PATH)
+@app.post(ACTIVE_RECIPIENT_STRUCTURES_PATH, dependencies=[Depends(require_auth)])
 def handle_active_recipient_structures(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     started_at = perf_counter()
@@ -781,7 +816,7 @@ def handle_active_recipient_structures(body: dict[str, Any] | None = Body(defaul
         )
 
 
-@app.post(SYNC_ANNUAIRE_PATH)
+@app.post(SYNC_ANNUAIRE_PATH, dependencies=[Depends(require_auth)])
 def handle_sync_annuaire(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     started_at = perf_counter()
@@ -831,7 +866,7 @@ def handle_sync_annuaire(body: dict[str, Any] | None = Body(default=None)) -> JS
         )
 
 
-@app.post(SUBMIT_PATH)
+@app.post(SUBMIT_PATH, dependencies=[Depends(require_auth)])
 def handle_submit(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     _print_received_post_debug(SUBMIT_PATH, body)
@@ -938,6 +973,23 @@ def main() -> int:
     print(f"  - SIRET info:  {SIRET_INFO_PATH}")
     print(f"  - Structures:  {ACTIVE_RECIPIENT_STRUCTURES_PATH}")
     print(f"  - Invoices:    {SUPPLIER_INVOICES_SEARCH_PATH}")
+    if _DB_ROUTER_AVAILABLE:
+        print(f"  - DB routes:   /api/db/* (suppliers, invoices, sync)")
+        sched_settings = load_scheduler_settings()
+        if sched_settings.enabled:
+            print(
+                f"  - Cron sync:   ON (mode={sched_settings.mode}, "
+                f"interval={sched_settings.interval_seconds}s, "
+                f"pageSize={sched_settings.page_size}, "
+                f"startupFull={sched_settings.startup_full_sync})"
+            )
+        else:
+            print(
+                f"  - Cron sync:   OFF (startupFull={sched_settings.startup_full_sync}; "
+                f"set SYNC_CRON_ENABLED=true for periodic sync)"
+            )
+    else:
+        print(f"  - DB routes:   DISABLED ({_DB_ROUTER_IMPORT_ERROR})")
 
     uvicorn.run(app, host=HOST, port=PORT)
 

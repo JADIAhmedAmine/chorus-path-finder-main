@@ -19,6 +19,7 @@ function withSanitizedProxyHeaders(proxy: ProxyOptions): ProxyOptions {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const ollamaTarget = env.GEN_BASE_URL || "http://127.0.0.1:11434";
+  const backendApiTarget = env.VITE_BACKEND_API_TARGET || "http://127.0.0.1:8008";
 
   return {
     server: {
@@ -28,6 +29,11 @@ export default defineConfig(({ mode }) => {
         overlay: false,
       },
       proxy: {
+        "/api": withSanitizedProxyHeaders({
+          target: backendApiTarget,
+          changeOrigin: true,
+          secure: false,
+        }),
         "/__chorus-proxy/sandbox-oauth": withSanitizedProxyHeaders({
           target: "https://sandbox-oauth.piste.gouv.fr",
           changeOrigin: true,

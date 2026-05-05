@@ -4,9 +4,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Loader2 } from 'lucide-react';
 import { loadAuthSession, saveAuthSession, syncAuthSessionToChorusConfig } from '@/lib/auth/session';
 import { useToast } from '@/hooks/use-toast';
 import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
+
+interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  email: string;
+}
 
 export default function Login() {
   const navigate = useNavigate();
@@ -14,31 +23,59 @@ export default function Login() {
   const [existingSession] = useState(() => loadAuthSession());
   const [email, setEmail] = useState(existingSession?.email ?? '');
   const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    const normalizedEmail = email.trim();
-    const [namePart] = normalizedEmail.split('@');
+    setError(null);
+    setSubmitting(true);
 
-    const session = {
-      email: normalizedEmail,
-      firstName: existingSession?.firstName || namePart || 'Utilisateur',
-      lastName: existingSession?.lastName || '',
-      roleCode: existingSession?.roleCode || 'GESTIONNAIRE',
-      chorusCurrentUserId: existingSession?.chorusCurrentUserId,
-      chorusSupplierId: existingSession?.chorusSupplierId,
-      chorusSupplierServiceId: existingSession?.chorusSupplierServiceId,
-      chorusBankAccountCode: existingSession?.chorusBankAccountCode,
-      createdAt: existingSession?.createdAt || new Date().toISOString(),
-    };
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
 
-    saveAuthSession(session);
-    syncAuthSessionToChorusConfig(session);
-    toast({
-      title: 'Session ouverte',
-      description: 'Connexion locale activée pour cette session pré-production.',
-    });
-    navigate('/', { replace: true });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const detail = typeof body?.detail === 'string' ? body.detail : 'Email ou mot de passe invalide.';
+        setError(detail);
+        return;
+      }
+
+      const data = (await response.json()) as LoginResponse;
+      const normalizedEmail = data.email.trim();
+      const [namePart] = normalizedEmail.split('@');
+      const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+
+      const session = {
+        email: normalizedEmail,
+        firstName: existingSession?.firstName || namePart || 'Utilisateur',
+        lastName: existingSession?.lastName || '',
+        roleCode: existingSession?.roleCode || 'GESTIONNAIRE',
+        chorusCurrentUserId: existingSession?.chorusCurrentUserId,
+        chorusSupplierId: existingSession?.chorusSupplierId,
+        chorusSupplierServiceId: existingSession?.chorusSupplierServiceId,
+        chorusBankAccountCode: existingSession?.chorusBankAccountCode,
+        accessToken: data.access_token,
+        expiresAt,
+        createdAt: existingSession?.createdAt || new Date().toISOString(),
+      };
+
+      saveAuthSession(session);
+      syncAuthSessionToChorusConfig(session);
+      toast({
+        title: 'Session ouverte',
+        description: `Connecté en tant que ${normalizedEmail}.`,
+      });
+      navigate('/', { replace: true });
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Connexion impossible.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -51,7 +88,7 @@ export default function Login() {
           <div>
             <CardTitle className="text-xl">{APP_NAME}</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Connexion pré-production
+              Connexion sécurisée
             </p>
           </div>
         </CardHeader>
@@ -59,20 +96,24 @@ export default function Login() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" />
+              <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" disabled={submitting} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Mot de passe</Label>
-              <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" />
+              <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" disabled={submitting} />
             </div>
 
-            <Button type="submit" className="w-full">
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Se connecter
             </Button>
           </form>
-          <p className="text-xs text-muted-foreground text-center mt-4">
-            Accès préliminaire avec session locale.
-          </p>
         </CardContent>
       </Card>
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -8,18 +8,17 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CHORUS_INVOICE_STATUS_CODES, formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { Search, Download, Plus, ChevronLeft, ChevronRight, Loader2, Server, ExternalLink } from 'lucide-react';
 import {
-  ChorusBackendAutomationClient,
-  type ChorusSupplierInvoicesSearchInput,
-  type ChorusSupplierInvoicesSearchResult,
-} from '@/lib/chorus/backendAutomation';
+  useInvoicesQuery,
+  usePublicCustomersQuery,
+  useSuppliersQuery,
+  useSyncInvoicesMutation,
+  useSyncSuppliersMutation,
+} from '@/lib/queries/db';
 import { saveChorusLiveInvoiceDetails } from '@/lib/chorus/liveInvoiceDetails';
 import { loadChorusConfig } from '@/lib/chorus/storage';
-import type { Invoice, InvoiceStatusInternal, PublicCustomer, SupplierOrganization } from '@/types';
+import type { Invoice } from '@/types';
 
 const PAGE_SIZE = 10;
-const CHORUS_TENANT_ID = 'chorus-live';
-
-type RejetTraiteFilter = 'all' | 'true' | 'false';
 
 interface ChorusInvoiceSearchForm {
   numeroFacture: string;
@@ -34,7 +33,6 @@ interface ChorusInvoiceSearchForm {
   numeroBonCommande: string;
   numeroMarche: string;
   modeDepot: string;
-  rejetTraite: RejetTraiteFilter;
   triColonne: string;
   triSens: 'Ascendant' | 'Descendant';
 }
@@ -52,7 +50,6 @@ const DEFAULT_CHORUS_INVOICE_SEARCH_FORM: ChorusInvoiceSearchForm = {
   numeroBonCommande: '',
   numeroMarche: '',
   modeDepot: 'all',
-  rejetTraite: 'all',
   triColonne: 'TypeDemandePaiement',
   triSens: 'Descendant',
 };
@@ -74,22 +71,6 @@ const CHORUS_MODE_DEPOT_OPTIONS = [
   { value: 'DEPOT_PDF_SIGNE_API', label: 'Dépôt PDF signé API' },
 ];
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asString(value: unknown): string {
-  if (typeof value === 'string') {
-    return value.trim();
-  }
-
-  if (typeof value === 'number' || typeof value === 'bigint') {
-    return String(value);
-  }
-
-  return '';
-}
-
 function asNumber(value: unknown, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -101,98 +82,6 @@ function asNumber(value: unknown, fallback = 0): number {
   }
 
   return fallback;
-}
-
-function safeIdentifier(value: string): string {
-  const normalized = value.trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
-  return normalized || 'unknown';
-}
-
-function firstString(record: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    const value = asString(record[key]);
-    if (value) {
-      return value;
-    }
-  }
-
-  return '';
-}
-
-function asStatusText(value: unknown): string {
-  const directValue = asString(value);
-  if (directValue) {
-    return directValue;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map(asStatusText).filter(Boolean).join(', ');
-  }
-
-  if (isRecord(value)) {
-    return firstString(value, ['libelle', 'label', 'code', 'statutCourant', 'statut', 'etatCourant']);
-  }
-
-  return '';
-}
-
-function extractChorusStatus(record: Record<string, unknown>): string {
-  for (const key of ['libelleStatutCourant', 'statutCourant', 'statut', 'etatCourant', 'codeStatutCourant', 'libelleEtatCourant']) {
-    const value = asStatusText(record[key]);
-    if (value) {
-      return value;
-    }
-  }
-
-  return '';
-}
-
-function extractChorusStatusReason(record: Record<string, unknown>): { code?: string; label?: string } {
-  const code = firstString(record, [
-    'statusReasonCode',
-    'codeMotifRejet',
-    'codeRejet',
-    'motifRejetCode',
-    'codeEtatCourant',
-  ]);
-  const label = firstString(record, [
-    'statusReasonLabel',
-    'commentaireEtatCourant',
-    'commentaireStatutCourant',
-    'commentaireEtat',
-    'motifRejet',
-    'motifRefus',
-    'libelleMotifRejet',
-    'messageRejet',
-  ]);
-
-  return {
-    code: code || undefined,
-    label: label || undefined,
-  };
-}
-
-function firstNumber(record: Record<string, unknown>, keys: string[]): number {
-  for (const key of keys) {
-    const rawValue = record[key];
-    const value = asNumber(rawValue, Number.NaN);
-    if (Number.isFinite(value)) {
-      return value;
-    }
-  }
-
-  return 0;
-}
-
-function splitChorusValues(value: string): string[] {
-  return value.split(',').map((item) => item.trim()).filter(Boolean);
-}
-
-function addTextCriterion(payload: ChorusSupplierInvoicesSearchInput, key: keyof ChorusSupplierInvoicesSearchInput, value: string) {
-  const trimmedValue = value.trim();
-  if (trimmedValue) {
-    (payload as Record<string, unknown>)[key] = trimmedValue;
-  }
 }
 
 function countChorusSearchCriteria(form: ChorusInvoiceSearchForm): number {
@@ -209,116 +98,7 @@ function countChorusSearchCriteria(form: ChorusInvoiceSearchForm): number {
     form.numeroBonCommande,
     form.numeroMarche,
   ].filter((value) => value.trim()).length
-    + (form.modeDepot !== 'all' ? 1 : 0)
-    + (form.rejetTraite !== 'all' ? 1 : 0);
-}
-
-function buildChorusSupplierInvoiceSearchInput(
-  form: ChorusInvoiceSearchForm,
-  idFournisseur?: number,
-): ChorusSupplierInvoicesSearchInput {
-  const payload: ChorusSupplierInvoicesSearchInput = {
-    typeFacture: 'FACTURE',
-    rechercheFactureParFournisseur: {
-      triColonne: form.triColonne,
-      triSens: form.triSens,
-    },
-  };
-  if (idFournisseur !== undefined) {
-    payload.idFournisseur = idFournisseur;
-  }
-
-  addTextCriterion(payload, 'numeroFacture', form.numeroFacture);
-  addTextCriterion(payload, 'destinataire', form.destinataire);
-  addTextCriterion(payload, 'periodeDateDepotDu', form.periodeDateDepotDu);
-  addTextCriterion(payload, 'periodeDateDepotAu', form.periodeDateDepotAu);
-  addTextCriterion(payload, 'periodeDateFactureDu', form.periodeDateFactureDu);
-  addTextCriterion(payload, 'periodeDateFactureAu', form.periodeDateFactureAu);
-  addTextCriterion(payload, 'montantTTCMin', form.montantTTCMin);
-  addTextCriterion(payload, 'montantTTCMax', form.montantTTCMax);
-  addTextCriterion(payload, 'numeroBonCommande', form.numeroBonCommande);
-  addTextCriterion(payload, 'numeroMarche', form.numeroMarche);
-
-  if (form.modeDepot !== 'all') {
-    payload.modeDepot = form.modeDepot;
-  }
-
-  if (form.rejetTraite !== 'all') {
-    payload.rejetTraite = form.rejetTraite === 'true';
-  }
-
-  const statuts = splitChorusValues(form.statutCourant);
-  if (statuts.length > 0) {
-    payload.statutCourant = statuts;
-  }
-
-  return payload;
-}
-
-function normalizeDate(value: string): string {
-  if (!value) {
-    return new Date(0).toISOString();
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? new Date(0).toISOString() : parsed.toISOString();
-}
-
-function normalizeOptionalDate(value: string): string | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
-}
-
-function parseDateParts(value: string): { year: number; month: number; day: number } | null {
-  const isoDateMatch = value.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (isoDateMatch) {
-    return {
-      year: Number(isoDateMatch[1]),
-      month: Number(isoDateMatch[2]),
-      day: Number(isoDateMatch[3]),
-    };
-  }
-
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return {
-    year: parsed.getFullYear(),
-    month: parsed.getMonth() + 1,
-    day: parsed.getDate(),
-  };
-}
-
-function normalizeDepositDateWithStatusTime(dateDepotValue: string, statusDateTimeValue: string): string | undefined {
-  const dateDepot = dateDepotValue.trim();
-  const statusDateTime = statusDateTimeValue.trim();
-  const dateParts = dateDepot ? parseDateParts(dateDepot) : null;
-  const parsedStatusDateTime = statusDateTime ? new Date(statusDateTime) : null;
-  const hasStatusDateTime = parsedStatusDateTime !== null && !Number.isNaN(parsedStatusDateTime.getTime());
-
-  if (dateParts && hasStatusDateTime) {
-    return new Date(
-      dateParts.year,
-      dateParts.month - 1,
-      dateParts.day,
-      parsedStatusDateTime.getHours(),
-      parsedStatusDateTime.getMinutes(),
-      parsedStatusDateTime.getSeconds(),
-      parsedStatusDateTime.getMilliseconds(),
-    ).toISOString();
-  }
-
-  if (dateDepot) {
-    return normalizeOptionalDate(dateDepot);
-  }
-
-  return hasStatusDateTime ? parsedStatusDateTime.toISOString() : undefined;
+    + (form.modeDepot !== 'all' ? 1 : 0);
 }
 
 function formatOptionalTableDate(value: string | undefined): string {
@@ -352,204 +132,158 @@ function formatOptionalTableDateTime(value: string | undefined): string {
   return hasTime ? formatDateTime(value) : formatDate(value);
 }
 
-function normalizeChorusStatus(value: string): InvoiceStatusInternal {
-  const normalized = value.toUpperCase();
-  if (normalized.includes('PAY') || normalized.includes('MISE_EN_PAIEMENT')) {
-    return 'PAID';
-  }
-  if (normalized.includes('TECHNIQUE')) {
-    return 'REJECTED_TECHNICAL';
-  }
-  if (
-    normalized.includes('REJET')
-    || normalized.includes('REFUS')
-    || normalized.includes('NON_CONFORME')
-    || normalized.includes('ERREUR')
-    || normalized.includes('ABANDON')
-    || normalized.includes('SUPPRIM')
-  ) {
-    return 'REJECTED_BUSINESS';
-  }
-  if (normalized.includes('ACCEPT') || normalized.includes('VALID')) {
-    return 'ACCEPTED_BY_CHORUS';
-  }
-  if (normalized.includes('ARCHIV')) {
-    return 'ARCHIVED';
-  }
-  return 'SUBMITTED_TO_CHORUS';
-}
-
 function isRejectedInvoice(invoice: Invoice): boolean {
   return invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL';
 }
 
-function buildChorusSupplier(idFournisseur: number, records: unknown[]): SupplierOrganization {
-  const firstRecord = records.find(isRecord);
-  const legalName = firstRecord
-    ? firstString(firstRecord, ['raisonSocialeFournisseur', 'nomFournisseur', 'designationFournisseur', 'fournisseur'])
-    : '';
-
-  return {
-    id: `chorus-supplier-${idFournisseur}`,
-    tenantId: CHORUS_TENANT_ID,
-    legalName: legalName || `Fournisseur Chorus ${idFournisseur}`,
-    siret: '',
-    vatNumber: '',
-    chorusSupplierCode: String(idFournisseur),
-    active: true,
-    createdAt: new Date(0).toISOString(),
-    updatedAt: new Date(0).toISOString(),
-  };
+function parseConfiguredSupplierId(value: string): number | undefined {
+  const parsed = asNumber(value, Number.NaN);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
 }
 
-function extractCustomerIdentity(record: Record<string, unknown>, index: number): {
-  id: string;
-  code: string;
-  legalName: string;
-  siret: string;
-} {
-  const code = firstString(record, ['codeDestinataire', 'siretDestinataire', 'siretStructure', 'siret']);
-  const idDestinataire = firstString(record, ['idDestinataire', 'idStructureDestinataire', 'idStructureCPP']);
-  const legalName = firstString(record, [
-    'raisonSocialeStuctDmd',
-    'raisonSocialeStructureDmd',
-    'raisonSocialeDestinataire',
-    'nomDestinataire',
-    'destinataire',
-  ]);
-  const stableKey = code || idDestinataire || `unknown-${index + 1}`;
-  const safeStableKey = safeIdentifier(stableKey);
-
-  return {
-    id: `chorus-customer-${safeStableKey}`,
-    code,
-    legalName: legalName || `Destinataire ${stableKey}`,
-    siret: code.replace(/\D/g, '').length === 14 ? code.replace(/\D/g, '') : '',
-  };
+function includesNormalized(value: string | undefined, searchValue: string): boolean {
+  return !!value && value.toLowerCase().includes(searchValue);
 }
 
-function buildChorusCustomer(item: unknown, index: number): PublicCustomer {
-  const identity = extractCustomerIdentity(isRecord(item) ? item : {}, index);
+function toTimestamp(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
 
-  return {
-    id: identity.id,
-    tenantId: CHORUS_TENANT_ID,
-    codeDestinataire: identity.code,
-    legalName: identity.legalName,
-    siret: identity.siret,
-    structureType: 'PUBLIC',
-    active: true,
-    createdAt: new Date(0).toISOString(),
-    updatedAt: new Date(0).toISOString(),
-  };
+  const timestamp = new Date(value).getTime();
+  return Number.isNaN(timestamp) ? null : timestamp;
 }
 
-function buildChorusCustomers(records: unknown[]): PublicCustomer[] {
-  const customersById = new Map<string, PublicCustomer>();
+function dateBoundaryTimestamp(value: string, endOfDay = false): number | null {
+  if (!value) {
+    return null;
+  }
 
-  records.forEach((item, index) => {
-    const customer = buildChorusCustomer(item, index);
-    customersById.set(customer.id, customer);
-  });
-
-  return [...customersById.values()];
+  const suffix = endOfDay ? 'T23:59:59.999' : 'T00:00:00.000';
+  return toTimestamp(`${value}${value.includes('T') ? '' : suffix}`) ?? toTimestamp(value);
 }
 
-function normalizeChorusInvoiceRecord(
-  item: unknown,
-  index: number,
-  idFournisseur: number,
-): Invoice {
-  const record = isRecord(item) ? item : {};
-  const invoiceNumber = firstString(record, [
-    'numeroFacture',
-    'numeroFactureSaisi',
-    'numeroFactureFournisseur',
-    'numeroDemandePaiement',
-    'numeroFactureChorus',
-  ]);
-  const chorusInvoiceNumber = firstString(record, ['numeroFactureChorus', 'numeroDemandePaiement']);
-  const customer = extractCustomerIdentity(record, index);
-  const dateFacture = normalizeDate(firstString(record, ['dateFacture', 'dateEmission', 'dateCreation']));
-  const dateDepot = normalizeDepositDateWithStatusTime(
-    firstString(record, ['dateDepot', 'dateHeureDepot']),
-    firstString(record, ['dateHeureEtatCourant', 'dateEtatCourant']),
-  );
-  const updatedAt = normalizeDate(firstString(record, ['dateHeureEtatCourant', 'dateEtatCourant', 'dateDerniereModification', 'dateDepot']) || dateFacture);
-  const statusChorus = extractChorusStatus(record);
-  const statusReason = extractChorusStatusReason(record);
-  const stableKey = firstString(record, ['idFacture', 'idDemandePaiement', 'id']) || invoiceNumber || String(index + 1);
+function matchesDateRange(value: string | undefined, from: string, to: string): boolean {
+  if (!from && !to) {
+    return true;
+  }
 
-  return {
-    id: `chorus-invoice-${safeIdentifier(stableKey)}`,
-    tenantId: CHORUS_TENANT_ID,
-    supplierOrganizationId: `chorus-supplier-${idFournisseur}`,
-    sourceFormat: 'PDF',
-    supplierInvoiceNumber: invoiceNumber || `Facture Chorus ${index + 1}`,
-    chorusInvoiceNumber: chorusInvoiceNumber || undefined,
-    invoiceDate: dateFacture,
-    currencyCode: firstString(record, ['deviseFacture', 'devise']) || 'EUR',
-    totalHt: firstNumber(record, ['montantHT', 'montantHt', 'montantHtTotal']),
-    totalVat: firstNumber(record, ['montantTVA', 'montantTva']),
-    totalTtc: firstNumber(record, ['montantTTC', 'montantTtc', 'montantTtcTotal', 'montantAPayer', 'montantApayer']),
-    publicCustomerId: customer.id,
-    engagementNumber: firstString(record, ['numeroEngagement', 'numeroBonCommande']) || undefined,
-    purchaseOrderNumber: firstString(record, ['numeroBonCommande']) || undefined,
-    marketNumber: firstString(record, ['numeroMarche']) || undefined,
-    depositMode: firstString(record, ['modeDepot']) || 'CHORUS',
-    statusInternal: normalizeChorusStatus(statusChorus),
-    statusChorus: statusChorus || undefined,
-    statusReasonCode: statusReason.code,
-    statusReasonLabel: statusReason.label,
-    requiresHumanReview: false,
-    currentRevision: 1,
-    submittedAt: dateDepot,
-    lastStatusSyncAt: updatedAt,
-    createdBy: 'chorus',
-    updatedBy: 'chorus',
-    createdAt: dateFacture,
-    updatedAt,
-  };
+  const timestamp = toTimestamp(value);
+  if (timestamp === null) {
+    return false;
+  }
+
+  const fromTimestamp = dateBoundaryTimestamp(from);
+  const toTimestampValue = dateBoundaryTimestamp(to, true);
+  return (fromTimestamp === null || timestamp >= fromTimestamp)
+    && (toTimestampValue === null || timestamp <= toTimestampValue);
+}
+
+function matchesAmountRange(value: number, min: string, max: string): boolean {
+  const minAmount = min ? asNumber(min, Number.NaN) : Number.NaN;
+  const maxAmount = max ? asNumber(max, Number.NaN) : Number.NaN;
+
+  return (!Number.isFinite(minAmount) || value >= minAmount)
+    && (!Number.isFinite(maxAmount) || value <= maxAmount);
+}
+
+function getInvoiceSortValue(invoice: Invoice, column: string): string | number {
+  switch (column) {
+    case 'DateDepot':
+      return toTimestamp(invoice.submittedAt || invoice.lastStatusSyncAt) ?? 0;
+    case 'DateFacture':
+      return toTimestamp(invoice.invoiceDate) ?? 0;
+    case 'MontantTTC':
+      return invoice.totalTtc;
+    case 'NumeroFacture':
+      return invoice.supplierInvoiceNumber;
+    case 'StatutCourant':
+      return invoice.statusChorus || invoice.statusInternal;
+    default:
+      return invoice.sourceFormat;
+  }
 }
 
 export default function InvoiceList() {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const [loadingChorusInvoices, setLoadingChorusInvoices] = useState(false);
-  const [chorusInvoices, setChorusInvoices] = useState<Invoice[]>([]);
-  const [chorusSuppliers, setChorusSuppliers] = useState<SupplierOrganization[]>([]);
-  const [chorusCustomers, setChorusCustomers] = useState<PublicCustomer[]>([]);
-  const [chorusSearchResult, setChorusSearchResult] = useState<ChorusSupplierInvoicesSearchResult | null>(null);
-  const [chorusSearchError, setChorusSearchError] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [chorusSearchForm, setChorusSearchForm] = useState<ChorusInvoiceSearchForm>(DEFAULT_CHORUS_INVOICE_SEARCH_FORM);
-  const didAutoLoadChorusInvoices = useRef(false);
 
-  const visibleInvoices = chorusInvoices;
+  const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
+  const suppliersQuery = useSuppliersQuery();
+  const customersQuery = usePublicCustomersQuery();
+  const syncInvoices = useSyncInvoicesMutation();
+  const syncSuppliers = useSyncSuppliersMutation();
+
+  const visibleInvoices = invoicesQuery.data?.items ?? [];
+  const suppliers = suppliersQuery.data ?? [];
+  const customers = customersQuery.data ?? [];
+  const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+  const syncing = syncInvoices.isPending || syncSuppliers.isPending;
+  const error =
+    syncError
+    || invoicesQuery.error?.message
+    || suppliersQuery.error?.message
+    || customersQuery.error?.message
+    || null;
+
   const supplierById = useMemo(
-    () => new Map(chorusSuppliers.map((supplier) => [supplier.id, supplier])),
-    [chorusSuppliers],
+    () => new Map(suppliers.map((supplier) => [supplier.id, supplier])),
+    [suppliers],
   );
   const customerById = useMemo(
-    () => new Map(chorusCustomers.map((customer) => [customer.id, customer])),
-    [chorusCustomers],
+    () => new Map(customers.map((customer) => [customer.id, customer])),
+    [customers],
   );
 
   const filtered = useMemo(() => {
-    return visibleInvoices.filter((inv) => {
+    const normalizedSearch = search.trim().toLowerCase();
+    const nextFiltered = visibleInvoices.filter((inv) => {
       const supplier = supplierById.get(inv.supplierOrganizationId);
       const customer = customerById.get(inv.publicCustomerId);
-      const matchSearch = !search || [
+      const status = inv.statusChorus || inv.statusInternal;
+      const matchSearch = !normalizedSearch || [
         inv.supplierInvoiceNumber,
+        inv.chorusInvoiceNumber,
         supplier?.legalName,
         supplier?.siret,
         customer?.legalName,
+        customer?.siret,
+        customer?.codeDestinataire,
+        inv.purchaseOrderNumber,
+        inv.marketNumber,
+        inv.engagementNumber,
         inv.statusChorus,
+        inv.statusInternal,
         inv.statusReasonLabel,
-      ].some(v => v?.toLowerCase().includes(search.toLowerCase()));
+      ].some((value) => includesNormalized(value, normalizedSearch));
 
-      return matchSearch;
+      return matchSearch
+        && (!chorusSearchForm.numeroFacture || includesNormalized(inv.supplierInvoiceNumber, chorusSearchForm.numeroFacture.toLowerCase()) || includesNormalized(inv.chorusInvoiceNumber, chorusSearchForm.numeroFacture.toLowerCase()))
+        && (!chorusSearchForm.destinataire || includesNormalized(customer?.legalName, chorusSearchForm.destinataire.toLowerCase()) || includesNormalized(customer?.siret, chorusSearchForm.destinataire.toLowerCase()) || includesNormalized(customer?.codeDestinataire, chorusSearchForm.destinataire.toLowerCase()))
+        && (!chorusSearchForm.statutCourant || status === chorusSearchForm.statutCourant || includesNormalized(status, chorusSearchForm.statutCourant.toLowerCase()))
+        && matchesDateRange(inv.submittedAt || inv.lastStatusSyncAt, chorusSearchForm.periodeDateDepotDu, chorusSearchForm.periodeDateDepotAu)
+        && matchesDateRange(inv.invoiceDate, chorusSearchForm.periodeDateFactureDu, chorusSearchForm.periodeDateFactureAu)
+        && matchesAmountRange(inv.totalTtc, chorusSearchForm.montantTTCMin, chorusSearchForm.montantTTCMax)
+        && (!chorusSearchForm.numeroBonCommande || includesNormalized(inv.purchaseOrderNumber, chorusSearchForm.numeroBonCommande.toLowerCase()) || includesNormalized(inv.engagementNumber, chorusSearchForm.numeroBonCommande.toLowerCase()))
+        && (!chorusSearchForm.numeroMarche || includesNormalized(inv.marketNumber, chorusSearchForm.numeroMarche.toLowerCase()))
+        && (chorusSearchForm.modeDepot === 'all' || inv.depositMode === chorusSearchForm.modeDepot);
     });
-  }, [customerById, search, supplierById, visibleInvoices]);
+
+    const direction = chorusSearchForm.triSens === 'Ascendant' ? 1 : -1;
+    return nextFiltered.sort((left, right) => {
+      const leftValue = getInvoiceSortValue(left, chorusSearchForm.triColonne);
+      const rightValue = getInvoiceSortValue(right, chorusSearchForm.triColonne);
+
+      if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+        return (leftValue - rightValue) * direction;
+      }
+
+      return String(leftValue).localeCompare(String(rightValue), 'fr', { numeric: true }) * direction;
+    });
+  }, [chorusSearchForm, customerById, search, supplierById, visibleInvoices]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
   const safePage = Math.min(page, Math.max(totalPages, 1));
@@ -558,6 +292,34 @@ export default function InvoiceList() {
     () => countChorusSearchCriteria(chorusSearchForm),
     [chorusSearchForm],
   );
+
+  useEffect(() => {
+    if (visibleInvoices.length === 0) {
+      return;
+    }
+
+    const fetchedAt = lastSyncAt || new Date().toISOString();
+    saveChorusLiveInvoiceDetails(visibleInvoices.map((invoice) => {
+      const supplier = supplierById.get(invoice.supplierOrganizationId);
+      const customer = customerById.get(invoice.publicCustomerId);
+
+      return {
+        id: invoice.id,
+        invoice,
+        supplier,
+        customer,
+        raw: invoice,
+        search: {
+          idFournisseur: asNumber(supplier?.chorusSupplierCode, 0),
+          fetchedAt,
+          total: invoicesQuery.data?.total ?? visibleInvoices.length,
+          returned: visibleInvoices.length,
+          requestedPageSize: invoicesQuery.data?.pageSize ?? 500,
+          payload: { source: 'db-cache' },
+        },
+      };
+    }));
+  }, [customerById, invoicesQuery.data?.pageSize, invoicesQuery.data?.total, lastSyncAt, supplierById, visibleInvoices]);
 
   const exportCSV = () => {
     const headers = ['Numéro', 'Fournisseur', 'SIRET', 'Client', 'Date facture', 'Date dépôt / heure statut', 'Montant TTC', 'Statut', 'Motif rejet'];
@@ -597,62 +359,29 @@ export default function InvoiceList() {
 
   function resetChorusSearchForm() {
     setChorusSearchForm({ ...DEFAULT_CHORUS_INVOICE_SEARCH_FORM });
+    setPage(1);
   }
 
-  async function loadChorusSupplierInvoices() {
-    setLoadingChorusInvoices(true);
-    setChorusSearchError(null);
-
+  async function handleSyncInvoices() {
+    setSyncError(null);
     try {
       const config = loadChorusConfig();
-      const configuredSupplierId = asNumber(config.submissionSupplierId);
-      const idFournisseur = configuredSupplierId > 0 ? configuredSupplierId : undefined;
-      const client = new ChorusBackendAutomationClient(config);
-      const result = await client.searchSupplierInvoices(
-        buildChorusSupplierInvoiceSearchInput(chorusSearchForm, idFournisseur),
-      );
-      const resolvedSupplierId = result.idFournisseur || idFournisseur || 0;
-      const nextInvoices = result.invoices.map((item, index) => normalizeChorusInvoiceRecord(item, index, resolvedSupplierId));
-      const nextSupplier = buildChorusSupplier(resolvedSupplierId, result.invoices);
-      const nextCustomers = buildChorusCustomers(result.invoices);
-      const fetchedAt = new Date().toISOString();
+      const supplierId = parseConfiguredSupplierId(config.submissionSupplierId);
+      const syncInput = {
+        environment: config.environment,
+        ...(supplierId !== undefined ? { supplierId } : {}),
+      };
 
-      saveChorusLiveInvoiceDetails(nextInvoices.map((invoice, index) => ({
-        id: invoice.id,
-        invoice,
-        supplier: nextSupplier,
-        customer: buildChorusCustomer(result.invoices[index], index),
-        raw: result.invoices[index],
-        search: {
-          idFournisseur: resolvedSupplierId,
-          fetchedAt,
-          total: result.total,
-          returned: result.returned,
-          requestedPageSize: result.requestedPageSize,
-          payload: result.payload,
-        },
-      })));
-
-      setChorusSearchResult(result);
-      setChorusInvoices(nextInvoices);
-      setChorusSuppliers([nextSupplier]);
-      setChorusCustomers(nextCustomers);
+      await syncSuppliers.mutateAsync(syncInput).catch((supplierSyncError) => {
+        console.warn('[invoices] sync suppliers skipped', supplierSyncError);
+      });
+      const run = await syncInvoices.mutateAsync({ ...syncInput, mode: 'delta' });
+      setLastSyncAt(run.finishedAt || run.startedAt);
       setPage(1);
     } catch (error) {
-      setChorusSearchError(error instanceof Error ? error.message : 'Chargement des factures Chorus impossible.');
-    } finally {
-      setLoadingChorusInvoices(false);
+      setSyncError(error instanceof Error ? error.message : 'Synchronisation des factures Chorus impossible.');
     }
   }
-
-  useEffect(() => {
-    if (didAutoLoadChorusInvoices.current) {
-      return;
-    }
-
-    didAutoLoadChorusInvoices.current = true;
-    void loadChorusSupplierInvoices();
-  }, []);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -660,12 +389,16 @@ export default function InvoiceList() {
         <div>
           <h1 className="text-2xl font-semibold">Factures</h1>
           <p className="text-sm text-muted-foreground">
-            {loadingChorusInvoices ? 'Chargement des factures Chorus...' : `${filtered.length} facture(s) Chorus trouvée(s)`}
+            {loading
+              ? 'Chargement depuis la base locale...'
+              : lastSyncAt
+                ? `${filtered.length} facture(s) en cache DB · dernière sync ${formatDateTime(lastSyncAt)}`
+                : `${filtered.length} facture(s) en cache DB`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadChorusSupplierInvoices} disabled={loadingChorusInvoices}>
-            {loadingChorusInvoices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+          <Button variant="outline" onClick={handleSyncInvoices} disabled={syncing || loading}>
+            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
             Actualiser Chorus
           </Button>
           <Button variant="outline" onClick={exportCSV}>
@@ -677,17 +410,17 @@ export default function InvoiceList() {
         </div>
       </div>
 
-      {chorusSearchError && (
+      {error && (
         <Alert variant="destructive">
-          <AlertDescription>{chorusSearchError}</AlertDescription>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {chorusSearchResult && (
+      {syncInvoices.data && (
         <Alert>
           <AlertDescription>
-            Factures Chorus chargées : {chorusSearchResult.returned} ligne(s) reçue(s) sur {chorusSearchResult.total || chorusSearchResult.returned}.
-            Page demandée : {chorusSearchResult.requestedPageSize} résultat(s).
+            Sync delta: {syncInvoices.data.rowsFetched} ligne(s) reçue(s), {syncInvoices.data.rowsUpserted} upsertée(s)
+            {syncInvoices.data.rowsFailed > 0 ? `, ${syncInvoices.data.rowsFailed} échec(s)` : ''}.
             {activeChorusSearchCriteria > 0 ? ` Critères actifs : ${activeChorusSearchCriteria}.` : ''}
           </AlertDescription>
         </Alert>
@@ -696,7 +429,7 @@ export default function InvoiceList() {
       <Card>
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <CardTitle className="text-base">Recherche Chorus</CardTitle>
+            <CardTitle className="text-base">Filtres du cache DB</CardTitle>
             <span className="text-xs text-muted-foreground">
               {activeChorusSearchCriteria > 0 ? `${activeChorusSearchCriteria} critère(s) actif(s)` : 'Aucun critère avancé'}
             </span>
@@ -810,20 +543,6 @@ export default function InvoiceList() {
               />
             </label>
             <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Rejet traité</span>
-              <Select
-                value={chorusSearchForm.rejetTraite}
-                onValueChange={(value) => updateChorusSearchField('rejetTraite', value as RejetTraiteFilter)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous</SelectItem>
-                  <SelectItem value="false">Non traité</SelectItem>
-                  <SelectItem value="true">Traité</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Tri</span>
               <Select
                 value={chorusSearchForm.triColonne}
@@ -852,11 +571,11 @@ export default function InvoiceList() {
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={loadChorusSupplierInvoices} disabled={loadingChorusInvoices}>
-              {loadingChorusInvoices ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-              Rechercher Chorus
+            <Button onClick={() => setPage(1)} disabled={loading}>
+              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+              Appliquer
             </Button>
-            <Button variant="outline" onClick={resetChorusSearchForm} disabled={loadingChorusInvoices}>
+            <Button variant="outline" onClick={resetChorusSearchForm} disabled={loading}>
               Réinitialiser critères
             </Button>
           </div>
@@ -941,7 +660,7 @@ export default function InvoiceList() {
                 {paginated.length === 0 && (
                   <tr>
                     <td colSpan={9} className="p-8 text-center text-muted-foreground">
-                      {loadingChorusInvoices ? 'Chargement des factures Chorus...' : 'Aucune facture Chorus trouvée'}
+                      {loading ? 'Chargement des factures...' : 'Aucune facture dans le cache local'}
                     </td>
                   </tr>
                 )}

@@ -1,4 +1,20 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chorus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chorus}
+      POSTGRES_DB: ${POSTGRES_DB:-chorus}
+    ports:
+      - "5432:5432"
+    volumes:
+      - chorus_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chorus} -d ${POSTGRES_DB:-chorus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   chorus-api:
     build:
       context: .
@@ -7,7 +23,14 @@ services:
     environment:
       CHORUS_HOST: 0.0.0.0
       CHORUS_PORT: 8008
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-chorus}:${POSTGRES_PASSWORD:-chorus}@postgres:5432/${POSTGRES_DB:-chorus}
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8008:8008"
     volumes:
       - ./.env.local:/app/.env.local:ro
+
+volumes:
+  chorus_pg_data:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -189,8 +190,62 @@ class ChorusClient:
             flush=True,
         )
 
-    def _print_post_response_debug(self, *, label: str, status_code: int) -> None:
+    def _print_post_response_debug(
+        self,
+        *,
+        label: str,
+        status_code: int,
+        body: Any = None,
+    ) -> None:
         print(f"[debug] Réponse Chorus - {label}: HTTP {status_code}", flush=True)
+
+        if isinstance(body, dict):
+            code_retour = body.get("codeRetour")
+            libelle = body.get("libelle")
+            if code_retour is not None or libelle is not None:
+                print(
+                    f"[debug] codeRetour={code_retour} libelle={libelle}",
+                    flush=True,
+                )
+            parametres_retour = body.get("parametresRetour")
+            if isinstance(parametres_retour, dict):
+                summary = {
+                    key: parametres_retour.get(key)
+                    for key in ("total", "pageEnCours", "nombreResultats")
+                    if parametres_retour.get(key) is not None
+                }
+                if summary:
+                    print(f"[debug] parametresRetour: {summary}", flush=True)
+
+        if body is None or os.environ.get("CHORUS_DEBUG_PRINT_RESPONSE", "true").strip().lower() in {"0", "false", "no", "off"}:
+            return
+
+        try:
+            serialized = json.dumps(
+                self._sanitize_debug_payload(body) if isinstance(body, dict) else body,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        except (TypeError, ValueError):
+            serialized = repr(body)
+
+        max_chars_raw = os.environ.get("CHORUS_DEBUG_RESPONSE_MAX_CHARS", "8000")
+        try:
+            max_chars = int(max_chars_raw)
+        except ValueError:
+            max_chars = 8000
+
+        print("[debug] Response body:", flush=True)
+        if max_chars > 0 and len(serialized) > max_chars:
+            print(serialized[:max_chars], flush=True)
+            print(
+                f"[debug] ... (tronqué à {max_chars} caractères sur {len(serialized)}; "
+                f"CHORUS_DEBUG_RESPONSE_MAX_CHARS=0 pour désactiver la troncature)",
+                flush=True,
+            )
+        else:
+            print(serialized, flush=True)
 
     def fetch_oauth_token_payload(self) -> dict[str, Any]:
         if self._access_token_payload:
@@ -271,12 +326,16 @@ class ChorusClient:
             headers=headers,
             timeout=self.settings.timeout_seconds,
         )
-        self._print_post_response_debug(label=label, status_code=response.status_code)
-
         try:
             body = response.json()
         except ValueError:
             body = response.text.strip()
+
+        self._print_post_response_debug(
+            label=label,
+            status_code=response.status_code,
+            body=body,
+        )
 
         self.api_calls.append(
             {

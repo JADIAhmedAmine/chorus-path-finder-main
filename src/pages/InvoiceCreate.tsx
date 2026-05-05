@@ -265,6 +265,7 @@ export default function InvoiceCreate() {
   const [batchResults, setBatchResults] = useState<BatchSubmissionResult[]>([]);
   const [batchSubmitting, setBatchSubmitting] = useState(false);
   const [batchCurrentFile, setBatchCurrentFile] = useState<string | null>(null);
+  const [batchAttachments, setBatchAttachments] = useState<Record<string, ComplementaryAttachmentDraft[]>>({});
   const [prefilledInvoiceId, setPrefilledInvoiceId] = useState<string | null>(null);
   const [skipNextExtraction, setSkipNextExtraction] = useState(false);
   const treatmentDetailsRef = useRef<HTMLDivElement | null>(null);
@@ -620,6 +621,7 @@ export default function InvoiceCreate() {
     setBatchFiles(selectedFiles);
     setBatchResults([]);
     setBatchCurrentFile(null);
+    setBatchAttachments({});
 
     if (fileList && selectedFiles.length === 0) {
       toast({
@@ -738,10 +740,17 @@ export default function InvoiceCreate() {
           message: 'Envoi à Chorus en cours.',
         });
 
+        const itemAttachments = batchAttachments[batchItem.id] ?? [];
         const result = await connector.submitInvoice({
           invoiceData: payloadForBatchSubmission,
           mainFile: batchItem.file,
-          attachments: [],
+          attachments: itemAttachments.map((attachment) => ({
+            file: attachment.file,
+            designation: attachment.designation.trim() || attachment.file.name,
+            type: attachment.type.trim() || DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE,
+            lineNumber: parseOptionalPositiveInteger(attachment.lineNumber),
+            liaisonId: parseOptionalPositiveInteger(attachment.liaisonId),
+          })),
         });
         const summary = describeChorusSubmissionApiReturn(result.response, result.apiCalls);
 
@@ -1664,6 +1673,7 @@ export default function InvoiceCreate() {
                   setBatchFiles([]);
                   setBatchResults([]);
                   setBatchCurrentFile(null);
+                  setBatchAttachments({});
                 }}
                 disabled={batchSubmitting}
               >
@@ -1698,15 +1708,165 @@ export default function InvoiceCreate() {
           )}
 
           {batchFiles.length > 0 && batchResults.length === 0 && (
-            <div className="rounded-lg border bg-muted/20 p-4">
-              <p className="text-sm font-medium">Fichiers prêts pour le lot</p>
-              <div className="mt-3 max-h-48 space-y-2 overflow-auto">
-                {batchFiles.map((file, index) => (
-                  <div key={buildBatchResultId(file, index)} className="flex items-center justify-between gap-3 rounded-md border bg-background p-2">
-                    <span className="min-w-0 truncate text-sm">{getFileDisplayPath(file)}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{(file.size / 1024).toFixed(0)} Ko</span>
-                  </div>
-                ))}
+            <div className="space-y-3">
+              <p className="text-sm font-medium">
+                Fichiers prêts pour le lot ({batchFiles.length})
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Pour chaque facture, vous pouvez ajouter des pièces jointes complémentaires (bon de commande, PV, devis…). Elles seront téléversées avant la soumission Chorus.
+              </p>
+              <div className="space-y-2">
+                {batchFiles.map((file, index) => {
+                  const itemId = buildBatchResultId(file, index);
+                  const itemAttachments = batchAttachments[itemId] ?? [];
+                  const inputId = `batch-attachment-upload-${itemId}`;
+                  return (
+                    <details key={itemId} className="group rounded-lg border bg-muted/10">
+                      <summary className="flex cursor-pointer items-center justify-between gap-3 px-3 py-2 text-sm">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="truncate font-medium">{getFileDisplayPath(file)}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                          <span>{(file.size / 1024).toFixed(0)} Ko</span>
+                          <Badge variant={itemAttachments.length > 0 ? 'default' : 'outline'}>
+                            {itemAttachments.length} pièce(s) jointe(s)
+                          </Badge>
+                        </span>
+                      </summary>
+                      <div className="space-y-3 border-t bg-background/40 p-3">
+                        {itemAttachments.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            Aucune pièce jointe complémentaire pour cette facture.
+                          </p>
+                        ) : (
+                          itemAttachments.map((attachment) => (
+                            <div key={attachment.id} className="space-y-3 rounded-lg border bg-background p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex min-w-0 items-center gap-3">
+                                  <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium">{attachment.file.name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      {(attachment.file.size / 1024).toFixed(0)} Ko
+                                    </p>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={batchSubmitting}
+                                  onClick={() => setBatchAttachments((prev) => ({
+                                    ...prev,
+                                    [itemId]: (prev[itemId] ?? []).filter((item) => item.id !== attachment.id),
+                                  }))}
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Désignation Chorus</Label>
+                                  <Input
+                                    value={attachment.designation}
+                                    placeholder={attachment.file.name}
+                                    disabled={batchSubmitting}
+                                    onChange={(event) => setBatchAttachments((prev) => ({
+                                      ...prev,
+                                      [itemId]: (prev[itemId] ?? []).map((item) => (
+                                        item.id === attachment.id ? { ...item, designation: event.target.value } : item
+                                      )),
+                                    }))}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Type</Label>
+                                  <Select
+                                    value={attachment.type}
+                                    disabled={batchSubmitting}
+                                    onValueChange={(value) => setBatchAttachments((prev) => ({
+                                      ...prev,
+                                      [itemId]: (prev[itemId] ?? []).map((item) => (
+                                        item.id === attachment.id ? { ...item, type: value } : item
+                                      )),
+                                    }))}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {COMPLEMENTARY_ATTACHMENT_TYPES.map((type) => (
+                                        <SelectItem key={type.value} value={type.value}>
+                                          {type.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>N° ligne</Label>
+                                  <Input
+                                    inputMode="numeric"
+                                    value={attachment.lineNumber}
+                                    placeholder="Optionnel"
+                                    disabled={batchSubmitting}
+                                    onChange={(event) => setBatchAttachments((prev) => ({
+                                      ...prev,
+                                      [itemId]: (prev[itemId] ?? []).map((item) => (
+                                        item.id === attachment.id ? { ...item, lineNumber: event.target.value } : item
+                                      )),
+                                    }))}
+                                  />
+                                </div>
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>ID liaison</Label>
+                                  <Input
+                                    inputMode="numeric"
+                                    value={attachment.liaisonId}
+                                    placeholder="Optionnel"
+                                    disabled={batchSubmitting}
+                                    onChange={(event) => setBatchAttachments((prev) => ({
+                                      ...prev,
+                                      [itemId]: (prev[itemId] ?? []).map((item) => (
+                                        item.id === attachment.id ? { ...item, liaisonId: event.target.value } : item
+                                      )),
+                                    }))}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={batchSubmitting}
+                          onClick={() => document.getElementById(inputId)?.click()}
+                        >
+                          <Upload className="mr-2 h-4 w-4" /> Ajouter une pièce jointe
+                        </Button>
+                        <input
+                          id={inputId}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(event) => {
+                            if (event.target.files) {
+                              const newDrafts = Array.from(event.target.files).map(
+                                (uploadedFile, attachmentIndex) => buildComplementaryAttachmentDraft(uploadedFile, attachmentIndex),
+                              );
+                              setBatchAttachments((prev) => ({
+                                ...prev,
+                                [itemId]: [...(prev[itemId] ?? []), ...newDrafts],
+                              }));
+                              event.target.value = '';
+                            }
+                          }}
+                        />
+                      </div>
+                    </details>
+                  );
+                })}
               </div>
             </div>
           )}

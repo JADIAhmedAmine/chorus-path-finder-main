@@ -9,10 +9,44 @@ export interface LocalAuthSession {
   chorusSupplierId?: string;
   chorusSupplierServiceId?: string;
   chorusBankAccountCode?: string;
+  accessToken?: string;
+  expiresAt?: string;
   createdAt: string;
 }
 
 export const AUTH_SESSION_STORAGE_KEY = 'app.auth.session';
+
+export function getAuthToken(): string | null {
+  const session = loadAuthSession();
+  if (!session?.accessToken) {
+    return null;
+  }
+  if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) {
+    clearAuthSession();
+    return null;
+  }
+  return session.accessToken;
+}
+
+export function hasValidAuthSession(): boolean {
+  return getAuthToken() !== null;
+}
+
+export function authHeaders(extra?: HeadersInit): Record<string, string> {
+  const headers = new Headers(extra);
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return Object.fromEntries(headers.entries());
+}
+
+export function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    headers: authHeaders(init?.headers),
+  });
+}
 
 function trimText(value: string | undefined): string | undefined {
   const trimmed = value?.trim();

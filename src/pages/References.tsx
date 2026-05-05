@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -174,6 +175,8 @@ export default function References() {
     const client = new ChorusBackendAutomationClient(loadChorusConfig());
     return client.annuaireSyncUrl;
   }, []);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const autoOpenedSiretRef = useRef<string | null>(null);
 
   const filteredCustomers = publicCustomers.filter((customer) =>
     matchesSearch([customer.legalName, customer.codeDestinataire, customer.siret], custSearch),
@@ -210,6 +213,35 @@ export default function References() {
       setSyncingAnnuaire(false);
     }
   }
+
+  useEffect(() => {
+    const requestedSiret = searchParams.get('siret');
+    if (!requestedSiret || autoOpenedSiretRef.current === requestedSiret) {
+      return;
+    }
+    if (publicCustomers.length === 0) {
+      return;
+    }
+
+    const normalized = requestedSiret.replace(/\D/g, '');
+    const match = publicCustomers.find((customer) => {
+      const customerSiret = (customer.siret || '').replace(/\D/g, '');
+      const customerCode = (customer.codeDestinataire || '').replace(/\D/g, '');
+      return customerSiret === normalized || customerCode === normalized;
+    });
+
+    if (!match) {
+      return;
+    }
+
+    autoOpenedSiretRef.current = requestedSiret;
+    setCustSearch(match.legalName);
+    setCustomerPage(1);
+    void handleLoadCustomerInfo(match);
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('siret');
+    setSearchParams(nextParams, { replace: true });
+  }, [publicCustomers, searchParams, setSearchParams]);
 
   async function handleLoadCustomerInfo(customer: PublicCustomer) {
     const siretStructure = (customer.siret || customer.codeDestinataire).replace(/\D/g, '');

@@ -1,13 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
-import { ChorusBackendAutomationClient, type ChorusSupplierInvoicesSearchResult } from '@/lib/chorus/backendAutomation';
-import { normalizeChorusInvoiceSearch } from '@/lib/chorus/invoiceRecords';
 import { loadChorusConfig } from '@/lib/chorus/storage';
-import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
+import {
+  type SyncRunResult,
+  useInvoicesQuery,
+  usePublicCustomersQuery,
+  useSuppliersQuery,
+  useSyncInvoicesMutation,
+  useSyncSuppliersMutation,
+} from '@/lib/queries/db';
+import type { Invoice } from '@/types';
 import {
   AlertTriangle,
   ArrowRight,
@@ -17,9 +32,26 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  TrendingUp,
   Wrench,
+  X,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import {
+  Bar,
+  BarChart,
+  Cell,
+  ComposedChart,
+  Legend,
+  Line,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+
+const ALL_VALUE = '__all__';
 
 function isRejectedStatus(status: string): boolean {
   return status.toUpperCase().includes('REJET');
@@ -39,48 +71,74 @@ function parsePositiveInteger(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
 }
 
+interface DashboardFilters {
+  supplierId: string;
+  status: string;
+  customerId: string;
+  fromDate: string;
+  toDate: string;
+}
+
+const EMPTY_FILTERS: DashboardFilters = {
+  supplierId: ALL_VALUE,
+  status: ALL_VALUE,
+  customerId: ALL_VALUE,
+  fromDate: '',
+  toDate: '',
+};
+
 export default function Dashboard() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [suppliers, setSuppliers] = useState<SupplierOrganization[]>([]);
-  const [customers, setCustomers] = useState<PublicCustomer[]>([]);
-  const [searchResult, setSearchResult] = useState<ChorusSupplierInvoicesSearchResult | null>(null);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [filters, setFilters] = useState<DashboardFilters>(EMPTY_FILTERS);
 
-  async function loadDashboardInvoices() {
-    setLoading(true);
-    setError(null);
+  const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
+  const suppliersQuery = useSuppliersQuery();
+  const customersQuery = usePublicCustomersQuery();
+  const syncInvoices = useSyncInvoicesMutation();
+  const syncSuppliers = useSyncSuppliersMutation();
 
+  const invoices = invoicesQuery.data?.items ?? [];
+  const suppliers = suppliersQuery.data ?? [];
+  const customers = customersQuery.data ?? [];
+  const lastSyncRuns: SyncRunResult[] = (syncInvoices.data ?? []) as SyncRunResult[];
+
+  const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+  const syncing = syncInvoices.isPending || syncSuppliers.isPending;
+
+  const error =
+    syncError
+    || invoicesQuery.error?.message
+    || suppliersQuery.error?.message
+    || customersQuery.error?.message
+    || null;
+
+  async function handleRefresh() {
+    setSyncError(null);
     try {
       const config = loadChorusConfig();
-      const idFournisseur = parsePositiveInteger(config.submissionSupplierId);
-      const client = new ChorusBackendAutomationClient(config);
-      const result = await client.searchSupplierInvoices({
-        ...(idFournisseur !== undefined ? { idFournisseur } : {}),
-        typeFacture: 'FACTURE',
-        rechercheFactureParFournisseur: {
-          triColonne: 'TypeDemandePaiement',
-          triSens: 'Descendant',
-        },
-      });
-      const normalized = normalizeChorusInvoiceSearch(result, result.idFournisseur || idFournisseur || 0);
+      const supplierId = parsePositiveInteger(config.submissionSupplierId);
+      const syncInput = {
+        environment: config.environment,
+        ...(supplierId !== undefined ? { supplierId } : {}),
+      };
 
-      setInvoices(normalized.invoices);
-      setSuppliers([normalized.supplier]);
-      setCustomers(normalized.customers);
-      setSearchResult(result);
-      setLastSyncAt(normalized.fetchedAt);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Chargement du tableau de bord Chorus impossible.');
-    } finally {
-      setLoading(false);
+      await syncSuppliers.mutateAsync(syncInput).catch((supplierSyncError) => {
+        console.warn('[dashboard] sync suppliers skipped', supplierSyncError);
+      });
+      const runs = await syncInvoices.mutateAsync({ ...syncInput, mode: 'delta' });
+      const lastRun = runs[runs.length - 1];
+      if (lastRun) {
+        setLastSyncAt(lastRun.finishedAt || lastRun.startedAt);
+      }
+    } catch (refreshError) {
+      setSyncError(
+        refreshError instanceof Error
+          ? refreshError.message
+          : 'Synchronisation Chorus impossible.',
+      );
     }
   }
-
-  useEffect(() => {
-    void loadDashboardInvoices();
-  }, []);
 
   const supplierById = useMemo(
     () => new Map(suppliers.map((supplier) => [supplier.id, supplier])),
@@ -92,40 +150,69 @@ export default function Dashboard() {
     [customers],
   );
 
+  const availableStatuses = useMemo(() => {
+    const set = new Set<string>();
+    for (const invoice of invoices) {
+      const status = getInvoiceStatusLabel(invoice);
+      if (status) set.add(status);
+    }
+    return [...set].sort();
+  }, [invoices]);
+
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter((invoice) => {
+      if (filters.supplierId !== ALL_VALUE && invoice.supplierOrganizationId !== filters.supplierId) {
+        return false;
+      }
+      if (filters.customerId !== ALL_VALUE && invoice.publicCustomerId !== filters.customerId) {
+        return false;
+      }
+      if (filters.status !== ALL_VALUE && getInvoiceStatusLabel(invoice) !== filters.status) {
+        return false;
+      }
+      if (filters.fromDate && (!invoice.invoiceDate || invoice.invoiceDate < filters.fromDate)) {
+        return false;
+      }
+      if (filters.toDate && (!invoice.invoiceDate || invoice.invoiceDate > filters.toDate)) {
+        return false;
+      }
+      return true;
+    });
+  }, [invoices, filters]);
+
+  const filtersActive =
+    filters.supplierId !== ALL_VALUE
+    || filters.status !== ALL_VALUE
+    || filters.customerId !== ALL_VALUE
+    || filters.fromDate !== ''
+    || filters.toDate !== '';
+
   const statusCounts = useMemo(() => {
     const counts = new Map<string, number>();
-
-    for (const invoice of invoices) {
+    for (const invoice of filteredInvoices) {
       const status = getInvoiceStatusLabel(invoice);
       counts.set(status, (counts.get(status) ?? 0) + 1);
     }
-
     return counts;
-  }, [invoices]);
+  }, [filteredInvoices]);
 
   const pieData = useMemo(() => {
     return [...statusCounts.entries()]
       .sort((left, right) => right[1] - left[1])
       .map(([status, value]) => {
         const config = getChorusRawStatusConfig(status);
-        return {
-          name: config.label,
-          value,
-          color: config.color,
-        };
+        return { name: config.label, value, color: config.color };
       });
   }, [statusCounts]);
 
   const statusAmounts = useMemo(() => {
     const amounts = new Map<string, number>();
-
-    for (const invoice of invoices) {
+    for (const invoice of filteredInvoices) {
       const status = getInvoiceStatusLabel(invoice);
       amounts.set(status, (amounts.get(status) ?? 0) + invoice.totalTtc);
     }
-
     return amounts;
-  }, [invoices]);
+  }, [filteredInvoices]);
 
   const amountPieData = useMemo(() => {
     return [...statusAmounts.entries()]
@@ -141,57 +228,121 @@ export default function Dashboard() {
       });
   }, [statusAmounts, statusCounts]);
 
-  const barData = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    for (const invoice of invoices) {
+  const monthlyData = useMemo(() => {
+    const buckets = new Map<string, { count: number; ttc: number }>();
+    for (const invoice of filteredInvoices) {
+      if (!invoice.invoiceDate) continue;
       const key = invoice.invoiceDate.slice(0, 7);
-      counts.set(key, (counts.get(key) ?? 0) + 1);
+      const current = buckets.get(key) ?? { count: 0, ttc: 0 };
+      current.count += 1;
+      current.ttc += invoice.totalTtc;
+      buckets.set(key, current);
     }
-
-    return [...counts.entries()]
+    return [...buckets.entries()]
       .sort(([left], [right]) => left.localeCompare(right))
-      .map(([month, count]) => ({
+      .map(([month, value]) => ({
         month: new Date(`${month}-01T00:00:00Z`).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }),
-        count,
+        count: value.count,
+        ttc: Math.round(value.ttc * 100) / 100,
       }));
-  }, [invoices]);
+  }, [filteredInvoices]);
+
+  const topCustomers = useMemo(() => {
+    const buckets = new Map<string, { count: number; ttc: number; label: string }>();
+    for (const invoice of filteredInvoices) {
+      const id = invoice.publicCustomerId;
+      if (!id) continue;
+      const current = buckets.get(id) ?? {
+        count: 0,
+        ttc: 0,
+        label: customerById.get(id)?.legalName || id,
+      };
+      current.count += 1;
+      current.ttc += invoice.totalTtc;
+      buckets.set(id, current);
+    }
+    return [...buckets.entries()]
+      .map(([id, data]) => ({ id, ...data }))
+      .sort((left, right) => right.ttc - left.ttc)
+      .slice(0, 5);
+  }, [filteredInvoices, customerById]);
 
   const recentInvoices = useMemo(
-    () => [...invoices]
+    () => [...filteredInvoices]
       .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
       .slice(0, 5),
-    [invoices],
+    [filteredInvoices],
+  );
+
+  const rejectedInvoices = useMemo(
+    () => filteredInvoices
+      .filter((invoice) => isRejectedStatus(getInvoiceStatusLabel(invoice)))
+      .sort((left, right) =>
+        new Date(right.lastStatusSyncAt || right.updatedAt).getTime()
+        - new Date(left.lastStatusSyncAt || left.updatedAt).getTime(),
+      )
+      .slice(0, 8),
+    [filteredInvoices],
   );
 
   const recentStatuses = useMemo(
-    () => [...invoices]
-      .sort((left, right) => new Date(right.lastStatusSyncAt || right.updatedAt).getTime() - new Date(left.lastStatusSyncAt || left.updatedAt).getTime())
+    () => [...filteredInvoices]
+      .sort((left, right) =>
+        new Date(right.lastStatusSyncAt || right.updatedAt).getTime()
+        - new Date(left.lastStatusSyncAt || left.updatedAt).getTime(),
+      )
       .slice(0, 5),
-    [invoices],
+    [filteredInvoices],
   );
 
   const totalTtc = useMemo(
-    () => invoices.reduce((sum, invoice) => sum + invoice.totalTtc, 0),
-    [invoices],
+    () => filteredInvoices.reduce((sum, invoice) => sum + invoice.totalTtc, 0),
+    [filteredInvoices],
   );
 
+  const averageTtc = filteredInvoices.length > 0 ? totalTtc / filteredInvoices.length : 0;
+
   const rejectedCount = useMemo(
-    () => invoices.filter((invoice) => isRejectedStatus(getInvoiceStatusLabel(invoice))).length,
-    [invoices],
+    () => filteredInvoices.filter((invoice) => isRejectedStatus(getInvoiceStatusLabel(invoice))).length,
+    [filteredInvoices],
   );
 
   const paidCount = useMemo(
-    () => invoices.filter((invoice) => isPaidStatus(getInvoiceStatusLabel(invoice))).length,
-    [invoices],
+    () => filteredInvoices.filter((invoice) => isPaidStatus(getInvoiceStatusLabel(invoice))).length,
+    [filteredInvoices],
   );
 
+  const rejectionRate =
+    filteredInvoices.length > 0
+      ? Math.round((rejectedCount / filteredInvoices.length) * 1000) / 10
+      : 0;
+
   const statCards = useMemo(() => [
-    { label: 'Total factures Chorus', value: searchResult?.total ?? invoices.length, icon: FileText, color: 'text-foreground' },
+    {
+      label: filtersActive ? 'Factures (filtrées)' : 'Total factures (cache DB)',
+      value: filteredInvoices.length,
+      icon: FileText,
+      color: 'text-foreground',
+    },
     { label: 'Montant TTC cumulé', value: formatCurrency(totalTtc), icon: Euro, color: 'text-info' },
-    { label: 'Rejets Chorus', value: rejectedCount, icon: AlertTriangle, color: 'text-destructive' },
+    {
+      label: 'Montant moyen / facture',
+      value: formatCurrency(averageTtc),
+      icon: TrendingUp,
+      color: 'text-primary',
+    },
     { label: 'Paiement / payées', value: paidCount, icon: CheckCircle, color: 'text-success' },
-  ], [invoices.length, paidCount, rejectedCount, searchResult?.total, totalTtc]);
+    {
+      label: `Rejets (${rejectionRate}%)`,
+      value: rejectedCount,
+      icon: AlertTriangle,
+      color: 'text-destructive',
+    },
+  ], [averageTtc, filteredInvoices.length, filtersActive, paidCount, rejectedCount, rejectionRate, totalTtc]);
+
+  function updateFilter<K extends keyof DashboardFilters>(key: K, value: DashboardFilters[K]) {
+    setFilters((prev) => ({ ...prev, [key]: value }));
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -200,15 +351,15 @@ export default function Dashboard() {
           <h1 className="text-2xl font-semibold">Tableau de bord</h1>
           <p className="text-sm text-muted-foreground">
             {loading
-              ? 'Chargement des données Chorus...'
+              ? 'Chargement depuis la base locale...'
               : lastSyncAt
-                ? `Données Chorus synchronisées le ${formatDateTime(lastSyncAt)}`
-                : 'Vue réelle des factures Chorus'}
+                ? `Dernière sync Chorus : ${formatDateTime(lastSyncAt)}`
+                : 'Données depuis le cache local (DB)'}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={loadDashboardInvoices} disabled={loading}>
-            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          <Button variant="outline" onClick={handleRefresh} disabled={syncing || loading}>
+            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Actualiser Chorus
           </Button>
           <Button variant="outline" asChild>
@@ -230,23 +381,102 @@ export default function Dashboard() {
         </Alert>
       )}
 
-      {searchResult && (
+      {lastSyncRuns.length > 0 && (
         <Alert>
           <AlertDescription>
-            Chorus a retourné {searchResult.returned} ligne(s) sur {searchResult.total || searchResult.returned}.
-            Taille demandée : {searchResult.requestedPageSize}.
+            Sync sur {lastSyncRuns.length} fournisseur(s) :{' '}
+            {lastSyncRuns.reduce((sum, run) => sum + run.rowsFetched, 0)} ligne(s) reçues,{' '}
+            {lastSyncRuns.reduce((sum, run) => sum + run.rowsUpserted, 0)} upsertée(s)
+            {lastSyncRuns.some((run) => run.rowsFailed > 0)
+              ? `, ${lastSyncRuns.reduce((sum, run) => sum + run.rowsFailed, 0)} échec(s)`
+              : ''}.
           </AlertDescription>
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <CardTitle className="text-base">Filtres</CardTitle>
+            {filtersActive && (
+              <Button variant="ghost" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+                <X className="mr-1.5 h-3.5 w-3.5" /> Réinitialiser
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Fournisseur</Label>
+              <Select value={filters.supplierId} onValueChange={(value) => updateFilter('supplierId', value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_VALUE}>Tous les fournisseurs ({suppliers.length})</SelectItem>
+                  {suppliers.map((supplier) => (
+                    <SelectItem key={supplier.id} value={supplier.id}>
+                      {supplier.legalName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Destinataire</Label>
+              <Select value={filters.customerId} onValueChange={(value) => updateFilter('customerId', value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_VALUE}>Tous les destinataires</SelectItem>
+                  {customers.map((customer) => (
+                    <SelectItem key={customer.id} value={customer.id}>
+                      {customer.legalName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Statut Chorus</Label>
+              <Select value={filters.status} onValueChange={(value) => updateFilter('status', value)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_VALUE}>Tous les statuts</SelectItem>
+                  {availableStatuses.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {getChorusRawStatusConfig(status).label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Date facture du</Label>
+              <Input
+                type="date"
+                value={filters.fromDate}
+                onChange={(event) => updateFilter('fromDate', event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Date facture au</Label>
+              <Input
+                type="date"
+                value={filters.toDate}
+                onChange={(event) => updateFilter('toDate', event.target.value)}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {statCards.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  <p className={`text-3xl font-bold ${stat.color}`}>{stat.value}</p>
+                  <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
                 </div>
                 <stat.icon className={`h-8 w-8 ${stat.color} opacity-40`} />
               </div>
@@ -311,21 +541,70 @@ export default function Dashboard() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">Factures Chorus par mois</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">Top 5 destinataires par montant</CardTitle></CardHeader>
           <CardContent>
-            <div className="h-[250px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData}>
-                  <XAxis dataKey="month" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="hsl(220, 60%, 20%)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="space-y-2">
+              {topCustomers.map((customer) => {
+                const ratio = totalTtc > 0 ? Math.min(100, (customer.ttc / totalTtc) * 100) : 0;
+                return (
+                  <div key={customer.id} className="space-y-1">
+                    <div className="flex items-center justify-between gap-3 text-sm">
+                      <span className="truncate" title={customer.label}>{customer.label}</span>
+                      <span className="font-medium shrink-0">{formatCurrency(customer.ttc)}</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full" style={{ width: `${ratio}%` }} />
+                    </div>
+                    <div className="text-xs text-muted-foreground">{customer.count} facture(s)</div>
+                  </div>
+                );
+              })}
+              {topCustomers.length === 0 && (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  Aucun destinataire dans le périmètre.
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Évolution mensuelle (nombre + montant TTC)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={monthlyData}>
+                <XAxis dataKey="month" />
+                <YAxis yAxisId="left" allowDecimals={false} />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tickFormatter={(value) => formatCurrency(Number(value))}
+                  width={100}
+                />
+                <Tooltip
+                  formatter={(value, name) =>
+                    name === 'ttc'
+                      ? [formatCurrency(Number(value)), 'Montant TTC']
+                      : [`${value} facture(s)`, 'Factures']
+                  }
+                />
+                <Legend />
+                <Bar yAxisId="left" dataKey="count" name="Factures" fill="hsl(220, 60%, 60%)" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="ttc" name="Montant TTC" stroke="hsl(160, 70%, 35%)" strokeWidth={2} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+          {monthlyData.length === 0 && (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Aucune donnée mensuelle dans le périmètre.
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
@@ -358,7 +637,7 @@ export default function Dashboard() {
               })}
               {recentInvoices.length === 0 && (
                 <div className="py-8 text-center text-sm text-muted-foreground">
-                  {loading ? 'Chargement des factures Chorus...' : 'Aucune facture Chorus chargée'}
+                  {loading ? 'Chargement des factures...' : 'Aucune facture dans le périmètre'}
                 </div>
               )}
             </div>
@@ -389,7 +668,7 @@ export default function Dashboard() {
               })}
               {recentStatuses.length === 0 && (
                 <div className="py-8 text-center text-sm text-muted-foreground">
-                  {loading ? 'Chargement des statuts Chorus...' : 'Aucun statut Chorus chargé'}
+                  {loading ? 'Chargement des statuts...' : 'Aucun statut dans le périmètre'}
                 </div>
               )}
             </div>
@@ -400,7 +679,7 @@ export default function Dashboard() {
       {!loading && invoices.length === 0 && !error && (
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
-            Aucune facture réelle n&apos;a encore été retournée par Chorus.
+            Aucune facture en cache local. Cliquez sur « Actualiser Chorus » pour synchroniser.
           </CardContent>
         </Card>
       )}

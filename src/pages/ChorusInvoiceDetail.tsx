@@ -1,13 +1,17 @@
-import type { ReactNode } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Building2, FileJson, Hash, Info } from 'lucide-react';
+import { ArrowLeft, Building2, FileJson, Hash, Info, Loader2 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
-import { getChorusLiveInvoiceDetail } from '@/lib/chorus/liveInvoiceDetails';
+import {
+  useInvoiceDetailQuery,
+  usePublicCustomersQuery,
+  useSuppliersQuery,
+} from '@/lib/queries/db';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
 
@@ -41,46 +45,48 @@ function formatOptionalDate(value: string | undefined, withTime = false): string
   return hasTime ? formatDateTime(value) : formatDate(value);
 }
 
-function formatRawValue(value: unknown): ReactNode {
-  if (value === null || typeof value === 'undefined' || value === '') {
-    return <span className="text-muted-foreground">-</span>;
-  }
-
-  if (typeof value === 'boolean') {
-    return value ? 'Oui' : 'Non';
-  }
-
-  if (typeof value === 'number' || typeof value === 'bigint') {
-    return String(value);
-  }
-
-  if (typeof value === 'string') {
-    return value;
-  }
-
-  return (
-    <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-xs">
-      {JSON.stringify(value, null, 2)}
-    </pre>
-  );
-}
-
 export default function ChorusInvoiceDetail() {
   const { id } = useParams();
-  const detail = getChorusLiveInvoiceDetail(id);
+  const invoiceQuery = useInvoiceDetailQuery(id);
+  const suppliersQuery = useSuppliersQuery();
+  const customersQuery = usePublicCustomersQuery();
 
-  if (!detail) {
+  const supplierById = useMemo(
+    () => new Map((suppliersQuery.data ?? []).map((s) => [s.id, s])),
+    [suppliersQuery.data],
+  );
+  const customerById = useMemo(
+    () => new Map((customersQuery.data ?? []).map((c) => [c.id, c])),
+    [customersQuery.data],
+  );
+
+  const isLoading = invoiceQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+  const invoice = invoiceQuery.data ?? null;
+  const supplier = invoice ? supplierById.get(invoice.supplierOrganizationId) : undefined;
+  const customer = invoice ? customerById.get(invoice.publicCustomerId) : undefined;
+  const raw = invoice && isRecord((invoice as { rawPayload?: unknown }).rawPayload)
+    ? (invoice as { rawPayload?: Record<string, unknown> }).rawPayload
+    : invoice;
+
+  if (isLoading) {
+    return (
+      <div className="mx-auto flex max-w-3xl items-center justify-center py-16">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Chargement de la facture...
+      </div>
+    );
+  }
+
+  if (!invoice) {
     return (
       <div className="mx-auto max-w-3xl py-16">
         <Card>
           <CardHeader>
-            <CardTitle>Facture Chorus non disponible</CardTitle>
+            <CardTitle>Facture Chorus introuvable</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <Alert>
               <AlertDescription>
-                Cette fiche n'est pas encore présente dans le navigateur. Recharge les factures Chorus depuis la liste,
-                puis clique sur le N° facture.
+                Aucune facture {id ? <code>{id}</code> : ''} dans la base. Synchronisez les factures Chorus depuis la liste.
               </AlertDescription>
             </Alert>
             <Button asChild>
@@ -92,7 +98,6 @@ export default function ChorusInvoiceDetail() {
     );
   }
 
-  const { invoice, supplier, customer, raw, search } = detail;
   const rawStatus = (invoice.statusChorus || invoice.statusInternal).toUpperCase();
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS'
     || invoice.statusInternal === 'REJECTED_TECHNICAL'
@@ -101,6 +106,9 @@ export default function ChorusInvoiceDetail() {
   const rawEntries = isRecord(raw)
     ? Object.entries(raw).sort(([left], [right]) => left.localeCompare(right, 'fr'))
     : [];
+  const customerLabel = customer?.legalName || invoice.recipientChorusName || 'Destinataire Chorus';
+  const customerSiret = customer?.siret || invoice.recipientChorusCode || '';
+  const customerCode = customer?.codeDestinataire || invoice.recipientChorusCode || '';
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -115,7 +123,7 @@ export default function ChorusInvoiceDetail() {
               <ChorusStatusPill value={invoice.statusChorus || invoice.statusInternal} />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              {supplier?.legalName || `Fournisseur ${search.idFournisseur}`} → {customer?.legalName || 'Destinataire Chorus'}
+              {supplier?.legalName || invoice.supplierChorusName || 'Fournisseur'} → {customerLabel}
             </p>
           </div>
         </div>
@@ -172,37 +180,60 @@ export default function ChorusInvoiceDetail() {
             <Card>
               <CardHeader><CardTitle className="text-base">Fournisseur</CardTitle></CardHeader>
               <CardContent className="space-y-3">
-                <InfoRow label="Raison sociale" value={supplier?.legalName || '-'} />
-                <InfoRow label="ID fournisseur Chorus" value={String(search.idFournisseur)} />
-                <InfoRow label="Code fournisseur" value={supplier?.chorusSupplierCode || '-'} />
+                <InfoRow label="Raison sociale" value={supplier?.legalName || invoice.supplierChorusName || '-'} />
+                <InfoRow label="ID fournisseur Chorus" value={supplier?.chorusSupplierCode || '-'} />
+                <InfoRow label="Code fournisseur" value={invoice.supplierChorusCode || supplier?.chorusSupplierCode || '-'} />
                 <InfoRow label="SIRET" value={supplier?.siret || '-'} />
               </CardContent>
             </Card>
 
             <Card>
-              <CardHeader><CardTitle className="flex items-center text-base"><Building2 className="mr-2 h-4 w-4" /> Destinataire public</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between text-base">
+                  <span className="flex items-center"><Building2 className="mr-2 h-4 w-4" /> Destinataire public</span>
+                  {(customerSiret || customerCode) && (
+                    <Button variant="link" size="sm" asChild className="h-auto p-0">
+                      <Link to={`/references/customers?siret=${encodeURIComponent(customerSiret || customerCode)}`}>
+                        Voir la fiche client
+                      </Link>
+                    </Button>
+                  )}
+                </CardTitle>
+              </CardHeader>
               <CardContent className="space-y-3">
-                <InfoRow label="Raison sociale" value={customer?.legalName || '-'} />
-                <InfoRow label="Code destinataire" value={customer?.codeDestinataire || '-'} />
-                <InfoRow label="SIRET" value={customer?.siret || '-'} />
+                <InfoRow label="Raison sociale" value={customerLabel} />
+                <InfoRow label="Code destinataire" value={customerCode || '-'} />
+                <InfoRow label="ID Chorus destinataire" value={invoice.recipientChorusId || '-'} />
+                <InfoRow label="SIRET" value={customerSiret || '-'} />
                 <InfoRow label="Bon de commande" value={invoice.purchaseOrderNumber || '-'} />
                 <InfoRow label="Marché" value={invoice.marketNumber || '-'} />
                 <InfoRow label="Engagement" value={invoice.engagementNumber || '-'} />
               </CardContent>
             </Card>
 
-            {SHOW_DEV_TOOLS && (
-              <Card className="xl:col-span-2">
-                <CardHeader><CardTitle className="text-base">Contexte de récupération</CardTitle></CardHeader>
-                <CardContent className="grid grid-cols-1 gap-3 text-sm md:grid-cols-2 xl:grid-cols-5">
-                  <Metric label="Chargé le" value={formatOptionalDate(search.fetchedAt, true)} />
-                  <Metric label="Total Chorus" value={String(search.total)} />
-                  <Metric label="Lignes reçues" value={String(search.returned)} />
-                  <Metric label="Taille demandée" value={String(search.requestedPageSize)} />
-                  <Metric label="ID fournisseur" value={String(search.idFournisseur)} />
-                </CardContent>
-              </Card>
-            )}
+            <Card>
+              <CardHeader><CardTitle className="text-base">Service exécutant</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <InfoRow label="Nom" value={invoice.serviceChorusName || '-'} />
+                <InfoRow label="Code" value={invoice.serviceChorusCode || '-'} />
+                <InfoRow label="ID Chorus" value={invoice.serviceChorusId || '-'} />
+              </CardContent>
+            </Card>
+
+            <Card className="xl:col-span-2">
+              <CardHeader><CardTitle className="text-base">Métadonnées Chorus</CardTitle></CardHeader>
+              <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <InfoRow label="Type demande paiement" value={invoice.chorusInvoiceType || '-'} />
+                <InfoRow label="Code fournisseur Chorus" value={invoice.supplierChorusCode || '-'} />
+                <InfoRow label="Désignation fournisseur" value={invoice.supplierChorusName || '-'} />
+                <InfoRow label="Montant à payer" value={invoice.amountToPay !== undefined ? formatCurrency(invoice.amountToPay) : '-'} />
+                <InfoRow label="Créateur" value={invoice.createdByName || '-'} />
+                <InfoRow label="Date / heure du statut" value={formatOptionalDate(invoice.statusChangedAt, true)} />
+                <InfoRow label="Pièces jointes" value={invoice.attachmentCount !== undefined ? String(invoice.attachmentCount) : '-'} />
+                <InfoRow label="Rejet traité" value={invoice.rejectionProcessed === undefined ? '-' : invoice.rejectionProcessed ? 'Oui' : 'Non'} />
+                <InfoRow label="Référence externe" value={invoice.externalReference || '-'} />
+              </CardContent>
+            </Card>
           </div>
         </TabsContent>
 
@@ -249,20 +280,35 @@ export default function ChorusInvoiceDetail() {
   );
 }
 
+function formatRawValue(value: unknown) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'Oui' : 'Non';
+  }
+
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  return (
+    <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-xs">
+      {JSON.stringify(value, null, 2)}
+    </pre>
+  );
+}
+
 function InfoRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
     <div className="flex justify-between gap-4 text-sm">
       <span className="shrink-0 text-muted-foreground">{label}</span>
       <span className={`text-right ${bold ? 'text-base font-semibold' : 'font-medium'}`}>{value}</span>
-    </div>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border bg-muted/20 p-3">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-1 break-words font-medium">{value}</div>
     </div>
   );
 }

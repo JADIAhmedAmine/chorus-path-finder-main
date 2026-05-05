@@ -58,7 +58,7 @@ function pickEnumValue<T extends string>(value: string, allowed: readonly T[], f
 }
 
 export function resolveChorusEnvironment(): ChorusEnvironment {
-  const raw = envValue('VITE_CHORUS_ENV', 'qualif').trim().toLowerCase();
+  const raw = envValue('VITE_CHORUS_ENV', 'prod').trim().toLowerCase();
   return raw === 'prod' ? 'prod' : 'qualif';
 }
 

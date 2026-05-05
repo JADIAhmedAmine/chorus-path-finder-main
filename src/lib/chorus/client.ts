@@ -1,5 +1,6 @@
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
 import { CHORUS_OAUTH_TOKEN_PATH, CHORUS_SUBMIT_PATH, resolveChorusBridgeUrl } from '@/lib/chorus/backendAutomation';
+import { authHeaders } from '@/lib/auth/session';
 import {
   describeChorusSubmissionApiReturn,
   formatChorusApiReturnFailureMessage,
@@ -332,10 +333,10 @@ export class DirectChorusConnector implements ChorusConnector {
 
     const response = await this.performFetch(tokenUrl, {
       method: 'POST',
-      headers: {
+      headers: authHeaders({
         accept: 'application/json',
         'content-type': 'application/json; charset=UTF-8',
-      },
+      }),
       body: JSON.stringify({ environment: this.config.environment }),
     }, 'Récupération du token OAuth2 via backend Chorus');
 
@@ -547,10 +548,10 @@ export class DirectChorusConnector implements ChorusConnector {
     try {
       response = await this.performFetch(bridgeUrl, {
         method: 'POST',
-        headers: {
+        headers: authHeaders({
           'content-type': 'application/json; charset=UTF-8',
           accept: 'application/json',
-        },
+        }),
         body: JSON.stringify(requestBody),
       }, 'Soumission via backend Python Chorus');
     } catch (error) {

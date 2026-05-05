@@ -14,7 +14,7 @@ import type {
   Tenant,
   User,
 } from '@/types';
-import { loadAuthSession } from '@/lib/auth/session';
+import { authHeaders, clearAuthSession, loadAuthSession } from '@/lib/auth/session';
 
 export interface BackendDataApiConfig {
   baseUrl: string;
@@ -655,6 +655,17 @@ export class BackendDataClient {
     private readonly fetchImpl: typeof fetch = getDefaultFetchImpl(),
   ) {}
 
+  private handleUnauthorized(response: Response): void {
+    if (response.status !== 401) {
+      return;
+    }
+
+    clearAuthSession();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
+  }
+
   private async fetchCollection<T>(
     path: string,
     label: string,
@@ -673,11 +684,13 @@ export class BackendDataClient {
       joinUrl(this.config.baseUrl.trim(), addQueryParams(relativePath, query)),
       {
         method: 'GET',
-        headers: {
+        headers: authHeaders({
           Accept: 'application/json',
-        },
+        }),
       },
     );
+
+    this.handleUnauthorized(response);
 
     if (response.status === 404) {
       console.warn(`[data backend] ${label} introuvable (404). TODO: brancher cet endpoint côté backend.`);
@@ -708,10 +721,12 @@ export class BackendDataClient {
 
     const response = await this.fetchImpl(joinUrl(this.config.baseUrl.trim(), relativePath), {
       method: 'GET',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
-      },
+      }),
     });
+
+    this.handleUnauthorized(response);
 
     if (response.status === 404) {
       console.warn(`[data backend] ${label} introuvable (404). TODO: brancher cet endpoint côté backend.`);

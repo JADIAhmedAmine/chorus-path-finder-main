@@ -5,6 +5,7 @@ import type {
   InvoiceSourceFormat,
   LocalInvoiceExtractionResult,
 } from '@/lib/chorus/types';
+import { authenticatedFetch } from '@/lib/auth/session';
 import { extractInvoiceDataWithOllama } from '@/lib/llm/ollama';
 
 interface CandidateMatch<T> {
@@ -93,7 +94,7 @@ async function tryExtractPdfViaApi(buffer: ArrayBuffer): Promise<PdfApiExtractio
       ? globalThis.setTimeout(() => controller.abort(), PDF_API_TIMEOUT_MS)
       : undefined;
 
-    const response = await fetch('http://127.0.0.1:8008/api/extract-pdf-text', {
+    const response = await authenticatedFetch('http://127.0.0.1:8008/api/extract-pdf-text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pdfBase64: encoded }),

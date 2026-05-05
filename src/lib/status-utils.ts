@@ -239,7 +239,8 @@ export function getJobStatusConfig(status: JobStatus): StatusConfig {
 }
 
 export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(amount);
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(safeAmount);
 }
 
 export function formatDate(date: string): string {
