@@ -42,6 +42,7 @@ const DEFAULT_DEV_ANNUAIRE_XML_URL = '';
 const LEGACY_DEV_ANNUAIRE_JSON_URL = '/src/data/annuaire_out/annuaire.normalized.json';
 const LEGACY_DEV_ANNUAIRE_XML_URL = '/src/data/annuaire_out/FAR0037A_SEC001_CPP0010037000000000007495';
 const EXTENSIONLESS_DEV_ANNUAIRE_XML_URL = '/annuaire/FAR0037A_SEC001_CPP0010037000000000007495';
+const DEFAULT_BACKEND_BRIDGE_URL = '/api/chorus/submit';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
@@ -81,12 +82,38 @@ interface EnvScopedCredentials {
   submissionBankAccountCode: string;
 }
 
+interface EnvReferenceConfig {
+  referenceApiBaseUrl: string;
+  referenceSuppliersPath: string;
+  referencePublicCustomersPath: string;
+  referencePublicServicesPath: string;
+  referenceAnnuaireJsonUrl: string;
+  referenceAnnuaireXmlUrl: string;
+}
+
 function readEnvScopedCredentials(env: ChorusEnvironment): EnvScopedCredentials {
   return {
     submissionSupplierId: envCredential(env, 'SUBMISSION_SUPPLIER_ID'),
     submissionCurrentUserId: envCredential(env, 'SUBMISSION_CURRENT_USER_ID'),
     submissionSupplierServiceId: envCredential(env, 'SUBMISSION_SUPPLIER_SERVICE_ID'),
     submissionBankAccountCode: envCredential(env, 'SUBMISSION_BANK_ACCOUNT_CODE'),
+  };
+}
+
+function readEnvReferenceConfig(): EnvReferenceConfig {
+  return {
+    referenceApiBaseUrl: envValue('VITE_REFERENCE_API_BASE_URL', envValue('VITE_DATA_API_BASE_URL', '')),
+    referenceSuppliersPath: envValue('VITE_REFERENCE_SUPPLIERS_PATH', envValue('VITE_DATA_SUPPLIERS_PATH', '')),
+    referencePublicCustomersPath: envValue('VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH', envValue('VITE_DATA_PUBLIC_CUSTOMERS_PATH', '')),
+    referencePublicServicesPath: envValue('VITE_REFERENCE_PUBLIC_SERVICES_PATH', envValue('VITE_DATA_PUBLIC_SERVICES_PATH', '')),
+    referenceAnnuaireJsonUrl: envValue(
+      'VITE_REFERENCE_ANNUAIRE_JSON_URL',
+      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_JSON_URL : '',
+    ),
+    referenceAnnuaireXmlUrl: envValue(
+      'VITE_REFERENCE_ANNUAIRE_XML_URL',
+      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_XML_URL : '',
+    ),
   };
 }
 
@@ -162,7 +189,26 @@ function normalizeLegacyChorusUserServiceConfig(config: ChorusConfig): ChorusCon
       : config.referenceAnnuaireXmlUrl === EXTENSIONLESS_DEV_ANNUAIRE_XML_URL
         ? DEFAULT_DEV_ANNUAIRE_XML_URL
       : config.referenceAnnuaireXmlUrl,
+    submissionBridgeUrl: normalizeBackendBridgeUrl(config.submissionBridgeUrl),
   };
+}
+
+function normalizeBackendBridgeUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if ((parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') && parsed.port === '8008') {
+      return parsed.pathname === '/api/chorus/submit' ? DEFAULT_BACKEND_BRIDGE_URL : parsed.pathname;
+    }
+  } catch {
+    return trimmed;
+  }
+
+  return trimmed;
 }
 
 function normalizeChorusConfig(config: ChorusConfig): ChorusConfig {
@@ -180,26 +226,18 @@ export function getDefaultChorusConfig(): ChorusConfig {
   const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
     ? 'POST'
     : 'GET';
-  const preset = getChorusEnvPreset();
+  const environment = resolveChorusEnvironment();
+  const preset = getChorusEnvPreset(environment);
+  const credentials = readEnvScopedCredentials(environment);
+  const references = readEnvReferenceConfig();
 
   return normalizeChorusConfig({
     enabled: envBool('VITE_CHORUS_ENABLED', mode === 'direct'),
     mode,
-    environment: resolveChorusEnvironment(),
+    environment,
     tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', preset.tokenUrl),
     apiBaseUrl: envValue('VITE_CHORUS_API_BASE_URL', preset.apiBaseUrl),
-    referenceApiBaseUrl: envValue('VITE_REFERENCE_API_BASE_URL', ''),
-    referenceSuppliersPath: envValue('VITE_REFERENCE_SUPPLIERS_PATH', ''),
-    referencePublicCustomersPath: envValue('VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH', ''),
-    referencePublicServicesPath: envValue('VITE_REFERENCE_PUBLIC_SERVICES_PATH', ''),
-    referenceAnnuaireJsonUrl: envValue(
-      'VITE_REFERENCE_ANNUAIRE_JSON_URL',
-      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_JSON_URL : '',
-    ),
-    referenceAnnuaireXmlUrl: envValue(
-      'VITE_REFERENCE_ANNUAIRE_XML_URL',
-      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_XML_URL : '',
-    ),
+    ...references,
     clientId: '',
     clientSecret: '',
     scope: envValue('VITE_CHORUS_SCOPE', 'openid'),
@@ -211,11 +249,11 @@ export function getDefaultChorusConfig(): ChorusConfig {
     submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', '/v1/soumettre'),
     userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', preset.userAccountPath),
     userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', preset.userConnectionsPath),
-    submissionBridgeUrl: envValue('VITE_CHORUS_SUBMISSION_BRIDGE_URL', ''),
-    submissionCurrentUserId: envValue('VITE_CHORUS_SUBMISSION_CURRENT_USER_ID', ''),
-    submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', ''),
-    submissionSupplierServiceId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID', ''),
-    submissionBankAccountCode: envValue('VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE', ''),
+    submissionBridgeUrl: envValue('VITE_CHORUS_SUBMISSION_BRIDGE_URL', DEFAULT_BACKEND_BRIDGE_URL),
+    submissionCurrentUserId: credentials.submissionCurrentUserId,
+    submissionSupplierId: credentials.submissionSupplierId,
+    submissionSupplierServiceId: credentials.submissionSupplierServiceId,
+    submissionBankAccountCode: credentials.submissionBankAccountCode,
     submissionCadreCode: envValue('VITE_CHORUS_SUBMISSION_CADRE_CODE', 'A1_FACTURE_FOURNISSEUR'),
     submissionValidatorServiceCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_SERVICE_CODE', ''),
     submissionValidatorStructureCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_STRUCTURE_CODE', ''),
@@ -254,7 +292,12 @@ export function loadChorusConfig(): ChorusConfig {
 
   try {
     const parsed = JSON.parse(raw) as Partial<ChorusConfig>;
-    return mergeConfigWithFallback(fallback, parsed);
+    const merged = mergeConfigWithFallback(fallback, parsed);
+    return normalizeChorusConfig({
+      ...merged,
+      ...readEnvReferenceConfig(),
+      ...readEnvScopedCredentials(merged.environment),
+    });
   } catch {
     return fallback;
   }

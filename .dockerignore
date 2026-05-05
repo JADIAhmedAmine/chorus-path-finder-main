@@ -8,5 +8,15 @@ coverage
 .env
 .env.local
 .env.local.*
+.env.production
+.env.production.*
 __pycache__
 *.pyc
+*.pdf
+docs
+tests
+src/test
+public/annuaire
+public/test-data
+annuaire_out
+src/data/annuaire_out

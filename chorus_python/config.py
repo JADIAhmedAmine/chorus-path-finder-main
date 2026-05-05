@@ -34,7 +34,9 @@ CHORUS_ENV_PRESETS: dict[str, dict[str, str]] = {
 
 def resolve_chorus_environment(env: dict[str, str]) -> str:
     raw = (env.get("CHORUS_ENV") or env.get("VITE_CHORUS_ENV") or CHORUS_ENV_PROD).strip().lower()
-    return CHORUS_ENV_PROD if raw == CHORUS_ENV_PROD else CHORUS_ENV_QUALIF
+    if raw in {CHORUS_ENV_PROD, "production"}:
+        return CHORUS_ENV_PROD
+    return CHORUS_ENV_QUALIF
 
 
 def chorus_env_preset(env: dict[str, str]) -> dict[str, str]:
@@ -186,6 +188,10 @@ def load_chorus_settings(
     env = load_env_values(env_files)
     if environment_override is not None:
         forced = environment_override.strip().lower()
+        if forced == "production":
+            forced = CHORUS_ENV_PROD
+        elif forced == "sandbox":
+            forced = CHORUS_ENV_QUALIF
         if forced in CHORUS_ENV_PRESETS:
             env["CHORUS_ENV"] = forced
     environment = resolve_chorus_environment(env)

@@ -13,7 +13,7 @@ from ..client import ChorusClient
 from ..config import load_chorus_settings
 from . import repositories
 from .config import load_database_settings
-from .entities import Supplier
+from .entities import Supplier, Tenant
 from .schemas import (
     InvoiceLineOut,
     InvoiceOut,
@@ -162,6 +162,49 @@ def list_sync_runs_endpoint(
     return [SyncRunOut.model_validate(run) for run in runs]
 
 
+@router.get("/tenant/current")
+def get_current_tenant_endpoint(
+    tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
+    session: Session = Depends(fastapi_session),
+) -> dict[str, Any]:
+    resolved_tenant_id = _resolve_tenant_id(tenant_id)
+    tenant = session.scalar(select(Tenant).where(Tenant.id == resolved_tenant_id))
+    if tenant is None:
+        return {
+            "id": resolved_tenant_id,
+            "code": resolved_tenant_id,
+            "name": resolved_tenant_id,
+            "active": True,
+            "createdAt": "1970-01-01T00:00:00Z",
+            "updatedAt": "1970-01-01T00:00:00Z",
+        }
+    return {
+        "id": tenant.id,
+        "code": tenant.code,
+        "name": tenant.name,
+        "active": tenant.active,
+        "createdAt": tenant.created_at,
+        "updatedAt": tenant.updated_at,
+    }
+
+
+@router.get("/users/me")
+def get_current_user_endpoint(
+    email: str = Depends(require_auth),
+) -> dict[str, Any]:
+    return {
+        "id": email,
+        "tenantId": load_database_settings().default_tenant_id,
+        "email": email,
+        "firstName": email.split("@", 1)[0],
+        "lastName": "",
+        "roleCode": "GESTIONNAIRE",
+        "active": True,
+        "createdAt": "1970-01-01T00:00:00Z",
+        "updatedAt": "1970-01-01T00:00:00Z",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Sync triggers
 # ---------------------------------------------------------------------------
@@ -200,9 +243,12 @@ def _resolve_supplier_ids_to_sync(
 
     if explicit is not None:
         explicit_str = str(explicit)
-        if allowed is not None and explicit_str not in allowed:
-            return []
-        return [explicit_str]
+        if allowed is None or explicit_str in allowed:
+            return [explicit_str]
+        logger.warning(
+            "Ignoring supplierId=%s because it is not in CHORUS_ALLOWED_SUPPLIER_IDS; falling back to configured supplier",
+            explicit_str,
+        )
 
     supplier_ids = [
         str(value)

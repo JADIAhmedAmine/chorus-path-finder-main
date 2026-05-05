@@ -42,6 +42,7 @@ SENSITIVE_DEBUG_KEY_PARTS = (
 BASE64_DEBUG_KEY_PARTS = (
     "base64",
     "fichierfacture",
+    "fichierresultat",
     "file_base64",
     "piecejointefichier",
 )
@@ -344,7 +345,7 @@ class ChorusClient:
                 "url": url,
                 "requestBody": debug_payload,
                 "responseStatus": response.status_code,
-                "responseBody": body,
+                "responseBody": sanitize_debug_value(body),
             }
         )
 

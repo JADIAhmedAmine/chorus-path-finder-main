@@ -1,7 +1,6 @@
 import { authHeaders } from '@/lib/auth/session';
 import type { ChorusApiDebugEntry, ChorusConfig } from '@/types/chorus';
 
-export const CHORUS_BRIDGE_DEFAULT_BASE_URL = 'http://127.0.0.1:8008';
 export const CHORUS_OAUTH_TOKEN_PATH = '/api/chorus/oauth-token';
 export const CHORUS_SUBMIT_PATH = '/api/chorus/submit';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
@@ -144,7 +143,7 @@ export function resolveChorusBridgeUrl(config: ChorusConfig, path: string): stri
   const configuredBridgeUrl = config.submissionBridgeUrl.trim();
 
   if (!configuredBridgeUrl) {
-    return `${CHORUS_BRIDGE_DEFAULT_BASE_URL}${path}`;
+    return path;
   }
 
   if (/^https?:\/\//i.test(configuredBridgeUrl)) {

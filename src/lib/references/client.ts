@@ -1,5 +1,6 @@
 import type { ChorusConfig } from '@/types/chorus';
 import type { PublicCustomer, PublicService, SupplierOrganization } from '@/types';
+import { authHeaders } from '@/lib/auth/session';
 import { parseChorusAnnuaireXml, type ChorusAnnuaireCatalog } from '@/lib/references/annuaire';
 
 export interface ReferenceCatalog {
@@ -159,9 +160,9 @@ export class ReferenceCatalogClient {
 
     const response = await this.fetchImpl(joinUrl(baseUrl, relativePath), {
       method: 'GET',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
-      },
+      }),
     });
 
     if (!response.ok) {

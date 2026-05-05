@@ -127,10 +127,17 @@ SUPPLIER_INVOICES_SEARCH_PATH = "/api/chorus/invoices/supplier/search"
 
 logger = logging.getLogger("chorus_submit_server")
 
+
+def _cors_origins() -> list[str]:
+    raw = os.environ.get("APP_CORS_ORIGINS", "*")
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return origins or ["*"]
+
+
 app = FastAPI(title="Chorus Path Finder API", version="2.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
