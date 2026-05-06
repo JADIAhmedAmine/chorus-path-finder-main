@@ -160,6 +160,31 @@ function getBatchStatusBadgeVariant(status: BatchSubmissionStatus): 'default' | 
   return 'secondary';
 }
 
+function normalizeForServiceMatch(value: string | undefined): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+
+function findServiceInRawText(
+  services: Array<{ id: string; codeServiceExecutant: string; label: string }>,
+  rawText: string,
+): { id: string; codeServiceExecutant: string; label: string } | undefined {
+  if (services.length === 0 || !rawText) {
+    return undefined;
+  }
+  const normalizedText = normalizeForServiceMatch(rawText);
+  return services.find((service) => {
+    const code = normalizeForServiceMatch(service.codeServiceExecutant);
+    const label = normalizeForServiceMatch(service.label);
+    return Boolean(
+      (code && normalizedText.includes(code))
+        || (label && normalizedText.includes(label)),
+    );
+  });
+}
+
 function ExtractionInfoRow({ label, value, index = 0 }: { label: string; value?: string; index?: number }) {
   return (
     <div
@@ -801,8 +826,35 @@ export default function InvoiceCreate() {
       return;
     }
 
-    let payloadForSubmission = submissionPayload;
-    let validationForSubmission = payloadValidation;
+    let resolvedService: typeof selectedPublicService | undefined;
+    if (services.length === 0) {
+      resolvedService = undefined;
+    } else {
+      const matched = findServiceInRawText(services, extractionResult?.rawText ?? '');
+      resolvedService = matched
+        ? services.find((s) => s.id === matched.id)
+        : undefined;
+    }
+
+    const verifiedFormData: InvoiceDraftFormData = {
+      ...formData,
+      publicServiceId: resolvedService?.id ?? '',
+      publicServiceCode: resolvedService?.codeServiceExecutant ?? '',
+      publicServiceLabel: resolvedService?.label ?? '',
+    };
+
+    setFormData(verifiedFormData);
+
+    let payloadForSubmission = buildInvoiceSubmissionPayload(verifiedFormData, {
+      supplier: selectedSupplier,
+      publicCustomer: selectedPublicCustomer,
+      publicService: resolvedService,
+      availableServices: services,
+      extraction: extractionResult,
+      chorus: chorusTechnicalContext,
+      mainFileName: mainFile?.name,
+    });
+    let validationForSubmission = validateChorusSubmissionPayload(payloadForSubmission);
 
     if (forceDebug) {
       console.groupCollapsed('[Chorus debug] Force submit from UI');
@@ -876,6 +928,17 @@ export default function InvoiceCreate() {
           ? `Référence retournée: ${result.externalId}. Le résultat est affiché dans le bloc dédié.`
           : 'La facture a été transmise. Le résultat est affiché dans le bloc dédié.',
       });
+
+      setMainFile(null);
+      setMainFilePreviewUrl(null);
+      setAttachments([]);
+      setFormData(createEmptyInvoiceDraft());
+      setExtractionResult(null);
+      setExtractionError(null);
+      setResolvedSubmission(null);
+      setTransversesSnapshot(null);
+      setTransversesError(null);
+      setPrefilledInvoiceId(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inconnue';
       if (error instanceof ChorusSubmitApiError) {
