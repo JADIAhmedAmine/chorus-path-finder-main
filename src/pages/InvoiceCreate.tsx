@@ -257,9 +257,8 @@ export default function InvoiceCreate() {
   const [resolvedSubmission, setResolvedSubmission] = useState<ChorusPayloadHydrationResult | null>(null);
   const [lastSubmissionResult, setLastSubmissionResult] = useState<ChorusSubmitInvoiceResult | null>(null);
   const [lastApiCalls, setLastApiCalls] = useState<ChorusApiDebugEntry[]>([]);
-  const [showOptionalExtractionInfo, setShowOptionalExtractionInfo] = useState(false);
   const [showOptionalMetadata, setShowOptionalMetadata] = useState(false);
-  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
+  const showAdvancedTools = SHOW_DEV_TOOLS;
   const [showSubmissionApiReturn, setShowSubmissionApiReturn] = useState(false);
   const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [batchResults, setBatchResults] = useState<BatchSubmissionResult[]>([]);
@@ -965,23 +964,13 @@ export default function InvoiceCreate() {
           <h1 className="text-2xl font-semibold">Nouvelle facture</h1>
           <p className="text-sm text-muted-foreground">Déposez une facture, vérifiez l’essentiel, puis soumettez-la à Chorus.</p>
         </div>
-        <div className="flex items-center gap-2">
-          {SHOW_DEV_TOOLS && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setShowAdvancedTools((current) => !current)}
-            >
-              {showAdvancedTools ? 'Masquer l’avancé' : 'Afficher l’avancé'}
-            </Button>
-          )}
-          {SHOW_DEV_TOOLS && (
+        {SHOW_DEV_TOOLS && (
+          <div className="flex items-center gap-2">
             <Badge variant={chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'default' : 'secondary'}>
               {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Chorus direct' : 'Mode mock'}
             </Badge>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       <Card>
@@ -1159,45 +1148,24 @@ export default function InvoiceCreate() {
                 <ExtractionInfoRow label="Client public" value={detectedPublicCustomerName} />
                 <ExtractionInfoRow label="Service destinataire" value={detectedService} />
                 <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
+                <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
+                <ExtractionInfoRow label="Mode paiement" value={extractionResult.fields.paymentMode} />
+                <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
+                <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
+                <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
+                <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
+                <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
                 <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
               </div>
 
-              <div className="rounded-lg border bg-muted/10 p-3">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-sm font-medium">Détails d’extraction</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Contrôle détaillé du document et des champs secondaires.
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowOptionalExtractionInfo((current) => !current)}
-                  >
-                    {showOptionalExtractionInfo ? 'Masquer les détails' : 'Afficher les détails'}
-                  </Button>
-                </div>
-
-                {showOptionalExtractionInfo && (
-                  <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
-                    <ExtractionInfoRow label="Mode paiement" value={extractionResult.fields.paymentMode} />
-                    <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
-                    <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
-                    <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
-                    <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
-                    <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
-                    <DocumentPreviewCard
-                      file={mainFile}
-                      previewUrl={mainFilePreviewUrl ?? undefined}
-                      extractedText={extractionResult.rawText}
-                      rawTextPreview={extractionResult.rawTextPreview}
-                    />
-                  </div>
-                )}
-              </div>
+              {SHOW_DEV_TOOLS && (
+                <DocumentPreviewCard
+                  file={mainFile}
+                  previewUrl={mainFilePreviewUrl ?? undefined}
+                  extractedText={extractionResult.rawText}
+                  rawTextPreview={extractionResult.rawTextPreview}
+                />
+              )}
 
               {extractionResult.warnings.length > 0 && (
                 <Alert>

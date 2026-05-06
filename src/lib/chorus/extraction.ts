@@ -1728,6 +1728,10 @@ function completeDerivedTotals(fields: ExtractedInvoiceDraftData, text: string, 
   }
 }
 
+export async function extractRawTextFromFile(file: File): Promise<string> {
+  return decodeFileToText(file);
+}
+
 export async function extractInvoiceData(
   file: File,
   references: InvoiceExtractionReferences,

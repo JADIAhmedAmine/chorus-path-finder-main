@@ -1,5 +1,6 @@
 import { loadAuthSession } from '@/lib/auth/session';
 import { createChorusConnector, ChorusSubmitApiError } from '@/lib/chorus/client';
+import { extractRawTextFromFile } from '@/lib/chorus/extraction';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { formatInvoiceAmountForInput, normalizeInvoiceDraft } from '@/lib/chorus/normalization';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -20,11 +21,12 @@ import {
   getInvoiceAttachments,
   getInvoiceLines,
   getService,
+  getServicesForCustomer,
   getSupplier,
   invalidateDataCache,
 } from '@/data/mock-data';
 import type { ChorusApiDebugEntry, ChorusSubmitInvoiceResult } from '@/types/chorus';
-import type { ApiExchangeLog, AuditLog, Invoice, InvoiceAttachment, InvoiceStatusHistory } from '@/types';
+import type { ApiExchangeLog, AuditLog, Invoice, InvoiceAttachment, InvoiceStatusHistory, PublicService } from '@/types';
 
 const SAMPLE_PDF_PATH = '/test-data/facture_prototype_chorus_test.pdf';
 
@@ -68,13 +70,16 @@ async function resolveInvoiceSubmissionContext(invoiceId: string) {
     throw new Error('Facture introuvable.');
   }
 
-  const [supplier, publicCustomer, publicService, attachments, invoiceLines] = await Promise.all([
+  const [supplier, publicCustomer, publicService, attachments, invoiceLines, customerServices] = await Promise.all([
     getSupplier(invoice.supplierOrganizationId),
     getCustomer(invoice.publicCustomerId),
     invoice.publicServiceId ? getService(invoice.publicServiceId) : Promise.resolve(undefined),
     getInvoiceAttachments(invoice.id),
     getInvoiceLines(invoice.id),
+    getServicesForCustomer(invoice.publicCustomerId),
   ]);
+
+  const availableServices = customerServices.filter((service) => service.active);
 
   return {
     invoice,
@@ -83,8 +88,36 @@ async function resolveInvoiceSubmissionContext(invoiceId: string) {
     publicService,
     attachments,
     invoiceLines,
+    availableServices,
     formData: buildDraftFromInvoice(invoice),
   };
+}
+
+function normalizeForMatching(value: string | undefined): string {
+  return (value ?? '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase();
+}
+
+function findServiceInParsedText(
+  services: PublicService[],
+  rawText: string,
+): PublicService | undefined {
+  if (services.length === 0 || !rawText) {
+    return undefined;
+  }
+
+  const normalizedText = normalizeForMatching(rawText);
+
+  return services.find((service) => {
+    const code = normalizeForMatching(service.codeServiceExecutant);
+    const label = normalizeForMatching(service.label);
+    return Boolean(
+      (code && normalizedText.includes(code))
+        || (label && normalizedText.includes(label)),
+    );
+  });
 }
 
 function buildHistoryEntry(
@@ -232,7 +265,7 @@ export async function markInvoiceReadyForSubmission(invoiceId: string): Promise<
 }
 
 export async function submitInvoiceFromDetail(invoiceId: string): Promise<ChorusSubmitInvoiceResult> {
-  const { invoice, supplier, publicCustomer, publicService, attachments, invoiceLines, formData } = await resolveInvoiceSubmissionContext(invoiceId);
+  const { invoice, supplier, publicCustomer, publicService, attachments, invoiceLines, availableServices, formData } = await resolveInvoiceSubmissionContext(invoiceId);
   const rawConfig = loadChorusConfig();
   const chorusConfig = resolveChorusRuntimeConfig(rawConfig);
   const chorusTechnicalContext = {
@@ -252,21 +285,47 @@ export async function submitInvoiceFromDetail(invoiceId: string): Promise<Chorus
       taxAmount: invoice.totalVat,
     }] : [],
   };
+
+  const mainAttachment = attachments.find((attachment) => attachment.attachmentRole === 'MAIN');
+  const mainFile = await fetchAttachmentFile(mainAttachment);
+
+  let resolvedPublicService = publicService;
+  if (availableServices.length === 0) {
+    formData.publicServiceId = '';
+    formData.publicServiceCode = '';
+    formData.publicServiceLabel = '';
+    resolvedPublicService = undefined;
+  } else {
+    const rawText = await extractRawTextFromFile(mainFile).catch(() => '');
+    const matched = findServiceInParsedText(availableServices, rawText);
+    if (matched) {
+      formData.publicServiceId = matched.id;
+      formData.publicServiceCode = matched.codeServiceExecutant;
+      formData.publicServiceLabel = matched.label;
+      resolvedPublicService = matched;
+    } else {
+      formData.publicServiceId = '';
+      formData.publicServiceCode = '';
+      formData.publicServiceLabel = '';
+      resolvedPublicService = undefined;
+    }
+  }
+
   const normalizedDraft = normalizeInvoiceDraft(formData, {
     supplier,
     publicCustomer,
-    publicService,
-    availableServices: publicService ? [publicService] : [],
+    publicService: resolvedPublicService,
+    availableServices,
     extraction: null,
   });
 
   let payload = buildInvoiceSubmissionPayload(formData, {
     supplier,
     publicCustomer,
-    publicService,
-    availableServices: publicService ? [publicService] : [],
+    publicService: resolvedPublicService,
+    availableServices,
     chorus: chorusTechnicalContext,
-    mainFileName: attachments.find((attachment) => attachment.attachmentRole === 'MAIN')?.filename,
+    mainFileName: mainAttachment?.filename,
   });
 
   if (chorusConfig.mode === 'direct' && chorusConfig.enabled) {
@@ -285,8 +344,6 @@ export async function submitInvoiceFromDetail(invoiceId: string): Promise<Chorus
   }
 
   const connector = createChorusConnector(chorusConfig);
-  const mainAttachment = attachments.find((attachment) => attachment.attachmentRole === 'MAIN');
-  const mainFile = await fetchAttachmentFile(mainAttachment);
 
   try {
     const result = await connector.submitInvoice({

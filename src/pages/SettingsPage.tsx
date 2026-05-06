@@ -21,6 +21,8 @@ import type {
 } from '@/types/chorus';
 import { Loader2, PlugZap } from 'lucide-react';
 
+const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
+
 const connectorModeLabels = {
   mock: 'Mock / démonstration',
   direct: 'Connexion directe (dev uniquement)',
@@ -277,6 +279,8 @@ export default function SettingsPage() {
               </p>
             </div>
 
+            {SHOW_DEV_TOOLS && (
+              <>
             <div className="space-y-2">
               <Label htmlFor="token-url">URL OAuth2</Label>
               <Input id="token-url" value={config.tokenUrl} onChange={(e) => handleFieldChange('tokenUrl', e.target.value)} placeholder="https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token" />
@@ -396,8 +400,12 @@ export default function SettingsPage() {
                 Fallback XML si le JSON normalisé n&apos;est pas encore disponible.
               </p>
             </div>
+              </>
+            )}
           </div>
 
+          {SHOW_DEV_TOOLS && (
+          <>
           <Separator />
 
           <div className="space-y-4">
@@ -593,6 +601,8 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+          </>
+          )}
 
           <Separator />
 
@@ -626,7 +636,7 @@ export default function SettingsPage() {
                   {lastConnectionResult.ok ? 'OK' : 'KO'}
                 </Badge>
               </div>
-              {lastConnectionResult.tokenPreview ? (
+              {SHOW_DEV_TOOLS && lastConnectionResult.tokenPreview ? (
                 <p className="text-xs text-muted-foreground mt-3">Token: {lastConnectionResult.tokenPreview}</p>
               ) : null}
             </div>
