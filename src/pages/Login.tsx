@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2 } from 'lucide-react';
 import { loadAuthSession, saveAuthSession, syncAuthSessionToChorusConfig } from '@/lib/auth/session';
 import { useToast } from '@/hooks/use-toast';
-import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
+import { APP_NAME, APP_TAGLINE, AppSymbol } from '@/components/common/AppSymbol';
 
 interface LoginResponse {
   access_token: string;
@@ -79,17 +79,16 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center space-y-4">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-background via-background to-accent/10">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(1,16,52,0.12),transparent_60%)]" />
+      <Card className="w-full max-w-md shadow-xl border-border/60 backdrop-blur-sm">
+        <CardHeader className="text-center space-y-5 pt-8">
           <div className="flex justify-center">
-            <AppSymbol className="h-12 w-12 rounded-xl" />
+            <AppSymbol className="h-24 w-24 rounded-2xl shadow-lg ring-1 ring-border/40" />
           </div>
-          <div>
-            <CardTitle className="text-xl">{APP_NAME}</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              Connexion sécurisée
-            </p>
+          <div className="space-y-2">
+            <CardTitle className="text-3xl font-semibold tracking-tight">{APP_NAME}</CardTitle>
+            <p className="text-sm text-muted-foreground">{APP_TAGLINE}</p>
           </div>
         </CardHeader>
         <CardContent>

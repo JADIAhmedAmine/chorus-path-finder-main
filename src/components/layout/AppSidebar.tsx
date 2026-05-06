@@ -56,9 +56,11 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="icon">
-      <div className="flex h-14 items-center gap-2 px-4 border-b border-sidebar-border">
-        <AppSymbol className="h-8 w-8 rounded-lg" />
-        {!collapsed && <span className="font-semibold text-sidebar-primary text-sm">{APP_NAME}</span>}
+      <div className="flex h-16 items-center gap-3 px-4 border-b border-sidebar-border">
+        <AppSymbol className="h-10 w-10 rounded-lg shadow-sm ring-1 ring-sidebar-border/60 transition-transform hover:scale-105" />
+        {!collapsed && (
+          <span className="font-semibold text-sidebar-primary text-base tracking-tight">{APP_NAME}</span>
+        )}
       </div>
       <SidebarContent>
         {renderGroup('Principal', mainItems)}

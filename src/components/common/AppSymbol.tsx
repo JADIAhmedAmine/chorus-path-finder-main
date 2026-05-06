@@ -1,7 +1,8 @@
 import { cn } from '@/lib/utils';
 
 export const APP_SYMBOL_PATH = '/app-symbol.svg';
-export const APP_NAME = 'FacturX Pro';
+export const APP_NAME = 'Chorus Pilot';
+export const APP_TAGLINE = 'Automatisation des factures Chorus Pro';
 
 interface AppSymbolProps {
   className?: string;
