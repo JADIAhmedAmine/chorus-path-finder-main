@@ -6,6 +6,7 @@ import type {
   LocalInvoiceExtractionResult,
 } from '@/lib/chorus/types';
 import { authenticatedFetch } from '@/lib/auth/session';
+import { applyExtractionTemplates } from '@/lib/chorus/extraction-templates';
 import { extractInvoiceDataWithOllama } from '@/lib/llm/ollama';
 
 interface CandidateMatch<T> {
@@ -94,7 +95,7 @@ async function tryExtractPdfViaApi(buffer: ArrayBuffer): Promise<PdfApiExtractio
       ? globalThis.setTimeout(() => controller.abort(), PDF_API_TIMEOUT_MS)
       : undefined;
 
-    const response = await authenticatedFetch('http://127.0.0.1:8008/api/extract-pdf-text', {
+    const response = await authenticatedFetch('/api/extract-pdf-text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pdfBase64: encoded }),
@@ -710,30 +711,29 @@ async function decodePdfBufferToText(buffer: ArrayBuffer): Promise<string> {
 }
 
 async function decodePdfArrayBuffer(buffer: ArrayBuffer): Promise<string> {
-  // Try Python API extraction first (cleaner results with pdfplumber)
+  // Force Docling extraction via the Python backend.
+  // No fallback to in-browser extraction: Docling produces significantly better
+  // text and silent fallbacks have caused field-extraction quality regressions.
+  if (isTestRuntime()) {
+    return decodePdfBufferToText(buffer);
+  }
+
   const apiExtraction = await tryExtractPdfViaApi(buffer);
   if (apiExtraction.status === 'success') {
     const cleanedApiText = cleanPdfTechnicalNoise(apiExtraction.text);
     if (cleanedApiText) {
       return cleanedApiText;
     }
+    throw new Error('Extraction Docling vide : aucun texte exploitable retourné par le service.');
   }
 
   if (apiExtraction.status === 'backend-error') {
-    const fallbackText = await decodePdfBufferToText(buffer);
-    const fallbackLength = fallbackText.replace(/\s+/g, '').length;
-    const fallbackLooksUseful = scoreReadableText(fallbackText) >= 0.62
-      || /\b(?:facture|siret|total|tva|montant)\b/i.test(fallbackText);
-
-    if (fallbackLength >= 40 && fallbackLooksUseful) {
-      return fallbackText;
-    }
-
-    throw new Error(`Extraction PDF via Python impossible: ${apiExtraction.error}`);
+    throw new Error(`Extraction Docling en erreur : ${apiExtraction.error}`);
   }
 
-  // Fallback to local extraction with noise cleaning.
-  return decodePdfBufferToText(buffer);
+  throw new Error(
+    "Service Docling indisponible. Vérifie que le backend Python (port 8008) et Docling (DOCLING_SERVER_URL) sont démarrés.",
+  );
 }
 
 function looksLikeResponseWrappedFile(value: string | undefined): boolean {
@@ -1840,6 +1840,13 @@ export async function extractInvoiceData(
   });
   Object.assign(fields, llmEnrichedFields);
   completeDerivedTotals(fields, text, fieldConfidences);
+
+  const templateResult = applyExtractionTemplates(rawText || text);
+  if (templateResult) {
+    Object.assign(fields, templateResult.fields);
+    fieldConfidences.push(0.99);
+    console.debug(`Extraction template "${templateResult.templateId}" applied`);
+  }
 
   const candidateSirets = extractSiretCandidates(rawText);
   const labelledSirets = extractLabelledSirets(rawText);

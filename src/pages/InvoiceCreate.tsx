@@ -1158,15 +1158,6 @@ export default function InvoiceCreate() {
                 <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
               </div>
 
-              {SHOW_DEV_TOOLS && (
-                <DocumentPreviewCard
-                  file={mainFile}
-                  previewUrl={mainFilePreviewUrl ?? undefined}
-                  extractedText={extractionResult.rawText}
-                  rawTextPreview={extractionResult.rawTextPreview}
-                />
-              )}
-
               {extractionResult.warnings.length > 0 && (
                 <Alert>
                   <TriangleAlert className="h-4 w-4" />
@@ -1181,6 +1172,15 @@ export default function InvoiceCreate() {
                 </Alert>
               )}
             </>
+          )}
+
+          {mainFile && !extracting && (
+            <DocumentPreviewCard
+              file={mainFile}
+              previewUrl={mainFilePreviewUrl ?? undefined}
+              extractedText={extractionResult?.rawText ?? ''}
+              rawTextPreview={extractionResult?.rawTextPreview ?? ''}
+            />
           )}
         </CardContent>
       </Card>
@@ -1590,7 +1590,6 @@ export default function InvoiceCreate() {
         </CardContent>
       </Card>
 
-      {SHOW_DEV_TOOLS && (
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -1906,7 +1905,6 @@ export default function InvoiceCreate() {
           )}
         </CardContent>
       </Card>
-      )}
 
       <Card ref={treatmentDetailsRef}>
         <CardHeader>

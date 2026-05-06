@@ -253,16 +253,18 @@ export default function SettingsPage() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>Mode de connexion</Label>
-              <Select value={config.mode} onValueChange={(value: ChorusConfig['mode']) => handleFieldChange('mode', value)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mock">{connectorModeLabels.mock}</SelectItem>
-                  <SelectItem value="direct">{connectorModeLabels.direct}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {SHOW_DEV_TOOLS && (
+              <div className="space-y-2">
+                <Label>Mode de connexion</Label>
+                <Select value={config.mode} onValueChange={(value: ChorusConfig['mode']) => handleFieldChange('mode', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mock">{connectorModeLabels.mock}</SelectItem>
+                    <SelectItem value="direct">{connectorModeLabels.direct}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
 
             <div className="space-y-2 md:col-span-2">
               <Label>Environnement Chorus</Label>

@@ -222,7 +222,7 @@ function normalizeChorusConfig(config: ChorusConfig): ChorusConfig {
 }
 
 export function getDefaultChorusConfig(): ChorusConfig {
-  const mode = (envValue('VITE_CHORUS_MODE', 'mock') as ChorusConnectorMode) === 'direct' ? 'direct' : 'mock';
+  const mode = (envValue('VITE_CHORUS_MODE', 'direct') as ChorusConnectorMode) === 'mock' ? 'mock' : 'direct';
   const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
     ? 'POST'
     : 'GET';

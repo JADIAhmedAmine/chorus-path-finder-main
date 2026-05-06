@@ -30,3 +30,7 @@ __pycache__/
 vite.config.ts.timestamp-*.mjs
 output_base64.txt
 response.json
+
+# Generated Chorus annuaire data - too large for Git
+public/annuaire/*
+!public/annuaire/.gitkeep

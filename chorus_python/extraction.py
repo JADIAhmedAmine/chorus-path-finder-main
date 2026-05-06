@@ -131,7 +131,14 @@ def extract_pdf_text_from_base64_docling(pdf_base64: str) -> str:
         tmp_path = Path(tmp.name)
 
     try:
-        return extract_pdf_text(tmp_path)
+        docling_text = extract_pdf_text_docling(tmp_path)
+        try:
+            pdfplumber_text = extract_pdf_text_pdfplumber(tmp_path)
+        except Exception:
+            pdfplumber_text = ""
+        return _prepend_reconciled_invoice_totals(
+            _merge_text_sources(docling_text, pdfplumber_text)
+        )
     finally:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
