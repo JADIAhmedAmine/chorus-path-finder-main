@@ -586,11 +586,12 @@ export default function Dashboard() {
                   width={100}
                 />
                 <Tooltip
-                  formatter={(value, name) =>
-                    name === 'ttc'
+                  formatter={(value, name, item) => {
+                    const isAmountSerie = item?.dataKey === 'ttc' || name === 'Montant TTC';
+                    return isAmountSerie
                       ? [formatCurrency(Number(value)), 'Montant TTC']
-                      : [`${value} facture(s)`, 'Factures']
-                  }
+                      : [`${value} facture(s)`, 'Factures'];
+                  }}
                 />
                 <Legend />
                 <Bar yAxisId="left" dataKey="count" name="Factures" fill="hsl(220, 60%, 60%)" radius={[4, 4, 0, 0]} />

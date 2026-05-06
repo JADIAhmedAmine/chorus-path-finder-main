@@ -19,7 +19,7 @@ import type {
   ChorusEnvironment,
   ChorusTechnicalContextResolutionResult,
 } from '@/types/chorus';
-import { Loader2, PlugZap } from 'lucide-react';
+import { BookOpen, Loader2, PlugZap } from 'lucide-react';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
 
@@ -231,6 +231,42 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold">Paramètres</h1>
         <p className="text-sm text-muted-foreground">Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <BookOpen className="h-4 w-4" />
+            Mode d'emploi utilisateur
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <GuideTile
+              title="1. Se connecter"
+              body="Ouvre l'application, saisis l'identifiant fourni par l'administrateur, puis vérifie que ton profil apparaît dans l'en-tête."
+              action="Connexion"
+            />
+            <GuideTile
+              title="2. Préparer une facture"
+              body="Va dans la création de facture, importe le PDF, puis laisse l'application extraire les informations utiles."
+              action="Factures -> Nouvelle facture"
+            />
+            <GuideTile
+              title="3. Contrôler les données"
+              body="Relis le fournisseur, le destinataire public, le service, les montants, la TVA et les références avant tout envoi."
+              action="Contrôle avant soumission"
+            />
+            <GuideTile
+              title="4. Soumettre et suivre"
+              body="Après validation, envoie la facture vers Chorus puis suis son retour dans le détail de facture et les journaux."
+              action="Soumettre à Chorus"
+            />
+          </div>
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+            En cas d'erreur, conserve le message affiché, le numéro de facture et l'heure de l'action avant de contacter l'administrateur. Ne soumets pas deux fois la même facture sans avoir vérifié son statut.
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -654,6 +690,20 @@ function InfoTile({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border p-4">
       <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="font-medium text-sm mt-1">{value}</div>
+    </div>
+  );
+}
+
+function GuideTile({ title, body, action }: { title: string; body: string; action: string }) {
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div>
+        <div className="font-medium text-sm">{title}</div>
+        <p className="text-xs text-muted-foreground mt-1">{body}</p>
+      </div>
+      <div className="rounded-md bg-muted px-3 py-2 text-xs font-medium text-muted-foreground break-words">
+        {action}
+      </div>
     </div>
   );
 }

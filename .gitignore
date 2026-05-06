@@ -36,3 +36,5 @@ public/annuaire/*
 !public/annuaire/.gitkeep
 .env
 public/annuaire/
+.codex
+.claude/*

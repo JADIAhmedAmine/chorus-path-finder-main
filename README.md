@@ -1,434 +1,644 @@
 # Chorus Path Finder
 
-Interface React + Vite + TypeScript pour préparer et soumettre des factures Chorus Pro via PISTE, avec un mode `mock` et un mode `direct`.
+Application React + FastAPI pour préparer, contrôler, synchroniser et soumettre des factures vers Chorus Pro via PISTE.
 
-## Démarrage
+Le projet contient :
+
+- un frontend React/Vite pour les écrans métier ;
+- une API Python FastAPI pour l'authentification, les appels Chorus, l'extraction PDF et les données applicatives ;
+- une base PostgreSQL pour les référentiels, factures et synchronisations ;
+- une stack Docker de production avec nginx, API, migrations Alembic et Postgres.
+
+## Sommaire
+
+- [Vue d'ensemble](#vue-densemble)
+- [Architecture](#architecture)
+- [Démarrage local](#démarrage-local)
+- [Déploiement Docker](#déploiement-docker)
+- [Accès réseau](#accès-réseau)
+- [Authentification](#authentification)
+- [Configuration Chorus](#configuration-chorus)
+- [Mode d'emploi applicatif](#mode-demploi-applicatif)
+- [Base de données et synchronisation](#base-de-données-et-synchronisation)
+- [Annuaire Chorus](#annuaire-chorus)
+- [Tests et commandes utiles](#tests-et-commandes-utiles)
+- [Dépannage](#dépannage)
+- [Sécurité et exploitation](#sécurité-et-exploitation)
+
+## Vue d'ensemble
+
+Chorus Path Finder sert à industrialiser le traitement des factures Chorus Pro :
+
+- consultation des factures synchronisées depuis Chorus ;
+- préparation d'une facture à partir d'un PDF ;
+- extraction de texte PDF via le backend ;
+- génération d'un payload Chorus ;
+- upload PDF puis soumission via les API Chorus ;
+- suivi des statuts, jobs et journaux d'appels ;
+- pilotage des paramètres Chorus depuis la page `Paramètres`.
+
+En production, le navigateur ne doit pas appeler directement Chorus avec des secrets. Le frontend passe par nginx, puis FastAPI, puis `chorus_python`.
+
+## Architecture
+
+```text
+Navigateur
+  -> nginx frontend
+    -> React static app
+    -> /api/* proxy vers FastAPI
+      -> Auth JWT
+      -> Extraction PDF
+      -> API Chorus / PISTE
+      -> API DB /api/db/*
+        -> PostgreSQL
+```
+
+Fichiers principaux :
+
+- `src/` : interface React ;
+- `src/pages/SettingsPage.tsx` : page `Paramètres` et mode d'emploi intégré ;
+- `src/lib/chorus/` : logique frontend Chorus ;
+- `chorus_python/` : client Chorus, payload, extraction, DB, auth ;
+- `scripts/chorus_submit_server.py` : serveur FastAPI ;
+- `alembic/` : migrations PostgreSQL ;
+- `docker/nginx/default.conf` : reverse proxy nginx ;
+- `docker-compose.prod.yml` : stack Docker de production ;
+- `.env` : variables lues par Docker Compose pour l'interpolation, notamment `APP_HTTP_PORT` ;
+- `.env.local` : secrets et configuration applicative serveur.
+
+## Démarrage local
+
+### Frontend seul
 
 ```bash
 npm install
 npm run dev
 ```
 
-L'application démarre ensuite sur l'URL affichée par Vite, en général `http://localhost:8080`.
+Vite affiche l'URL locale, généralement :
 
-## Commandes utiles
-
-```bash
-npm run dev
-npm test
-npm run build
+```text
+http://localhost:8080
 ```
 
-## Flux Python minimal Chorus
-
-Le dépôt contient maintenant une couche Python minimale pour préparer puis soumettre une facture Chorus Pro en `SAISIE_API`, avec upload PDF optionnel via `POST /cpro/transverses/v1/ajouter/fichier`.
-
-Fichiers principaux :
-
-- [chorus_python/config.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/config.py)
-  charge `.env.local` / `.env.example`, centralise les constantes fixes et lit `CHORUS_BASE_URL`, `CHORUS_API_KEY`, `CHORUS_CPRO_ACCOUNT`
-- [chorus_python/client.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/client.py)
-  gère les appels `requests` vers `recuperer/tauxtva`, `rechercher/destinataire`, `rechercher/serviceexecutant`, `recuperer/coordbanc/valides`, `ajouter/fichier`, `soumettre`
-- [chorus_python/payload.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/payload.py)
-  construit le payload minimal Chorus avec des montants cohérents
-- [chorus_python/service.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/chorus_python/service.py)
-  orchestre `résolution -> upload optionnel -> build payload -> soumission`
-- [scripts/submit_chorus_invoice.py](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/scripts/submit_chorus_invoice.py)
-  point d’entrée CLI simple
-
-Préparation :
+### Backend Python local
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-```
-
-API serveur locale :
-
-```bash
 python scripts/chorus_submit_server.py
 ```
 
-Le serveur lit `.env.local` par défaut. `.env.example` reste seulement un modèle.
+Le backend écoute par défaut sur :
 
-Endpoints principaux :
-
-- `POST /api/chorus/oauth-token` : récupère un token OAuth2 court depuis les secrets serveur
-- `POST /api/chorus/submit` : soumet une facture préparée
-- `POST /api/extract-pdf-text` : extrait le texte d’un PDF encodé en base64
-
-Conteneur :
-
-```bash
-docker compose up --build chorus-api
+```text
+http://127.0.0.1:8008
 ```
 
-Variables minimales à renseigner :
-
-- `CHORUS_BASE_URL`
-- `CHORUS_CPRO_ACCOUNT`
-
-Authentification API :
-
-- soit `CHORUS_API_KEY` si tu as déjà un bearer token
-- soit `CHORUS_TOKEN_URL` + `CHORUS_CLIENT_ID` + `CHORUS_CLIENT_SECRET`
-- les secrets restent côté serveur/Python : ne les expose pas en `VITE_*`
-
-Variables utiles pour éviter de ressaisir le contexte :
-
-- `CHORUS_SUPPLIER_ID`
-- `CHORUS_DESTINATAIRE_CODE`
-- `CHORUS_SERVICE_EXECUTANT_CODE`
-- `CHORUS_BANK_ACCOUNT_CODE`
-
-Exemple de dry-run :
+### Stack Docker locale
 
 ```bash
-python scripts/submit_chorus_invoice.py \
-  --invoice-number TEST-001 \
-  --unit-price-ht 20.00 \
-  --quantity 1 \
-  --vat-rate 20 \
-  --dry-run
+docker-compose -f docker-compose.prod.yml up -d --build
+docker-compose -f docker-compose.prod.yml ps
 ```
 
-Exemple avec upload PDF puis soumission :
-
-```bash
-python scripts/submit_chorus_invoice.py \
-  --invoice-number TEST-001 \
-  --recipient-code 00000000113495 \
-  --service-code SERVICE_DESTINATAIRE25969476 \
-  --supplier-id 26359578 \
-  --pdf 2026-003-00565.pdf
-```
-
-Dans ce cas, la sortie JSON inclut aussi :
-
-- `upload.piece_jointe_id` : identifiant extrait de `POST /cpro/transverses/v1/ajouter/fichier`
-- `upload.response` : réponse brute de cette API
-
-Pont local pour l'interface React :
-
-```bash
-python3 scripts/chorus_submit_server.py
-```
-
-Puis côté frontend, définir :
+Si `.env` contient :
 
 ```env
-VITE_CHORUS_SUBMISSION_BRIDGE_URL=http://127.0.0.1:8008/api/chorus/submit
+APP_HTTP_PORT=80
 ```
 
-Dans ce mode, l'interface n'upload plus le PDF directement vers Chorus depuis le navigateur :
-- elle envoie le payload minimal + le PDF encodé au pont Python local
-- `chorus_python` appelle `POST /cpro/transverses/v1/ajouter/fichier`
-- puis `POST /cpro/factures/v1/soumettre`
-- et renvoie à l'UI le journal détaillé des appels API Chorus
+l'application sera disponible sur :
 
-TODO métier restant côté Python :
+```text
+http://localhost
+```
 
-- confirmer la règle de choix quand plusieurs `coordonnees bancaires` existent
-- brancher une vraie règle de sélection si plusieurs services exécutants existent pour un même destinataire
-- remplacer le fallback `20% -> TV12` par une résolution 100% API dès que le référentiel TVA sandbox est fiable
+Si le port `80` est déjà pris, remplacer temporairement par :
 
-## Configuration
+```env
+APP_HTTP_PORT=8080
+```
 
-1. Copier `.env.example` vers `.env.local`
-2. Renseigner les variables Chorus / PISTE sandbox
-3. Lancer l'application
-4. Vérifier la configuration dans la page `Settings`
+puis relancer :
 
-## Données backend
+```bash
+docker-compose -f docker-compose.prod.yml down
+docker-compose -f docker-compose.prod.yml up -d --build
+```
 
-Le fichier [src/data/mock-data.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/data/mock-data.ts) n'embarque plus de données statiques. Il sert maintenant de façade asynchrone vers un backend réel.
+URL :
 
-Architecture de cette couche :
+```text
+http://localhost:8080
+```
 
-- client HTTP et mappers typés : [src/data/backend-client.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/data/backend-client.ts)
-- façade de compatibilité asynchrone : [src/data/mock-data.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/data/mock-data.ts)
-- hook de chargement progressif pour l'UI : [src/hooks/use-async-resource.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/hooks/use-async-resource.ts)
+## Déploiement Docker
 
-Variables à renseigner côté frontend pour pointer vers le backend applicatif :
+### Fichiers à transférer sur le serveur
 
-- `VITE_DATA_API_BASE_URL`
-- `VITE_DATA_TENANT_PATH`
-- `VITE_DATA_CURRENT_USER_PATH`
-- `VITE_DATA_SUPPLIERS_PATH`
-- `VITE_DATA_PUBLIC_CUSTOMERS_PATH`
-- `VITE_DATA_PUBLIC_SERVICES_PATH`
-- `VITE_DATA_INVOICES_PATH`
-- `VITE_DATA_INVOICE_LINES_PATH`
-- `VITE_DATA_INVOICE_ATTACHMENTS_PATH`
-- `VITE_DATA_STATUS_HISTORY_PATH`
-- `VITE_DATA_API_EXCHANGE_LOGS_PATH`
-- `VITE_DATA_ASYNC_JOBS_PATH`
-- `VITE_DATA_AUDIT_LOGS_PATH`
-- `VITE_DATA_EXTRACTION_RESULTS_PATH`
+Le serveur doit contenir le projet complet, notamment :
 
-## Base de test facture
+```text
+docker-compose.prod.yml
+Dockerfile.backend
+Dockerfile.frontend
+docker/nginx/default.conf
+.env
+.env.local
+src/
+chorus_python/
+scripts/
+alembic/
+public/
+package.json
+package-lock.json
+requirements.txt
+```
 
-Le projet peut maintenant générer une base de test locale de factures à partir de l'annuaire Chorus normalisé [public/annuaire/annuaire.normalized.json](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/public/annuaire/annuaire.normalized.json).
+Si le code passe par Git, attention : `.env.local` est ignoré par défaut car il contient des secrets. Il faut le créer ou le copier manuellement sur le serveur.
 
-Commande :
+### Lancement
+
+Depuis le dossier du projet sur le serveur :
+
+```bash
+docker-compose -f docker-compose.prod.yml down
+docker-compose -f docker-compose.prod.yml up -d --build
+docker-compose -f docker-compose.prod.yml ps
+```
+
+Ne pas ajouter `-v` à `down` sauf si l'objectif est de supprimer les volumes Docker et donc les données PostgreSQL.
+
+### Mise à jour après modification du code
+
+```bash
+docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+Pour forcer une reconstruction complète :
+
+```bash
+docker-compose -f docker-compose.prod.yml build --no-cache
+docker-compose -f docker-compose.prod.yml up -d
+```
+
+## Accès réseau
+
+### Accès par IP
+
+Si le serveur a l'IP :
+
+```text
+192.168.150.50
+```
+
+et si `.env` contient :
+
+```env
+APP_HTTP_PORT=80
+```
+
+l'application sera accessible depuis un poste du réseau avec :
+
+```text
+http://192.168.150.50
+```
+
+Si `APP_HTTP_PORT=8080` :
+
+```text
+http://192.168.150.50:8080
+```
+
+### Accès par nom interne
+
+nginx est configuré pour accepter :
+
+```text
+chorusPilot.gigalis.local
+```
+
+Pour un test poste par poste, ajouter dans le fichier `hosts` Windows du poste client :
+
+```text
+192.168.150.50    chorusPilot.gigalis.local
+```
+
+Chemin Windows :
+
+```text
+C:\Windows\System32\drivers\etc\hosts
+```
+
+Pour un usage global, créer un enregistrement DNS interne :
+
+```text
+chorusPilot.gigalis.local -> 192.168.150.50
+```
+
+## Authentification
+
+L'application utilise actuellement un compte applicatif partagé côté serveur.
+
+Variables à configurer dans `.env.local` :
+
+```env
+APP_AUTH_EMAIL=admin@ton-domaine.fr
+APP_AUTH_PASSWORD_HASH=$2b$12$...
+APP_AUTH_JWT_SECRET=une-cle-longue-et-aleatoire
+APP_AUTH_TOKEN_TTL_SECONDS=43200
+```
+
+Pour générer le hash du mot de passe :
+
+```bash
+python -c "import bcrypt; print(bcrypt.hashpw(b'TON_MOT_DE_PASSE', bcrypt.gensalt()).decode())"
+```
+
+Usage multi-utilisateurs actuel :
+
+- plusieurs personnes peuvent utiliser le même compte admin ;
+- elles voient et modifient les mêmes données ;
+- l'application ne distingue pas encore les actions par utilisateur réel ;
+- une vraie séparation par comptes nécessite une table `users` et une évolution de `/api/auth/login`.
+
+## Configuration Chorus
+
+Les variables Chorus sont lues dans `.env.local`.
+
+Variables de sélection d'environnement :
+
+```env
+CHORUS_ENV=prod
+VITE_CHORUS_ENV=prod
+```
+
+Valeurs possibles :
+
+- `qualif` : sandbox / qualification ;
+- `prod` : production PISTE.
+
+Variables serveur recommandées :
+
+```env
+CHORUS_PROD_CLIENT_ID=
+CHORUS_PROD_CLIENT_SECRET=
+CHORUS_PROD_TECHNICAL_LOGIN=
+CHORUS_PROD_TECHNICAL_PASSWORD=
+CHORUS_PROD_SUPPLIER_ID=
+CHORUS_PROD_DESTINATAIRE_CODE=
+CHORUS_PROD_SERVICE_EXECUTANT_CODE=
+CHORUS_PROD_BANK_ACCOUNT_CODE=
+```
+
+En qualification, utiliser les équivalents :
+
+```env
+CHORUS_QUALIF_CLIENT_ID=
+CHORUS_QUALIF_CLIENT_SECRET=
+CHORUS_QUALIF_TECHNICAL_LOGIN=
+CHORUS_QUALIF_TECHNICAL_PASSWORD=
+CHORUS_QUALIF_SUPPLIER_ID=
+```
+
+Les variables `VITE_*` sont destinées au frontend. Toute variable `VITE_*` peut être visible dans le bundle navigateur. Pour les secrets de production, préférer les variables serveur `CHORUS_*`.
+
+Endpoints principaux FastAPI :
+
+- `GET /health` : santé de l'API ;
+- `POST /api/auth/login` : connexion ;
+- `GET /api/auth/me` : session courante ;
+- `POST /api/chorus/oauth-token` : récupération d'un token OAuth2 côté serveur ;
+- `POST /api/extract-pdf-text` : extraction texte PDF ;
+- `POST /api/chorus/submit` : upload PDF puis soumission Chorus ;
+- `POST /api/chorus/annuaire/sync` : synchronisation annuaire ;
+- `GET /api/db/*` : données applicatives.
+
+## Mode d'emploi applicatif
+
+### 1. Se connecter
+
+Ouvrir l'application, puis utiliser le compte configuré dans `.env.local`.
+
+### 2. Vérifier les paramètres
+
+Dans `Paramètres` :
+
+- choisir l'environnement Chorus ;
+- vérifier que le connecteur est activé ;
+- vérifier l'endpoint backend de soumission ;
+- renseigner ou récupérer le contexte technique Chorus ;
+- cliquer sur `Tester la connexion`.
+
+La page `Paramètres` contient maintenant un bloc `Mode d'emploi` avec les étapes d'exploitation les plus courantes.
+
+### 3. Synchroniser les données
+
+La synchronisation peut être déclenchée par le backend ou par le cron selon :
+
+```env
+SYNC_CRON_ENABLED=true
+SYNC_CRON_INTERVAL_SECONDS=300
+SYNC_CRON_MODE=delta
+SYNC_CRON_PAGE_SIZE=3000
+CHORUS_ALLOWED_SUPPLIER_IDS=
+```
+
+`CHORUS_ALLOWED_SUPPLIER_IDS` limite les structures fournisseur autorisées à être synchronisées.
+
+### 4. Créer ou soumettre une facture
+
+Flux général :
+
+1. charger ou préparer la facture dans l'interface ;
+2. extraire les données utiles du PDF ;
+3. vérifier fournisseur, destinataire, service, montants et TVA ;
+4. construire le payload Chorus ;
+5. envoyer au backend ;
+6. le backend appelle Chorus pour l'upload PDF puis la soumission ;
+7. consulter le retour Chorus dans l'interface.
+
+### 5. Suivre l'activité
+
+Les écrans `Factures`, `Détail`, `Jobs`, `Audit`, `Archives` et `Références` s'appuient sur les endpoints `/api/db/*` ou sur les fallbacks JSON selon la configuration.
+
+## Base de données et synchronisation
+
+La base PostgreSQL est lancée par Docker :
+
+```yaml
+postgres:
+  image: postgres:16-alpine
+```
+
+Les données sont conservées dans le volume :
+
+```text
+chorus_pg_data
+```
+
+Les migrations sont appliquées au démarrage par le service :
+
+```text
+migrate
+```
+
+Variables DB :
+
+```env
+POSTGRES_USER=chorus
+POSTGRES_PASSWORD=chorus
+POSTGRES_DB=chorus
+DATABASE_URL=postgresql+psycopg://chorus:chorus@postgres:5432/chorus
+CHORUS_DEFAULT_TENANT_ID=tenant-gigalis-default
+```
+
+En local hors Docker, `DATABASE_URL` peut pointer vers :
+
+```env
+DATABASE_URL=postgresql+psycopg://chorus:chorus@localhost:5432/chorus
+```
+
+## Annuaire Chorus
+
+Le frontend peut charger les destinataires et services publics via :
+
+- l'API DB `/api/db/public-customers` et `/api/db/public-services` ;
+- le cache JSON `/annuaire/annuaire.normalized.json` ;
+- un fallback XML si configuré.
+
+Variable recommandée :
+
+```env
+VITE_REFERENCE_ANNUAIRE_JSON_URL=/annuaire/annuaire.normalized.json
+```
+
+Le volume Docker dédié :
+
+```text
+chorus_annuaire_data
+```
+
+est monté côté API et côté nginx pour partager les fichiers annuaire.
+
+## Tests et commandes utiles
+
+Installer les dépendances frontend :
+
+```bash
+npm install
+```
+
+Build frontend :
+
+```bash
+npm run build
+```
+
+Tests unitaires :
+
+```bash
+npm test
+```
+
+Lint :
+
+```bash
+npm run lint
+```
+
+Générer les données de test :
 
 ```bash
 npm run build:test-data
 ```
 
-Le générateur [scripts/build-test-invoice-db.mjs](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/scripts/build-test-invoice-db.mjs) :
-
-- prend des clients publics actifs depuis l'annuaire
-- extrait le prefixe numerique de leur nom legal, par exemple `26321024` dans `26321024DESTINATAIRE2`
-- cherche un service destinataire contenant ce prefixe
-- prefere les codes de service du type `SERVICE_DESTINATAIRE_*`
-- produit un jeu de données de test cohérent dans [public/test-data](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/public/test-data)
-
-Les endpoints frontend par defaut peuvent pointer sur :
-
-- `/test-data/tenant.current.json`
-- `/test-data/users.me.json`
-- `/test-data/suppliers.json`
-- `/test-data/public-customers.json`
-- `/test-data/public-services.json`
-- `/test-data/invoices.json`
-- `/test-data/invoice-lines.json`
-- `/test-data/invoice-attachments.json`
-- `/test-data/invoice-status-history.json`
-- `/test-data/api-exchange-logs.json`
-- `/test-data/async-jobs.json`
-- `/test-data/audit-logs.json`
-- `/test-data/invoice-extraction-results.json`
-
-Cette base de test sert de backend JSON local pour les pages `Factures`, `Detail`, `Jobs`, `Audit` et pour les listes fournisseur / client public / service destinataire.
-
-Pour les référentiels destinataires/services publics, il y a maintenant deux sources possibles :
-
-- backend JSON via `VITE_REFERENCE_API_BASE_URL` + endpoints `VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH` / `VITE_REFERENCE_PUBLIC_SERVICES_PATH`
-- cache annuaire JSON via `VITE_REFERENCE_ANNUAIRE_JSON_URL`
-- fallback annuaire Chorus XML via `VITE_REFERENCE_ANNUAIRE_XML_URL`
-
-Le chemin conseillé est maintenant :
-
-1. récupérer l'export XML de l'API annuaire
-2. le convertir en JSON normalisé avec `node scripts/build-annuaire-json.mjs`
-3. charger l'application sur `VITE_REFERENCE_ANNUAIRE_JSON_URL`
-
-Le fallback XML reste disponible si le JSON n'a pas encore été généré.
-
-Migration progressive :
-
-- si un endpoint backend manque encore, la couche de données renvoie une valeur sûre vide et loggue un `TODO` explicite en console
-- les écrans restent donc utilisables sans réinjecter de faux jeux de données dans le bundle
-- les fixtures de tests ont été déplacées sous [src/test/fixtures/reference-data.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/test/fixtures/reference-data.ts)
-
-Pour une soumission reelle, la configuration ne se limite pas au client OAuth2 et au compte technique. Il faut aussi renseigner le contexte Chorus utilise dans les payloads de soumission :
-
-- `idUtilisateurCourant`
-- `idFournisseur`
-- `idServiceFournisseur`
-- `codeCoordonneesBancairesFournisseur`
-- eventuellement `codeCadreFacturation`, `codeServiceValideur`, `codeStructureValideur`
-- les options de soumission comme `modePaiement`, `typeFacture`, `typeTva`
-
-Depuis la page `Settings`, le projet peut maintenant tenter de récupérer automatiquement une partie de ce contexte via les API utilisateurs Chorus :
-
-- `consulter/compte` pour `idUtilisateurCourant`
-- `monCompte/recuperer/rattachements` pour `idStructure` et `idService`
-
-Important :
-
-- le body de `monCompte/recuperer/rattachements` est envoyé en `{}` par défaut
-- le rapprochement `idFournisseur <- idStructure` et `idServiceFournisseur <- idService` est une inference applicative a confirmer avec votre environnement Chorus
-
-Le projet garde une configuration persistée dans `localStorage` via `chorus.connector.config`. Si l'UI n'affiche pas les valeurs de `.env.local`, il faut réenregistrer la configuration ou vider cette clé.
-
-En développement local avec `npm run dev`, les URLs officielles sandbox `https://sandbox-oauth.piste.gouv.fr` et `https://sandbox-api.piste.gouv.fr` sont automatiquement relayées via un proxy Vite local pour contourner les blocages CORS du navigateur. En production, ce proxy n'existe pas: il faut alors passer par un backend.
-
-Le même mécanisme de proxy local est utilisé pour un serveur Ollama externe quand `GEN_PROVIDER=ollama` et `GEN_BASE_URL` sont définis.
-
-## Pipeline actuelle
-
-Flux réel aujourd'hui :
-
-`PDF/XML upload` -> `lecture locale du fichier` -> `extraction heuristique / LLM` -> `normalisation du draft` -> `validation / préparation Chorus` -> `construction du payload Chorus` -> `validation du payload` -> `upload fichier API` -> `finalisation pieceJointePrincipale si depot PDF` -> `soumission API Chorus`
-
-### Fichiers responsables
-
-- [src/pages/InvoiceCreate.tsx](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/pages/InvoiceCreate.tsx)
-  Rôle: écran d'upload, orchestration utilisateur, affichage des résultats d'extraction, correction manuelle, déclenchement de la soumission.
-  Dépendances: `extractInvoiceData`, `mergeExtractionIntoDraft`, `prepareInvoiceSubmission`, `buildInvoiceSubmissionPayload`, `createChorusConnector`.
-  Criticité: très élevée.
-
-- [src/lib/chorus/extraction.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/extraction.ts)
-  Rôle: lecture locale du PDF/XML et extraction heuristique des champs facture.
-  Dépendances: APIs navigateur `File.text()`, `FileReader`, `arrayBuffer`, `TextDecoder`, expressions régulières.
-  Criticité: très élevée.
-
-- [src/lib/chorus/normalization.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/normalization.ts)
-  Rôle: fusion du résultat d'extraction avec le draft UI et normalisation des données métier.
-  Dépendances: types de pipeline.
-  Criticité: élevée.
-
-- [src/lib/chorus/normalizeSubmissionData.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/normalizeSubmissionData.ts)
-  Rôle: normalisation dédiée au payload Chorus (`dates`, `montants`, `SIRET`, lignes de facture, lignes TVA, totaux).
-  Dépendances: types de payload.
-  Criticité: élevée.
-
-- [src/lib/chorus/preparation.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/preparation.ts)
-  Rôle: validation métier avant soumission et calcul de l'état `ready/review/blocked`.
-  Dépendances: normalisation + types métier.
-  Criticité: élevée.
-
-- [src/lib/chorus/mappers.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/mappers.ts)
-  Rôle: point d'entrée de mapping depuis le draft UI vers le payload Chorus typé.
-  Dépendances: normalisation.
-  Criticité: élevée.
-
-- [src/lib/chorus/buildSubmissionPayload.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/buildSubmissionPayload.ts)
-  Rôle: construction de l'objet JSON Chorus `soumettreDemandePaiement` / `soumettreFacture` à partir des données normalisées et du contexte applicatif.
-  Dépendances: normalisation du draft + normalisation métier de soumission.
-  Criticité: très élevée.
-
-- [src/lib/chorus/validateSubmissionPayload.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/validateSubmissionPayload.ts)
-  Rôle: validation finale du payload avant POST HTTP.
-  Dépendances: types de payload.
-  Criticité: très élevée.
-
-- [src/lib/chorus/client.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/client.ts)
-  Rôle: OAuth2 PISTE, headers Chorus, upload du fichier, soumission de la facture, mode mock/direct.
-  Dépendances: `fetch`, config Chorus.
-  Criticité: très élevée.
-
-- [src/lib/chorus/technicalContext.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/technicalContext.ts)
-  Rôle: conversion de la configuration UI / `.env` en contexte technique Chorus typé.
-  Dépendances: `types/chorus` + types de payload.
-  Criticité: élevée.
-
-- [src/lib/chorus/storage.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/storage.ts)
-  Rôle: chargement et persistance de la configuration Chorus.
-  Dépendances: `localStorage`, variables `VITE_*`.
-  Criticité: moyenne.
-
-- [src/lib/chorus/types.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/types.ts)
-  Rôle: types explicites de la pipeline facture.
-  Dépendances: types métier globaux.
-  Criticité: moyenne.
-
-## Bibliothèques et mécanismes utilisés pour l'analyse PDF locale
-
-Le projet n'utilise pas encore de vraie bibliothèque de parsing PDF structurée comme `pdf.js` ou un moteur OCR.
-
-Analyse locale actuelle :
-
-- lecture du fichier via les APIs navigateur
-- extraction plus robuste des chaînes textuelles PDF quand le document n'est pas un simple texte brut
-- extraction texte heuristique
-- enrichissement optionnel par LLM local via Ollama
-- détection par regex
-- tentative de résolution vers les référentiels chargés par API quand `VITE_REFERENCE_*` est configuré
-
-Conséquence directe :
-
-- XML et PDF texte: cas les mieux couverts
-- PDF scanné: faible couverture
-- OCR: absent
-- structure interne PDF: non interprétée
-- Factur-X complet: non pris en charge comme pipeline dédiée
-
-## Construction du payload Chorus
-
-La construction du JSON Chorus se fait maintenant en plusieurs couches explicites :
-
-- extraction locale : [src/lib/chorus/extraction.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/extraction.ts)
-- normalisation du draft : [src/lib/chorus/normalization.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/normalization.ts)
-- normalisation orientée soumission : [src/lib/chorus/normalizeSubmissionData.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/normalizeSubmissionData.ts)
-- contrôle des référentiels Chorus Transverses : [src/lib/chorus/transversesClient.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/transversesClient.ts)
-- construction du payload : [src/lib/chorus/buildSubmissionPayload.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/buildSubmissionPayload.ts)
-- validation finale : [src/lib/chorus/validateSubmissionPayload.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/validateSubmissionPayload.ts)
-- envoi HTTP et finalisation `pieceJointePrincipale` apres `deposer/pdf` : [src/lib/chorus/client.ts](/mnt/c/users/ahmed-amine.jadi/chorus-path-finder-main/src/lib/chorus/client.ts)
-
-### Provenance des champs
-
-Champs venant du PDF / XML / texte extrait :
-
-- numero de facture
-- date facture
-- date d'echeance
-- SIRET fournisseur
-- SIRET / code destinataire si detecte
-- code service / libelle service si detecte
-- numero d'engagement, marche, bon de commande
-- montants HT / TVA / TTC
-- lignes de facture et lignes TVA si elles sont detectables
-
-Champs venant du contexte applicatif / backend / referentiels Chorus :
-
-- `idUtilisateurCourant`
-- `fournisseur.idFournisseur`
-- `fournisseur.idServiceFournisseur`
-- `fournisseur.codeCoordonneesBancairesFournisseur`
-- `cadreDeFacturation.codeServiceValideur`
-- `cadreDeFacturation.codeStructureValideur`
-- toute autre cle technique Chorus qui ne figure pas sur la facture
-- `idUtilisateurCourant` requis aussi par `deposer/pdf`
-- les référentiels `Transverses` Chorus (`cadrefacturation`, `devises`, `tauxtva`, `modereglements`, `modedepot`, `coordbanc`, `structures actives fournisseur`, `destinataire`, `service executant`) sont maintenant vérifiables avant soumission
-
-Point important :
-
-- ces identifiants techniques ne doivent jamais etre deduits du PDF
-- ils doivent etre fournis par le backend, un referentiel Chorus, ou la configuration de `Settings` / `.env` en environnement de sandbox
-
-## Architecture actuelle
-
-La logique est encore majoritairement côté frontend, mais elle est maintenant séparée par responsabilités :
-
-- UI: `InvoiceCreate.tsx`
-- extraction: `extraction.ts`
-- normalisation: `normalization.ts`
-- normalisation soumission: `normalizeSubmissionData.ts`
-- validation métier: `preparation.ts`
-- mapping Chorus: `mappers.ts` + `buildSubmissionPayload.ts`
-- validation payload: `validateSubmissionPayload.ts`
-- transport API: `client.ts`
-
-## Architecture cible
-
-Chemin conseillé pour la suite :
-
-1. Conserver le frontend comme couche d'orchestration et de revue humaine
-2. Déplacer l'extraction lourde côté backend
-3. Remplacer l'heuristique locale par une pipeline plus robuste:
-   `pdf text parser -> OCR fallback -> règles métier -> validation -> JSON canonique`
-4. Ajouter un client dédié aux API de préparation Chorus:
-   `rechercher structure -> consulter structure -> rechercher service structure -> soumettre`
-5. Générer ou typer plus finement les payloads Chorus à partir du Swagger officiel
-
-## Limites actuelles
-
-- Le parsing PDF reste heuristique et sensible à la mise en page
-- Pas d'OCR pour les scans
-- Pas encore de client dédié pour les étapes Chorus de préparation structure/service
-- Le payload de soumission est maintenant typé, mais certains champs Chorus restent dependants d'un contexte technique externe
-- Les référentiels fournisseur/client/service du flux Chorus peuvent désormais venir d'APIs configurables (`referenceApiBaseUrl`, `referenceSuppliersPath`, `referencePublicCustomersPath`, `referencePublicServicesPath`)
-- Sans `idUtilisateurCourant` / `idFournisseur` / `idServiceFournisseur` reels, la validation bloque volontairement le POST
-
-## Tests
-
-Les tests unitaires couvrent actuellement :
-
-- extraction locale
-- normalisation
-- normalisation de soumission
-- préparation / validation
-- mapping payload Chorus
-- validation du payload Chorus
-- client Chorus
-- stockage de configuration
-
-Exécution :
+Tester la configuration Docker Compose :
 
 ```bash
-npm test
+docker-compose -f docker-compose.prod.yml config
+```
+
+Voir les conteneurs :
+
+```bash
+docker ps
+docker-compose -f docker-compose.prod.yml ps
+```
+
+Voir les logs :
+
+```bash
+docker-compose -f docker-compose.prod.yml logs -f frontend
+docker-compose -f docker-compose.prod.yml logs -f chorus-api
+docker-compose -f docker-compose.prod.yml logs -f postgres
+```
+
+Tester la santé HTTP :
+
+```bash
+curl -I http://localhost/health
+curl -I http://192.168.150.50/health
+```
+
+## Dépannage
+
+### Le port est déjà utilisé
+
+Erreur typique :
+
+```text
+Bind for 0.0.0.0:8080 failed: port is already allocated
+```
+
+Identifier le conteneur :
+
+```bash
+docker ps
+```
+
+Arrêter le conteneur qui occupe le port :
+
+```bash
+docker stop NOM_DU_CONTENEUR
+```
+
+Ou changer le port dans `.env` :
+
+```env
+APP_HTTP_PORT=8080
+```
+
+### Le réseau Docker doit être recréé
+
+Erreur typique :
+
+```text
+Network "chorus-path-finder-main_default" needs to be recreated
+```
+
+Solution :
+
+```bash
+docker-compose -f docker-compose.prod.yml down
+docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+Ne pas utiliser `down -v` sauf suppression volontaire des données.
+
+### L'application demande toujours la connexion
+
+Vérifier :
+
+- `APP_AUTH_EMAIL` ;
+- `APP_AUTH_PASSWORD_HASH` ;
+- `APP_AUTH_JWT_SECRET` ;
+- l'heure du poste et du serveur ;
+- l'expiration `APP_AUTH_TOKEN_TTL_SECONDS`.
+
+Après modification de l'auth :
+
+```bash
+docker-compose -f docker-compose.prod.yml up -d --build
+```
+
+Puis se reconnecter dans le navigateur.
+
+### La page ne répond pas depuis un autre poste
+
+Vérifier :
+
+- l'IP du serveur ;
+- le port exposé dans `.env` ;
+- le pare-feu serveur ;
+- `docker-compose -f docker-compose.prod.yml ps` ;
+- `curl -I http://IP_DU_SERVEUR/health`.
+
+Sur Linux avec `ufw` :
+
+```bash
+sudo ufw allow 80/tcp
+```
+
+ou, si port 8080 :
+
+```bash
+sudo ufw allow 8080/tcp
+```
+
+### Le nom `chorusPilot.gigalis.local` ne résout pas
+
+Tester :
+
+```bash
+ping chorusPilot.gigalis.local
+```
+
+Si le ping échoue :
+
+- ajouter une ligne dans le fichier `hosts` du poste client ;
+- ou créer l'entrée DNS interne ;
+- ou utiliser directement l'IP serveur.
+
+### La connexion Chorus échoue
+
+Vérifier dans `Paramètres` :
+
+- environnement `qualif` ou `prod` ;
+- endpoint de test ;
+- contexte technique Chorus ;
+- credentials serveur dans `.env.local` ;
+- logs `chorus-api`.
+
+Logs :
+
+```bash
+docker-compose -f docker-compose.prod.yml logs -f chorus-api
+```
+
+## Sécurité et exploitation
+
+Recommandations :
+
+- ne jamais publier `.env.local` ;
+- remplacer le mot de passe temporaire avant tout partage réseau ;
+- générer une clé `APP_AUTH_JWT_SECRET` longue et unique ;
+- éviter les secrets en `VITE_*` pour un build exposé à des utilisateurs ;
+- ouvrir uniquement le port nécessaire, `80` ou `8080` ;
+- sauvegarder régulièrement le volume PostgreSQL ;
+- ajouter HTTPS avant une exposition large ou hors réseau interne ;
+- garder le compte PISTE et le compte technique Chorus côté serveur.
+
+Sauvegarde PostgreSQL indicative :
+
+```bash
+docker exec -t NOM_CONTENEUR_POSTGRES pg_dump -U chorus chorus > backup_chorus.sql
+```
+
+Restauration indicative :
+
+```bash
+docker exec -i NOM_CONTENEUR_POSTGRES psql -U chorus chorus < backup_chorus.sql
+```
+
+## URLs rapides
+
+Local avec port 80 :
+
+```text
+http://localhost
+```
+
+Serveur par IP :
+
+```text
+http://192.168.150.50
+```
+
+Serveur par nom interne :
+
+```text
+http://chorusPilot.gigalis.local
 ```
