@@ -91,11 +91,26 @@ export default {
           from: { opacity: "0", transform: "translateY(4px)" },
           to: { opacity: "1", transform: "translateY(0)" },
         },
+        "fade-in-up": {
+          from: { opacity: "0", transform: "translateY(8px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+        "success-pulse": {
+          "0%, 100%": { boxShadow: "0 0 0 0 rgba(34, 197, 94, 0.45)" },
+          "50%": { boxShadow: "0 0 0 8px rgba(34, 197, 94, 0)" },
+        },
+        "scale-in": {
+          from: { opacity: "0", transform: "scale(0.92)" },
+          to: { opacity: "1", transform: "scale(1)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         "fade-in": "fade-in 0.3s ease-out",
+        "fade-in-up": "fade-in-up 0.4s ease-out both",
+        "success-pulse": "success-pulse 1.6s ease-out 2",
+        "scale-in": "scale-in 0.25s ease-out",
       },
     },
   },

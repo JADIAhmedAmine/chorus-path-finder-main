@@ -24,6 +24,7 @@ import { extractInvoiceData } from '@/lib/chorus/extraction';
 import { buildChorusTechnicalContext } from '@/lib/chorus/technicalContext';
 import { ChorusTransversesClient } from '@/lib/chorus/transversesClient';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
+import { celebrateSuccess } from '@/lib/celebration';
 import { buildChorusDebugFile } from '@/lib/chorus/debug';
 import { describeChorusSubmissionApiReturn, type ChorusApiReturnSummary } from '@/lib/chorus/submissionApiReturn';
 import {
@@ -159,9 +160,12 @@ function getBatchStatusBadgeVariant(status: BatchSubmissionStatus): 'default' | 
   return 'secondary';
 }
 
-function ExtractionInfoRow({ label, value }: { label: string; value?: string }) {
+function ExtractionInfoRow({ label, value, index = 0 }: { label: string; value?: string; index?: number }) {
   return (
-    <div className="rounded-lg border bg-muted/20 p-3">
+    <div
+      className="rounded-lg border bg-muted/20 p-3 animate-fade-in-up"
+      style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+    >
       <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className="mt-1 text-sm font-medium">{value || 'Non détecté'}</p>
     </div>
@@ -864,6 +868,7 @@ export default function InvoiceCreate() {
       });
       setLastSubmissionResult(result);
       setLastApiCalls(result.apiCalls);
+      celebrateSuccess();
 
       toast({
         title: chorusConfig.mode === 'mock' ? 'Facture mockée' : 'Facture envoyée à Chorus',
@@ -1143,19 +1148,19 @@ export default function InvoiceCreate() {
               </div>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <ExtractionInfoRow label="Fournisseur" value={detectedSupplierName} />
-                <ExtractionInfoRow label="N° facture" value={formData.supplierInvoiceNumber} />
-                <ExtractionInfoRow label="Client public" value={detectedPublicCustomerName} />
-                <ExtractionInfoRow label="Service destinataire" value={detectedService} />
-                <ExtractionInfoRow label="Date facture" value={formData.invoiceDate} />
-                <ExtractionInfoRow label="Échéance" value={extractionResult.fields.dueDate} />
-                <ExtractionInfoRow label="Mode paiement" value={extractionResult.fields.paymentMode} />
-                <ExtractionInfoRow label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
-                <ExtractionInfoRow label="SIRET fournisseur" value={detectedSupplierSiret} />
-                <ExtractionInfoRow label="SIRET destinataire" value={detectedCustomerSiret} />
-                <ExtractionInfoRow label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
-                <ExtractionInfoRow label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
-                <ExtractionInfoRow label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
+                <ExtractionInfoRow index={0} label="Fournisseur" value={detectedSupplierName} />
+                <ExtractionInfoRow index={1} label="N° facture" value={formData.supplierInvoiceNumber} />
+                <ExtractionInfoRow index={2} label="Client public" value={detectedPublicCustomerName} />
+                <ExtractionInfoRow index={3} label="Service destinataire" value={detectedService} />
+                <ExtractionInfoRow index={4} label="Date facture" value={formData.invoiceDate} />
+                <ExtractionInfoRow index={5} label="Échéance" value={extractionResult.fields.dueDate} />
+                <ExtractionInfoRow index={6} label="Mode paiement" value={extractionResult.fields.paymentMode} />
+                <ExtractionInfoRow index={7} label="Devise" value={formData.currencyCode || extractionResult.fields.currencyCode} />
+                <ExtractionInfoRow index={8} label="SIRET fournisseur" value={detectedSupplierSiret} />
+                <ExtractionInfoRow index={9} label="SIRET destinataire" value={detectedCustomerSiret} />
+                <ExtractionInfoRow index={10} label="Montant HT" value={formatAmountForDisplay(formData.totalAmountHt)} />
+                <ExtractionInfoRow index={11} label="Montant TVA" value={formatExtractedAmountForDisplay(extractionResult.fields.totalVat)} />
+                <ExtractionInfoRow index={12} label="Montant TTC" value={formatAmountForDisplay(formData.totalAmountTtc)} />
               </div>
 
               {extractionResult.warnings.length > 0 && (
@@ -1373,13 +1378,15 @@ export default function InvoiceCreate() {
       <Card>
         <CardHeader><CardTitle className="text-base">Préparation de la soumission Chorus</CardTitle></CardHeader>
         <CardContent className="space-y-4">
-          <div className={`rounded-lg border p-4 ${
+          <div className={`rounded-lg border p-4 transition-all ${
             submissionPreparation.readiness === 'ready'
-              ? 'border-emerald-200 bg-emerald-50/60'
+              ? 'border-emerald-200 bg-emerald-50/60 animate-success-pulse'
               : submissionPreparation.readiness === 'review'
                 ? 'border-amber-200 bg-amber-50/60'
                 : 'border-red-200 bg-red-50/60'
-          }`}>
+          }`}
+          key={submissionPreparation.readiness}
+          >
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <p className="text-sm font-medium">
