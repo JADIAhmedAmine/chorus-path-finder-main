@@ -34,3 +34,5 @@ response.json
 # Generated Chorus annuaire data - too large for Git
 public/annuaire/*
 !public/annuaire/.gitkeep
+.env
+public/annuaire/
