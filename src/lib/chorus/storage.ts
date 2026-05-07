@@ -268,9 +268,9 @@ export function getDefaultChorusConfig(): ChorusConfig {
       'FACTURE',
     ),
     submissionVatType: pickEnumValue(
-      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'AUTO').toUpperCase(),
+      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'TVA_SUR_DEBIT').toUpperCase(),
       ['AUTO', 'TVA_SUR_DEBIT', 'TVA_SUR_ENCAISSEMENT', 'EXONERATION', 'SANS_TVA'],
-      'AUTO',
+      'TVA_SUR_DEBIT',
     ),
     submissionVatExonerationReason: envValue('VITE_CHORUS_SUBMISSION_VAT_EXONERATION_REASON', ''),
     submissionOriginalInvoiceNumber: envValue('VITE_CHORUS_SUBMISSION_ORIGINAL_INVOICE_NUMBER', ''),

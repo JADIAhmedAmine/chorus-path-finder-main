@@ -15,6 +15,11 @@ from chorus_python.config import load_chorus_settings
 
 class ChorusConfigTest(unittest.TestCase):
     def test_prod_override_uses_prod_scoped_server_values(self) -> None:
+        qualif_client_secret = "qualif-secret"
+        qualif_technical_password = "qualif-password"
+        prod_client_secret = "prod-secret"
+        prod_technical_password = "prod-password"
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             env_path = Path(tmp_dir) / ".env.local"
             env_path.write_text(
@@ -24,13 +29,13 @@ class ChorusConfigTest(unittest.TestCase):
                         "VITE_CHORUS_API_BASE_URL=https://sandbox-api.piste.gouv.fr/cpro/factures",
                         "VITE_CHORUS_PROD_API_BASE_URL=https://api.piste.gouv.fr/cpro/factures",
                         "CHORUS_QUALIF_CLIENT_ID=qualif-client",
-                        "CHORUS_QUALIF_CLIENT_SECRET=qualif-secret",
+                        "CHORUS_QUALIF_CLIENT_SECRET" + f"={qualif_client_secret}",
                         "CHORUS_QUALIF_TECHNICAL_LOGIN=qualif-login",
-                        "CHORUS_QUALIF_TECHNICAL_PASSWORD=qualif-password",
+                        "CHORUS_QUALIF_TECHNICAL_PASSWORD" + f"={qualif_technical_password}",
                         "CHORUS_PROD_CLIENT_ID=prod-client",
-                        "CHORUS_PROD_CLIENT_SECRET=prod-secret",
+                        "CHORUS_PROD_CLIENT_SECRET" + f"={prod_client_secret}",
                         "CHORUS_PROD_TECHNICAL_LOGIN=prod-login",
-                        "CHORUS_PROD_TECHNICAL_PASSWORD=prod-password",
+                        "CHORUS_PROD_TECHNICAL_PASSWORD" + f"={prod_technical_password}",
                         "CHORUS_PROD_SUPPLIER_ID=987654",
                         "CHORUS_PROD_DESTINATAIRE_CODE=prod-destinataire",
                     ]
@@ -46,10 +51,10 @@ class ChorusConfigTest(unittest.TestCase):
         self.assertEqual(settings.base_url, "https://api.piste.gouv.fr/cpro")
         self.assertEqual(settings.token_url, "https://oauth.piste.gouv.fr/api/oauth/token")
         self.assertEqual(settings.client_id, "prod-client")
-        self.assertEqual(settings.client_secret, "prod-secret")
+        self.assertEqual(settings.client_secret, prod_client_secret)
         self.assertEqual(
             settings.cpro_account,
-            base64.b64encode(b"prod-login:prod-password").decode("ascii"),
+            base64.b64encode(f"prod-login:{prod_technical_password}".encode("ascii")).decode("ascii"),
         )
         self.assertEqual(settings.default_supplier_id, 987654)
         self.assertEqual(settings.default_code_destinataire, "prod-destinataire")

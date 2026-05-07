@@ -18,6 +18,17 @@ from .soumission import (
 
 
 DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = "DIVERS"
+COMPLEMENTARY_ATTACHMENT_TYPE_ALIASES = {
+    "Bordereau de suivi de validation": "Bordereau de suivi",
+}
+
+
+def normalize_complementary_attachment_type(value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE
+
+    attachment_type = value.strip()
+    return COMPLEMENTARY_ATTACHMENT_TYPE_ALIASES.get(attachment_type, attachment_type)
 
 
 def mode_depot_for_pdf(is_signed: bool) -> str:
@@ -172,11 +183,8 @@ class ChorusSubmissionService:
             attachment_payload: dict[str, Any] = {
                 "pieceJointeComplementaireDesignation": designation,
             }
-            attachment_type = attachment.get("type")
-            attachment_payload["pieceJointeComplementaireType"] = (
-                attachment_type.strip()
-                if isinstance(attachment_type, str) and attachment_type.strip()
-                else DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE
+            attachment_payload["pieceJointeComplementaireType"] = normalize_complementary_attachment_type(
+                attachment.get("type")
             )
 
             line_number = attachment.get("lineNumber")
