@@ -9,7 +9,7 @@ function compactJson(value: unknown): string {
 }
 
 function escapeSingleQuotedShell(value: string): string {
-  return value.replace(/'/g, `'\"'\"'`);
+  return value.replace(/'/g, "'\"'\"'");
 }
 
 async function fileToBase64(file: File): Promise<string> {

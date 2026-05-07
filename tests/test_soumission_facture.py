@@ -288,6 +288,110 @@ class SoumissionFactureTest(unittest.TestCase):
 
         self.assertEqual(result["payload"]["modeDepot"], "DEPOT_PDF_SIGNE_API")
 
+    def test_submit_prepared_payload_normalizes_validation_tracking_slip_attachment_type(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "ATTACHMENT-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "VIREMENT",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            attachments=[
+                {
+                    "name": "bordereau-validation.pdf",
+                    "mimeType": "application/pdf",
+                    "base64": "JVBERi0xLjQK",
+                    "type": "Bordereau de suivi de validation",
+                }
+            ],
+        )
+
+        self.assertEqual(
+            result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
+            "Bordereau de suivi",
+        )
+
+    def test_submit_prepared_payload_forces_vat_type_to_debit(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "TVA-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "VIREMENT",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_ENCAISSEMENT",
+                },
+            },
+            attachments=[],
+        )
+
+        self.assertEqual(result["payload"]["references"]["typeTva"], "TVA_SUR_DEBIT")
+
     def test_submit_prepared_payload_resolves_real_supplier_id_from_active_recipient_structures(self) -> None:
         settings = ChorusSettings(
             base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",

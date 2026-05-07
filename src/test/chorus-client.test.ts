@@ -105,7 +105,7 @@ describe('chorus connector', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const tokenCall = fetchMock.mock.calls[0];
-    expect(tokenCall?.[0]).toBe('http://127.0.0.1:8008/api/chorus/oauth-token');
+    expect(tokenCall?.[0]).toBe('/api/chorus/oauth-token');
     expect((tokenCall?.[1] as RequestInit).method).toBe('POST');
     expect(JSON.parse(String((tokenCall?.[1] as RequestInit).body))).toEqual({ environment: 'qualif' });
 

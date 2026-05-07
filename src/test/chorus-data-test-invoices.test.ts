@@ -17,7 +17,7 @@ interface DataTestInvoiceExpectation {
   dueDate: string;
   supplierSiret: string;
   publicCustomerCode: string;
-  paymentMode: 'CHEQUE' | 'PRELEVEMENT' | 'VIREMENT';
+  paymentMode: 'VIREMENT';
   totalAmountHt: number;
   totalVat: number;
   totalAmountTtc: number;
@@ -36,7 +36,7 @@ const REPRESENTATIVE_REAL_INVOICES: DataTestInvoiceExpectation[] = [
     dueDate: '2025-02-22',
     supplierSiret: '25440253000011',
     publicCustomerCode: '00000000380342',
-    paymentMode: 'CHEQUE',
+    paymentMode: 'VIREMENT',
     totalAmountHt: 517,
     totalVat: 103.4,
     totalAmountTtc: 620.4,
@@ -48,7 +48,7 @@ const REPRESENTATIVE_REAL_INVOICES: DataTestInvoiceExpectation[] = [
     dueDate: '2025-02-22',
     supplierSiret: '25440253000011',
     publicCustomerCode: '00000000137412',
-    paymentMode: 'CHEQUE',
+    paymentMode: 'VIREMENT',
     totalAmountHt: 887,
     totalVat: 177.4,
     totalAmountTtc: 1064.4,
@@ -60,7 +60,7 @@ const REPRESENTATIVE_REAL_INVOICES: DataTestInvoiceExpectation[] = [
     dueDate: '2025-02-22',
     supplierSiret: '25440253000011',
     publicCustomerCode: '00000000136694',
-    paymentMode: 'CHEQUE',
+    paymentMode: 'VIREMENT',
     totalAmountHt: 1183,
     totalVat: 236.6,
     totalAmountTtc: 1419.6,

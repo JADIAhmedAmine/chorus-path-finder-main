@@ -1,4 +1,3 @@
-import type { ChorusPaymentMode } from '@/types/chorus';
 import type { ExtractedInvoiceDraftData } from '@/lib/chorus/types';
 import type { ExtractionTemplate } from './types';
 
@@ -30,6 +29,35 @@ function frenchDateToIso(value: string | undefined): string | undefined {
   return `${year}-${month}-${day}`;
 }
 
+function extractCustomerReference(rawText: string, compact: string): string | undefined {
+  const explicitMatch = rawText.match(/ID\s+CLIENT[^0-9]{0,80}(\d{2,5})(?![-/\d])/i);
+  if (explicitMatch) {
+    return explicitMatch[1];
+  }
+
+  const afterIdClient = compact.split(/ID\s+CLIENT/i)[1]?.slice(0, 220) ?? '';
+  const nearIdClientMatch = Array.from(afterIdClient.matchAll(/\bN\b[^0-9]{0,12}(\d{2,})(?![-/\d])/gi))[0];
+  if (nearIdClientMatch) {
+    return nearIdClientMatch[1];
+  }
+
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const idClientIndex = lines.findIndex((line) => /ID\s+CLIENT/i.test(line));
+  if (idClientIndex >= 0) {
+    const nearby = lines.slice(idClientIndex, idClientIndex + 6).join('\n');
+    const nearbyMatch = nearby.match(/(?:^|\n|ID\s+CLIENT\s+)(?:Facture\s+)?N[^0-9]{0,12}(\d{2,})(?![-/\d])/i);
+    if (nearbyMatch) {
+      return nearbyMatch[1];
+    }
+  }
+
+  return compact.match(/Client\s*:\s*[^[]+\[(\d{2,})]/i)?.[1];
+}
+
 function matchGigalis(rawText: string): boolean {
   const compact = rawText.replace(/\s+/g, ' ');
   return /\bGIP\s+Gigalis\b/i.test(compact)
@@ -48,6 +76,11 @@ function extractGigalisFields(rawText: string): Partial<ExtractedInvoiceDraftDat
   const invoiceNumberMatch = compact.match(/N°\s*:\s*(\d{4}-\d{3}-\d{5})/);
   if (invoiceNumberMatch) {
     fields.supplierInvoiceNumber = invoiceNumberMatch[1];
+  }
+
+  const customerReference = extractCustomerReference(rawText, compact);
+  if (customerReference) {
+    fields.customerReference = customerReference;
   }
 
   const invoiceDateMatch = compact.match(/Le\s+(\d{2}\/\d{2}\/\d{4})/);
@@ -104,11 +137,7 @@ function extractGigalisFields(rawText: string): Partial<ExtractedInvoiceDraftDat
     fields.totalVat = totalVat;
   }
 
-  if (/payable\s+par\s+ch[èe]que/i.test(compact)) {
-    fields.paymentMode = 'CHEQUE' as ChorusPaymentMode;
-  } else if (/par\s+virement/i.test(compact)) {
-    fields.paymentMode = 'VIREMENT' as ChorusPaymentMode;
-  }
+  fields.paymentMode = 'VIREMENT';
 
   fields.currencyCode = 'EUR';
 

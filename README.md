@@ -246,8 +246,8 @@ Variables à configurer dans `.env.local` :
 
 ```env
 APP_AUTH_EMAIL=admin@ton-domaine.fr
-APP_AUTH_PASSWORD_HASH=$2b$12$...
-APP_AUTH_JWT_SECRET=une-cle-longue-et-aleatoire
+APP_AUTH_PASSWORD_HASH: set this in your local .env file
+APP_AUTH_JWT_SECRET: set this in your local .env file
 APP_AUTH_TOKEN_TTL_SECONDS=43200
 ```
 
