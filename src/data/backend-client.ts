@@ -86,7 +86,7 @@ const REMOTE_BACKEND_CONFIG: BackendDataApiConfig = {
 
 function envValue(key: string, fallback: string): string {
   const raw = import.meta.env[key];
-  return typeof raw === 'string' ? raw : fallback;
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw : fallback;
 }
 
 function hasConfiguredDataBackend(): boolean {

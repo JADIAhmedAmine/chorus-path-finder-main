@@ -59,11 +59,13 @@ interface ComplementaryAttachmentDraft {
   liaisonId: string;
 }
 
-const DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = 'DIVERS';
+const DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = 'Document annexe';
 const COMPLEMENTARY_ATTACHMENT_TYPES = [
-  { value: 'DIVERS', label: 'DIVERS - Pièce jointe complémentaire' },
-  { value: 'FACTURE_PDF', label: 'FACTURE_PDF - Facture PDF' },
-  { value: 'FACTURE_XML', label: 'FACTURE_XML - Facture XML' },
+  { value: 'Bon de commande', label: 'Bon de commande' },
+  { value: 'Bon de livraison', label: 'Bon de livraison' },
+  { value: 'Bordereau de suivi', label: 'Bordereau de suivi' },
+  { value: 'Bordereau de suivi de validation', label: 'Bordereau de suivi de validation' },
+  { value: 'Document annexe', label: 'Document annexe' },
 ] as const;
 
 function formatAmountForDisplay(value?: string): string {

@@ -1,0 +1,92 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+      - PRE_PROD_V0
+      - developpement
+  pull_request:
+    branches:
+      - main
+      - PRE_PROD_V0
+      - developpement
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-guard:
+    name: Secret guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reject tracked environment files
+        run: |
+          set -euo pipefail
+          blocked_files="$(git ls-files | grep -E '(^|/)\.env($|\.|/)|(\.pem|\.key)$' | grep -v '^\.env\.example$' || true)"
+          if [ -n "$blocked_files" ]; then
+            echo "::error::Sensitive files are tracked by Git:"
+            echo "$blocked_files"
+            exit 1
+          fi
+
+      - name: Reject obvious committed secrets
+        run: |
+          set -euo pipefail
+          matches="$(git grep -n -I -E '(APP_AUTH_JWT_SECRET|APP_AUTH_PASSWORD_HASH|CHORUS_.*(API_KEY|CLIENT_SECRET|TECHNICAL_PASSWORD)|VITE_CHORUS_.*(CLIENT_SECRET|TECHNICAL_PASSWORD))=[^[:space:]]+' -- ':!.env.example' || true)"
+          if [ -n "$matches" ]; then
+            echo "::error::Potential secrets found in tracked files:"
+            echo "$matches"
+            exit 1
+          fi
+
+  npm-audit:
+    name: NPM audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit frontend dependencies
+        run: npm audit --audit-level=high
+
+  pip-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install pip-audit
+        run: python -m pip install --upgrade pip pip-audit
+
+      - name: Audit backend dependencies
+        run: pip-audit -r requirements.txt

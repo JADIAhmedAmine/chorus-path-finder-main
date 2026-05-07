@@ -128,7 +128,8 @@ class SoumissionFacture:
         self.devise_facture = _normalize_text(self.devise_facture) or DEFAULT_DEVISE_FACTURE
         self.mode_paiement = _normalize_text(self.mode_paiement) or DEFAULT_MODE_PAIEMENT
         self.type_facture = _normalize_text(self.type_facture) or DEFAULT_TYPE_FACTURE
-        self.type_tva = _normalize_text(self.type_tva) or DEFAULT_TYPE_TVA
+        #self.type_tva = \*_normalize_text(self.type_tva)*\ or DEFAULT_TYPE_TVA
+        self.type_tva =  DEFAULT_TYPE_TVA
         self.montant_remise_globale_ttc = _to_decimal(self.montant_remise_globale_ttc)
 
         if not self.ligne_poste:

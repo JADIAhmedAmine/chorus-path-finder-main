@@ -296,7 +296,6 @@ export function loadChorusConfig(): ChorusConfig {
     return normalizeChorusConfig({
       ...merged,
       ...readEnvReferenceConfig(),
-      ...readEnvScopedCredentials(merged.environment),
     });
   } catch {
     return fallback;

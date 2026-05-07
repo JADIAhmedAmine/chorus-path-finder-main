@@ -1,0 +1,63 @@
+name: Deploy Development
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    branches:
+      - developpement
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-development
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy development server
+    runs-on: ubuntu-latest
+    environment: development
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+
+    env:
+      DEV_APP_DIR: ${{ vars.DEV_APP_DIR || '/opt/chorus-path-finder-main' }}
+      DEV_COMPOSE_PROJECT: ${{ vars.DEV_COMPOSE_PROJECT || 'chorus-path-finder-dev' }}
+      DEV_SSH_HOST: ${{ secrets.DEV_SSH_HOST }}
+      DEV_SSH_USER: ${{ secrets.DEV_SSH_USER }}
+      DEV_SSH_PRIVATE_KEY: ${{ secrets.DEV_SSH_PRIVATE_KEY }}
+
+    steps:
+      - name: Validate deployment secrets
+        run: |
+          set -euo pipefail
+          test -n "$DEV_SSH_HOST"
+          test -n "$DEV_SSH_USER"
+          test -n "$DEV_SSH_PRIVATE_KEY"
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEV_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$DEV_SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy through SSH
+        run: |
+          set -euo pipefail
+          remote_env="DEV_APP_DIR=${DEV_APP_DIR@Q} DEV_COMPOSE_PROJECT=${DEV_COMPOSE_PROJECT@Q}"
+          ssh -i ~/.ssh/id_ed25519 "$DEV_SSH_USER@$DEV_SSH_HOST" "$remote_env bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEV_APP_DIR"
+          git fetch origin developpement
+          git switch developpement
+          git pull --ff-only origin developpement
+          docker compose -p "$DEV_COMPOSE_PROJECT" --env-file .env.local -f docker-compose.prod.yml up -d --build
+          docker compose -p "$DEV_COMPOSE_PROJECT" --env-file .env.local -f docker-compose.prod.yml ps
+          REMOTE
