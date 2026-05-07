@@ -15,7 +15,7 @@ docker-compose -p chorus-path-finder-prod --env-file .env.local -f docker-compos
 Acces local:
 
 ```text
-http://localhost:8080
+http://localhost:8081
 ```
 
 Verification:

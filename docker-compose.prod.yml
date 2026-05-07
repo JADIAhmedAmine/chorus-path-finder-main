@@ -117,7 +117,7 @@ services:
       chorus-api:
         condition: service_healthy
     ports:
-      - "${APP_HTTP_PORT:-8080}:80"
+      - "${APP_HTTP_PORT:-8081}:80"
     volumes:
       - chorus_annuaire_data:/usr/share/nginx/html/annuaire:ro
 

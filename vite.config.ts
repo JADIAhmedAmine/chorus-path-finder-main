@@ -20,11 +20,13 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const ollamaTarget = env.GEN_BASE_URL || "http://127.0.0.1:11434";
   const backendApiTarget = env.VITE_BACKEND_API_TARGET || "http://127.0.0.1:8008";
+  const parsedDevServerPort = Number.parseInt(env.VITE_DEV_SERVER_PORT || "8081", 10);
+  const devServerPort = Number.isFinite(parsedDevServerPort) ? parsedDevServerPort : 8081;
 
   return {
     server: {
       host: "::",
-      port: 8080,
+      port: devServerPort,
       hmr: {
         overlay: false,
       },

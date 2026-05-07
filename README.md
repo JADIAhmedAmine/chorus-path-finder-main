@@ -78,7 +78,7 @@ npm run dev
 Vite affiche l'URL locale, généralement :
 
 ```text
-http://localhost:8080
+http://localhost:8081
 ```
 
 ### Backend Python local
@@ -118,7 +118,7 @@ http://localhost
 Si le port `80` est déjà pris, remplacer temporairement par :
 
 ```env
-APP_HTTP_PORT=8080
+APP_HTTP_PORT=8081
 ```
 
 puis relancer :
@@ -131,7 +131,7 @@ docker-compose -f docker-compose.prod.yml up -d --build
 URL :
 
 ```text
-http://localhost:8080
+http://localhost:8081
 ```
 
 ## Déploiement Docker
@@ -206,10 +206,10 @@ l'application sera accessible depuis un poste du réseau avec :
 http://192.168.150.50
 ```
 
-Si `APP_HTTP_PORT=8080` :
+Si `APP_HTTP_PORT=8081` :
 
 ```text
-http://192.168.150.50:8080
+http://192.168.150.50:8081
 ```
 
 ### Accès par nom interne
@@ -562,10 +562,10 @@ Sur Linux avec `ufw` :
 sudo ufw allow 80/tcp
 ```
 
-ou, si port 8080 :
+ou, si port 8081 :
 
 ```bash
-sudo ufw allow 8080/tcp
+sudo ufw allow 8081/tcp
 ```
 
 ### Le nom `chorusPilot.gigalis.local` ne résout pas
@@ -606,7 +606,7 @@ Recommandations :
 - remplacer le mot de passe temporaire avant tout partage réseau ;
 - générer une clé `APP_AUTH_JWT_SECRET` longue et unique ;
 - éviter les secrets en `VITE_*` pour un build exposé à des utilisateurs ;
-- ouvrir uniquement le port nécessaire, `80` ou `8080` ;
+- ouvrir uniquement le port nécessaire, `80` ou `8081` ;
 - sauvegarder régulièrement le volume PostgreSQL ;
 - ajouter HTTPS avant une exposition large ou hors réseau interne ;
 - garder le compte PISTE et le compte technique Chorus côté serveur.
