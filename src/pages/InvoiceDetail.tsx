@@ -608,9 +608,10 @@ export default function InvoiceDetail() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {Object.entries(extraction.extractedPayload).map(([key, val]: [string, any]) => {
-                    const confidence = typeof val?.confidence === 'number' ? val.confidence : undefined;
-                    const displayValue = typeof val?.value !== 'undefined' ? val.value : val;
+                  {Object.entries(extraction.extractedPayload).map(([key, val]) => {
+                    const payloadRecord = typeof val === 'object' && val !== null ? val as Record<string, unknown> : undefined;
+                    const confidence = typeof payloadRecord?.confidence === 'number' ? payloadRecord.confidence : undefined;
+                    const displayValue = payloadRecord && 'value' in payloadRecord ? payloadRecord.value : val;
 
                     return (
                       <div key={key} className="flex items-center justify-between p-2 rounded border">

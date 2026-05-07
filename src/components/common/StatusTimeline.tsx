@@ -1,4 +1,4 @@
-import type { InvoiceStatusHistory } from '@/types';
+import type { InvoiceStatusHistory, InvoiceStatusInternal } from '@/types';
 import { getStatusConfig, formatDateTime } from '@/lib/status-utils';
 import { cn } from '@/lib/utils';
 
@@ -18,7 +18,7 @@ export function StatusTimeline({ events }: StatusTimelineProps) {
   return (
     <div className="space-y-0">
       {sorted.map((event, index) => {
-        const config = getStatusConfig(event.newStatus as any);
+        const config = getStatusConfig(event.newStatus as InvoiceStatusInternal);
         const isLast = index === sorted.length - 1;
         return (
           <div key={event.id} className="flex gap-3">
