@@ -18,6 +18,7 @@ from .soumission import (
 
 
 DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = "DIVERS"
+DEFAULT_SUBMISSION_VAT_TYPE = "TVA_SUR_DEBIT"
 COMPLEMENTARY_ATTACHMENT_TYPE_ALIASES = {
     "Bordereau de suivi de validation": "Bordereau de suivi",
 }
@@ -29,6 +30,19 @@ def normalize_complementary_attachment_type(value: Any) -> str:
 
     attachment_type = value.strip()
     return COMPLEMENTARY_ATTACHMENT_TYPE_ALIASES.get(attachment_type, attachment_type)
+
+
+def normalize_submission_vat_type(value: Any) -> str:
+    return DEFAULT_SUBMISSION_VAT_TYPE if value == "TVA_SUR_ENCAISSEMENT" else str(value or DEFAULT_SUBMISSION_VAT_TYPE)
+
+
+def enforce_submission_vat_type(payload: dict[str, Any]) -> None:
+    references = payload.get("references")
+    if not isinstance(references, dict):
+        references = {}
+        payload["references"] = references
+
+    references["typeTva"] = normalize_submission_vat_type(references.get("typeTva"))
 
 
 def mode_depot_for_pdf(is_signed: bool) -> str:
@@ -146,6 +160,7 @@ class ChorusSubmissionService:
     ) -> dict[str, Any]:
         self.client.reset_api_calls()
         final_payload = self._enforce_configured_supplier_id(deepcopy(payload))
+        enforce_submission_vat_type(final_payload)
         main_upload_result: ChorusUploadAttachmentResult | None = None
         additional_uploads: list[tuple[dict[str, Any], ChorusUploadAttachmentResult]] = []
 

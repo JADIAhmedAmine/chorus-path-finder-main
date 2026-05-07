@@ -15,6 +15,15 @@ describe('chorus technical context', () => {
     expect(buildChorusTechnicalContext(config).typeTva).toBe('TVA_SUR_DEBIT');
   });
 
+  it('normalizes TVA_SUR_ENCAISSEMENT to TVA_SUR_DEBIT in the technical context', () => {
+    const context = buildChorusTechnicalContext({
+      ...getDefaultChorusConfig(),
+      submissionVatType: 'TVA_SUR_ENCAISSEMENT',
+    });
+
+    expect(context.typeTva).toBe('TVA_SUR_DEBIT');
+  });
+
   it('maps persisted config strings to a typed Chorus submission context', () => {
     const context = buildChorusTechnicalContext({
       ...getDefaultChorusConfig(),

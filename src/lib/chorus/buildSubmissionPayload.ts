@@ -11,6 +11,7 @@ import type {
   ChorusPayloadBuildContext,
   ChorusSubmissionMainAttachment,
   ChorusSubmissionPayload,
+  ChorusVatType,
   InvoiceDraftFormData,
   NormalizedInvoiceDraftData,
 } from '@/lib/chorus/types';
@@ -39,6 +40,11 @@ function inferMainAttachmentDesignation(mainFileName: string | undefined): strin
   const sanitized = sanitizeText(mainFileName);
   return sanitized?.startsWith('GCU_') ? sanitized : DEFAULT_MAIN_ATTACHMENT_DESIGNATION;
 }
+
+function normalizeSubmissionVatType(value: ChorusVatType): ChorusVatType {
+  return value === 'TVA_SUR_ENCAISSEMENT' ? 'TVA_SUR_DEBIT' : value;
+}
+
 export function buildChorusSubmissionPayload(
   normalized: NormalizedInvoiceDraftData,
   context: ChorusPayloadBuildContext = {},
@@ -53,8 +59,9 @@ export function buildChorusSubmissionPayload(
     normalized,
   );
   const totals = computeSubmissionTotals(normalized, ligneTva);
-  const typeTva = chorusContext.typeTva
-    ?? inferChorusVatType(totals.montantTVA, chorusContext.motifExonerationTva);
+  const typeTva = normalizeSubmissionVatType(
+    chorusContext.typeTva ?? inferChorusVatType(totals.montantTVA, chorusContext.motifExonerationTva),
+  );
   const modeDepot = chorusContext.submissionMode ?? 'SAISIE_API';
   const pieceJointePrincipale: ChorusSubmissionMainAttachment[] = modeDepot === 'SAISIE_API'
     ? []
