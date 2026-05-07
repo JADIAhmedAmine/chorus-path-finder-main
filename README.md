@@ -642,3 +642,11 @@ Serveur par nom interne :
 ```text
 http://chorusPilot.gigalis.local
 ```
+
+## Auteur
+
+Projet conçu et développé par Ahmed-Amine Jadi.
+
+## Licence
+
+Copyright (c) 2026 Ahmed-Amine Jadi. Tous droits réservés.
