@@ -1,0 +1,486 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{titlesec}
+
+\geometry{margin=2.4cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\definecolor{chorusblue}{HTML}{1D4ED8}
+\definecolor{chorusgray}{HTML}{F3F4F6}
+\definecolor{chorusdark}{HTML}{111827}
+
+\titleformat{\section}
+  {\Large\bfseries\color{chorusblue}}
+  {\thesection}{0.75em}{}
+
+\titleformat{\subsection}
+  {\large\bfseries\color{chorusdark}}
+  {\thesubsection}{0.75em}{}
+
+\setlist[itemize]{leftmargin=1.2cm}
+\setlist[enumerate]{leftmargin=1.2cm}
+
+\title{
+  \vspace{-1.5cm}
+  \textbf{\Huge Guide utilisateur}\\
+  \vspace{0.3cm}
+  \Large Chorus Pilot
+}
+\author{Projet Chorus}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{center}
+  \vspace{0.5cm}
+  \begin{tabularx}{0.9\textwidth}{|X|}
+    \hline
+    \textbf{Objectif du document} \\
+    Ce guide explique comment utiliser Chorus Pilot au quotidien pour
+    consulter, préparer et envoyer des factures vers Chorus Pro. Il s'adresse à
+    un utilisateur métier ou à un référent applicatif qui n'a pas besoin de
+    connaître le code source ou les détails techniques internes. \\
+    \hline
+  \end{tabularx}
+\end{center}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Présentation rapide}
+
+Chorus Pilot est une application qui aide à traiter les factures destinées
+à Chorus Pro. Elle permet de consulter les factures, d'importer un document, de
+vérifier les informations importantes et de transmettre la facture à Chorus.
+
+L'application sert principalement à :
+
+\begin{itemize}
+  \item suivre les factures déjà connues ;
+  \item préparer une nouvelle facture ;
+  \item extraire les informations d'un PDF ;
+  \item vérifier les montants, le fournisseur, le destinataire et le service ;
+  \item envoyer la facture vers Chorus Pro ;
+  \item consulter les statuts et les retours de traitement.
+\end{itemize}
+
+\section{À qui s'adresse ce guide ?}
+
+Ce guide est destiné aux personnes qui utilisent l'application sans intervenir
+sur son développement :
+
+\begin{itemize}
+  \item gestionnaires de factures ;
+  \item agents administratifs ;
+  \item référents Chorus ;
+  \item utilisateurs chargés de contrôler ou soumettre les factures ;
+  \item responsables souhaitant suivre l'activité.
+\end{itemize}
+
+Le guide évite volontairement le vocabulaire technique. Lorsqu'un terme
+technique est nécessaire, il est expliqué simplement.
+
+\section{Connexion à l'application}
+
+\subsection{Ouvrir l'application}
+
+Depuis votre navigateur, ouvrez l'adresse fournie par votre administrateur.
+Selon l'installation, l'adresse peut ressembler à :
+
+\begin{itemize}
+  \item \texttt{http://localhost}
+  \item \texttt{http://adresse-du-serveur}
+  \item \texttt{http://chorusPilot.gigalis.local}
+\end{itemize}
+
+\subsection{Se connecter}
+
+Sur l'écran de connexion :
+
+\begin{enumerate}
+  \item saisissez l'identifiant ou l'adresse e-mail fournie ;
+  \item saisissez le mot de passe ;
+  \item cliquez sur le bouton de connexion.
+\end{enumerate}
+
+Si la connexion échoue, vérifiez d'abord l'identifiant et le mot de passe. Si le
+problème persiste, contactez la personne qui administre l'application.
+
+\section{Navigation générale}
+
+Après connexion, le menu latéral donne accès aux principales parties de
+l'application.
+
+\begin{longtable}{|p{0.3\textwidth}|p{0.62\textwidth}|}
+  \hline
+  \textbf{Menu} & \textbf{Utilisation} \\
+  \hline
+  Tableau de bord &
+  Voir une synthèse de l'activité : nombre de factures, montants, statuts,
+  répartition et dernières synchronisations. \\
+  \hline
+  Factures &
+  Rechercher, filtrer et consulter les factures. \\
+  \hline
+  Nouvelle facture &
+  Importer un document et préparer une soumission vers Chorus. \\
+  \hline
+  Clients publics &
+  Consulter les destinataires publics connus. \\
+  \hline
+  Services destinataires &
+  Rechercher les services associés aux clients publics. \\
+  \hline
+  Paramètres &
+  Vérifier la configuration Chorus et tester la connexion. \\
+  \hline
+  Connexion / Profil &
+  Accéder à la session utilisateur. \\
+  \hline
+\end{longtable}
+
+\section{Tableau de bord}
+
+Le tableau de bord donne une vue d'ensemble de l'activité.
+
+Vous pouvez l'utiliser pour :
+
+\begin{itemize}
+  \item visualiser les volumes de factures ;
+  \item suivre les montants concernés ;
+  \item repérer les factures rejetées ou en attente ;
+  \item filtrer par fournisseur, client public, statut ou période ;
+  \item lancer une actualisation des données.
+\end{itemize}
+
+\subsection{Actualiser les données}
+
+Le bouton d'actualisation permet de demander à l'application de récupérer les
+données les plus récentes disponibles. Cette opération peut prendre quelques
+instants selon le volume de factures.
+
+Après actualisation, vérifiez la date de dernière synchronisation et les éventuels
+messages d'erreur.
+
+\section{Consulter les factures}
+
+L'écran \textbf{Factures} permet de retrouver rapidement une facture.
+
+\subsection{Rechercher une facture}
+
+Vous pouvez rechercher une facture avec :
+
+\begin{itemize}
+  \item son numéro ;
+  \item un nom de destinataire ;
+  \item un statut ;
+  \item une période de dépôt ;
+  \item une période de facture ;
+  \item un montant minimum ou maximum ;
+  \item un numéro de bon de commande ;
+  \item un mode de dépôt.
+\end{itemize}
+
+\subsection{Comprendre les statuts}
+
+Les statuts indiquent l'état courant de la facture. Les libellés exacts peuvent
+varier selon le retour Chorus, mais les grandes familles sont les suivantes :
+
+\begin{longtable}{|p{0.3\textwidth}|p{0.62\textwidth}|}
+  \hline
+  \textbf{Type de statut} & \textbf{Signification} \\
+  \hline
+  En cours &
+  La facture est connue et son traitement n'est pas terminé. \\
+  \hline
+  Déposée ou soumise &
+  La facture a été transmise à Chorus. \\
+  \hline
+  Rejetée &
+  La facture a été refusée ou n'a pas pu être traitée correctement. Une
+  vérification est nécessaire. \\
+  \hline
+  Payée ou paiement &
+  La facture est associée à une étape de paiement ou à un règlement. \\
+  \hline
+\end{longtable}
+
+\subsection{Ouvrir le détail d'une facture}
+
+Depuis la liste, ouvrez une facture pour consulter :
+
+\begin{itemize}
+  \item ses informations principales ;
+  \item son destinataire ;
+  \item ses montants ;
+  \item son statut ;
+  \item son historique ;
+  \item les éventuels retours de Chorus.
+\end{itemize}
+
+\section{Créer une nouvelle facture}
+
+L'écran \textbf{Nouvelle facture} sert à préparer une facture avant son envoi à
+Chorus.
+
+\subsection{Importer le document}
+
+Commencez par déposer le fichier de facture. L'application accepte les documents
+prévus par le projet, principalement :
+
+\begin{itemize}
+  \item les fichiers PDF ;
+  \item les fichiers XML lorsque le flux le prévoit.
+\end{itemize}
+
+Après l'import, l'application tente de lire le document et d'extraire les
+informations utiles.
+
+\subsection{Vérifier les informations extraites}
+
+Les informations détectées automatiquement doivent toujours être vérifiées.
+Contrôlez en priorité :
+
+\begin{itemize}
+  \item le numéro de facture ;
+  \item la date de facture ;
+  \item le montant hors taxes ;
+  \item le montant de TVA ;
+  \item le montant toutes taxes comprises ;
+  \item le fournisseur ;
+  \item le client public destinataire ;
+  \item le service destinataire ;
+  \item les références de commande ou de marché si elles sont obligatoires.
+\end{itemize}
+
+Si une information est absente ou incorrecte, corrigez-la avant de poursuivre.
+
+\subsection{Ajouter des pièces complémentaires}
+
+Selon le cas, vous pouvez associer des documents complémentaires, par exemple :
+
+\begin{itemize}
+  \item bon de commande ;
+  \item bon de livraison ;
+  \item document annexe ;
+  \item bordereau de suivi.
+\end{itemize}
+
+Chaque pièce doit être nommée clairement pour faciliter le contrôle ultérieur.
+
+\subsection{Envoyer la facture}
+
+Lorsque toutes les informations sont contrôlées :
+
+\begin{enumerate}
+  \item vérifiez une dernière fois les montants et le destinataire ;
+  \item lancez la soumission ;
+  \item attendez le retour de l'application ;
+  \item consultez le message affiché après l'envoi.
+\end{enumerate}
+
+Si l'envoi réussit, l'application affiche un retour positif et peut indiquer une
+référence Chorus. Si l'envoi échoue, un message d'erreur aide à identifier le
+point à corriger.
+
+\section{Utiliser les référentiels}
+
+\subsection{Clients publics}
+
+Le référentiel des clients publics permet de retrouver les structures
+destinataires connues. Vous pouvez rechercher une structure par :
+
+\begin{itemize}
+  \item raison sociale ;
+  \item code destinataire ;
+  \item SIRET.
+\end{itemize}
+
+La consultation d'une fiche peut afficher des informations utiles sur la
+structure, comme son identité ou son état d'activité.
+
+\subsection{Services destinataires}
+
+Le référentiel des services destinataires permet de trouver le service à utiliser
+pour une facture. Ce point est important : une facture peut être rejetée si le
+service destinataire est absent ou incorrect lorsque Chorus l'exige.
+
+\subsection{Synchroniser l'annuaire}
+
+La synchronisation de l'annuaire met à jour les clients publics et services
+destinataires disponibles dans l'application.
+
+À utiliser notamment :
+
+\begin{itemize}
+  \item lorsqu'un client public est introuvable ;
+  \item lorsqu'un service destinataire semble manquant ;
+  \item après une modification connue côté Chorus ;
+  \item à la demande de l'administrateur applicatif.
+\end{itemize}
+
+\section{Paramètres}
+
+L'écran \textbf{Paramètres} sert à vérifier que l'application est correctement
+reliée à Chorus.
+
+Un utilisateur non technique peut principalement contrôler :
+
+\begin{itemize}
+  \item l'environnement sélectionné : qualification ou production ;
+  \item l'état du connecteur ;
+  \item les valeurs métier utilisées par défaut ;
+  \item le résultat du test de connexion.
+\end{itemize}
+
+\subsection{Qualification ou production}
+
+\begin{itemize}
+  \item \textbf{Qualification} : environnement de test, utilisé pour vérifier les
+        flux sans impact réel ;
+  \item \textbf{Production} : environnement réel, utilisé pour les factures à
+        traiter officiellement.
+\end{itemize}
+
+Avant d'envoyer une facture réelle, assurez-vous que l'environnement attendu est
+bien sélectionné.
+
+\subsection{Tester la connexion}
+
+Le test de connexion permet de vérifier que l'application peut communiquer avec
+Chorus.
+
+Si le test échoue, il ne faut pas insister sur les soumissions. Contactez la
+personne responsable de la configuration avec le message affiché à l'écran.
+
+\section{Que faire en cas de problème ?}
+
+\subsection{La facture est rejetée}
+
+Vérifiez les points suivants :
+
+\begin{itemize}
+  \item numéro de facture ;
+  \item destinataire ;
+  \item service destinataire ;
+  \item montants HT, TVA et TTC ;
+  \item références de commande ou de marché ;
+  \item pièce jointe principale ;
+  \item type de facture et mode de dépôt.
+\end{itemize}
+
+Après correction, suivez la procédure interne prévue pour une nouvelle soumission
+ou une régularisation.
+
+\subsection{Le PDF est mal lu}
+
+Certains PDF sont plus difficiles à lire automatiquement, notamment lorsqu'ils
+sont scannés comme des images ou générés avec une structure inhabituelle.
+
+Dans ce cas :
+
+\begin{itemize}
+  \item contrôlez manuellement les champs extraits ;
+  \item corrigez les montants et références ;
+  \item vérifiez le destinataire et le service ;
+  \item signalez le document si le problème se répète.
+\end{itemize}
+
+\subsection{Le destinataire est introuvable}
+
+Essayez d'abord une recherche par SIRET ou par partie du nom. Si le résultat
+reste introuvable :
+
+\begin{itemize}
+  \item lancez une synchronisation de l'annuaire si vous avez accès au bouton ;
+  \item vérifiez que le SIRET est correct ;
+  \item contactez le référent Chorus ou l'administrateur.
+\end{itemize}
+
+\subsection{La connexion à Chorus échoue}
+
+Si le test de connexion échoue ou si les soumissions ne partent plus :
+
+\begin{itemize}
+  \item vérifiez que vous êtes dans le bon environnement ;
+  \item notez le message d'erreur affiché ;
+  \item évitez de multiplier les tentatives ;
+  \item transmettez le message à l'administrateur.
+\end{itemize}
+
+\section{Bonnes pratiques}
+
+\begin{itemize}
+  \item Toujours vérifier les informations extraites automatiquement.
+  \item Contrôler les montants avant soumission.
+  \item Utiliser le bon environnement : qualification pour les tests, production
+        pour les factures réelles.
+  \item Rechercher le destinataire avec le SIRET lorsque le nom ne suffit pas.
+  \item Ne pas ignorer un message d'erreur Chorus.
+  \item Conserver les pièces justificatives utiles.
+  \item Signaler les rejets récurrents pour améliorer le paramétrage.
+\end{itemize}
+
+\section{Glossaire simple}
+
+\begin{longtable}{|p{0.28\textwidth}|p{0.64\textwidth}|}
+  \hline
+  \textbf{Terme} & \textbf{Définition} \\
+  \hline
+  Chorus Pro &
+  Plateforme utilisée pour transmettre et suivre les factures destinées au secteur
+  public. \\
+  \hline
+  PISTE &
+  Accès technique permettant à l'application de communiquer avec Chorus Pro. \\
+  \hline
+  Fournisseur &
+  Structure qui émet la facture. \\
+  \hline
+  Client public &
+  Structure publique qui reçoit la facture. \\
+  \hline
+  Service destinataire &
+  Service précis du client public auquel la facture doit être adressée. \\
+  \hline
+  SIRET &
+  Identifiant officiel d'un établissement. \\
+  \hline
+  Payload &
+  Ensemble des informations envoyées à Chorus. Pour l'utilisateur, cela correspond
+  simplement au dossier de données préparé par l'application. \\
+  \hline
+  Synchronisation &
+  Action de mettre à jour les données locales avec les données connues côté Chorus. \\
+  \hline
+  Rejet &
+  Refus ou échec de traitement d'une facture. Une correction est généralement
+  nécessaire. \\
+  \hline
+\end{longtable}
+
+\section{Conclusion}
+
+Chorus Pilot accompagne l'utilisateur dans les étapes importantes du
+traitement d'une facture : recherche, préparation, contrôle, soumission et suivi.
+L'application automatise une partie du travail, mais la vérification humaine reste
+essentielle avant chaque envoi à Chorus Pro.
+
+\end{document}
