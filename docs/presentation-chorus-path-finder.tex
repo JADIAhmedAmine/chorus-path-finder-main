@@ -1,0 +1,415 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{titlesec}
+
+\geometry{margin=2.4cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\definecolor{chorusblue}{HTML}{1D4ED8}
+\definecolor{chorusgray}{HTML}{F3F4F6}
+\definecolor{chorusdark}{HTML}{111827}
+
+\titleformat{\section}
+  {\Large\bfseries\color{chorusblue}}
+  {\thesection}{0.75em}{}
+
+\titleformat{\subsection}
+  {\large\bfseries\color{chorusdark}}
+  {\thesubsection}{0.75em}{}
+
+\lstdefinestyle{chorus}{
+  backgroundcolor=\color{chorusgray},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!15},
+  columns=fullflexible
+}
+\lstset{style=chorus}
+
+\setlist[itemize]{leftmargin=1.2cm}
+\setlist[enumerate]{leftmargin=1.2cm}
+
+\title{
+  \vspace{-1.5cm}
+  \textbf{\Huge Chorus Pilot}\\
+  \vspace{0.3cm}
+  \Large Présentation de l'application et de ses fonctionnalités
+}
+\author{Projet Chorus}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{center}
+  \vspace{0.5cm}
+  \begin{tabularx}{0.9\textwidth}{|X|}
+    \hline
+    \textbf{Résumé} \\
+    Chorus Pilot est une application web destinée à préparer, contrôler,
+    synchroniser et soumettre des factures vers Chorus Pro via PISTE. Elle combine
+    une interface React, une API Python FastAPI, une base PostgreSQL et une stack
+    Docker pour couvrir le cycle de vie opérationnel d'une facture fournisseur. \\
+    \hline
+  \end{tabularx}
+\end{center}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Contexte et objectifs}
+
+Le projet \textbf{Chorus Pilot} répond au besoin d'industrialiser le
+traitement des factures à destination de Chorus Pro. L'application facilite la
+préparation des données, la vérification des référentiels, l'extraction de
+contenu depuis les documents PDF et la soumission des factures via les API
+Chorus.
+
+Les objectifs principaux sont les suivants :
+
+\begin{itemize}
+  \item centraliser la consultation des factures synchronisées depuis Chorus ;
+  \item préparer une facture à partir d'un PDF ou de données saisies ;
+  \item extraire automatiquement les informations utiles d'un document ;
+  \item contrôler les données avant soumission ;
+  \item construire un payload compatible Chorus Pro ;
+  \item transmettre la facture au backend, qui réalise l'upload PDF puis la
+        soumission vers Chorus ;
+  \item suivre les statuts, les retours API et l'activité technique.
+\end{itemize}
+
+\section{Vue d'ensemble fonctionnelle}
+
+L'application est organisée autour de plusieurs écrans métier accessibles après
+authentification.
+
+\begin{longtable}{|p{0.25\textwidth}|p{0.68\textwidth}|}
+  \hline
+  \textbf{Module} & \textbf{Rôle} \\
+  \hline
+  Tableau de bord &
+  Donne une vision synthétique des factures, montants, statuts et synchronisations.
+  Il permet également de déclencher une synchronisation des fournisseurs et des
+  factures. \\
+  \hline
+  Factures &
+  Liste les factures connues de l'application avec recherche, filtres Chorus,
+  pagination, tri, montants, statuts et accès au détail. \\
+  \hline
+  Nouvelle facture &
+  Permet d'importer un PDF ou un XML, d'extraire les données, de compléter les
+  informations nécessaires et de soumettre la facture à Chorus Pro. \\
+  \hline
+  Détail facture &
+  Affiche les informations d'une facture, son historique, ses statuts, ses pièces
+  jointes et, selon la configuration, les traces techniques utiles au diagnostic. \\
+  \hline
+  Référentiels &
+  Donne accès aux clients publics et aux services destinataires. Le module permet
+  la recherche, la consultation d'informations SIRET et la synchronisation de
+  l'annuaire Chorus. \\
+  \hline
+  Paramètres &
+  Centralise la configuration Chorus : environnement, connecteur, endpoint backend,
+  contexte technique, modes de paiement, type de facture, TVA et test de connexion. \\
+  \hline
+  Connexion / Profil &
+  Gère l'accès à l'application via une session JWT portée par le backend. \\
+  \hline
+\end{longtable}
+
+\section{Workflow de soumission d'une facture}
+
+Le flux nominal de traitement d'une facture se déroule en plusieurs étapes :
+
+\begin{enumerate}
+  \item l'utilisateur se connecte à l'application ;
+  \item il ouvre le module \textit{Nouvelle facture} ;
+  \item il importe un document PDF ou XML ;
+  \item l'application extrait le texte et tente d'identifier les données utiles :
+        numéro de facture, date, montants, TVA, fournisseur, destinataire et service ;
+  \item l'utilisateur vérifie ou complète les champs obligatoires ;
+  \item le frontend construit un payload métier normalisé ;
+  \item le backend reçoit la demande de soumission ;
+  \item le backend charge le PDF vers Chorus Pro ;
+  \item le backend soumet la facture en référençant la pièce jointe principale ;
+  \item le retour Chorus est affiché dans l'interface et conservé pour le suivi.
+\end{enumerate}
+
+\subsection{Modes de dépôt}
+
+Le projet prend en compte les principaux modes de dépôt attendus par Chorus :
+
+\begin{itemize}
+  \item \textbf{DEPOT\_PDF\_API} : dépôt d'une facture PDF via API, avec upload
+        préalable du fichier ;
+  \item \textbf{SAISIE\_API} : soumission d'une facture sous forme de données
+        structurées sans pièce jointe principale obligatoire ;
+  \item \textbf{DEPOT\_PDF\_SIGNE\_API} : dépôt PDF signé, selon la configuration
+        Chorus disponible.
+\end{itemize}
+
+\section{Architecture applicative}
+
+Chorus Pilot repose sur une architecture web en plusieurs couches :
+
+\begin{lstlisting}
+Navigateur
+  -> nginx frontend
+    -> Application React statique
+    -> Proxy /api/* vers FastAPI
+      -> Authentification JWT
+      -> Extraction PDF
+      -> Client Chorus / PISTE
+      -> API de données /api/db/*
+        -> PostgreSQL
+\end{lstlisting}
+
+\subsection{Frontend}
+
+Le frontend est développé avec React, TypeScript et Vite. Il utilise notamment :
+
+\begin{itemize}
+  \item \textbf{React Router} pour la navigation ;
+  \item \textbf{TanStack Query} pour le chargement, le cache et la synchronisation
+        des données ;
+  \item \textbf{Tailwind CSS} et des composants UI pour l'interface ;
+  \item \textbf{Recharts} pour les graphiques du tableau de bord ;
+  \item des modules métier dans \texttt{src/lib/chorus/} pour préparer, valider
+        et hydrater les payloads Chorus.
+\end{itemize}
+
+\subsection{Backend}
+
+Le backend est une API Python FastAPI exposée par
+\texttt{scripts/chorus\_submit\_server.py}. Il joue le rôle de passerelle entre le
+navigateur, la base de données et Chorus Pro.
+
+Ses responsabilités principales sont :
+
+\begin{itemize}
+  \item authentifier les utilisateurs ;
+  \item protéger les secrets Chorus côté serveur ;
+  \item récupérer les tokens OAuth2 ;
+  \item extraire le texte des PDF ;
+  \item synchroniser l'annuaire Chorus ;
+  \item rechercher des factures fournisseur côté Chorus ;
+  \item uploader les pièces jointes ;
+  \item soumettre les factures à Chorus Pro ;
+  \item exposer les données applicatives via \texttt{/api/db/*}.
+\end{itemize}
+
+\subsection{Base de données}
+
+La base PostgreSQL conserve les référentiels, factures, historiques,
+synchronisations et données applicatives. Les migrations sont gérées avec
+Alembic. En environnement Docker, les données sont stockées dans un volume
+persistant afin d'éviter toute perte lors des redéploiements.
+
+\section{Principaux endpoints}
+
+\begin{longtable}{|p{0.35\textwidth}|p{0.58\textwidth}|}
+  \hline
+  \textbf{Endpoint} & \textbf{Description} \\
+  \hline
+  \texttt{GET /health} &
+  Vérifie la disponibilité de l'API. \\
+  \hline
+  \texttt{POST /api/auth/login} &
+  Authentifie l'utilisateur et initialise la session. \\
+  \hline
+  \texttt{GET /api/auth/me} &
+  Retourne les informations de la session courante. \\
+  \hline
+  \texttt{POST /api/chorus/oauth-token} &
+  Récupère un token OAuth2 Chorus côté serveur. \\
+  \hline
+  \texttt{POST /api/extract-pdf-text} &
+  Extrait le texte d'un PDF encodé en base64. \\
+  \hline
+  \texttt{POST /api/chorus/submit} &
+  Réalise l'upload PDF puis la soumission de la facture vers Chorus. \\
+  \hline
+  \texttt{POST /api/chorus/annuaire/sync} &
+  Synchronise l'annuaire Chorus. \\
+  \hline
+  \texttt{GET /api/db/*} &
+  Expose les données applicatives stockées en base. \\
+  \hline
+\end{longtable}
+
+\section{Configuration}
+
+La configuration est séparée entre les variables serveur et les variables
+visibles côté navigateur.
+
+\subsection{Variables serveur}
+
+Les secrets doivent rester côté serveur, dans \texttt{.env.local}. Les variables
+importantes sont notamment :
+
+\begin{lstlisting}
+CHORUS_ENV=prod
+CHORUS_PROD_CLIENT_ID=
+CHORUS_PROD_CLIENT_SECRET=
+CHORUS_PROD_TECHNICAL_LOGIN=
+CHORUS_PROD_TECHNICAL_PASSWORD=
+CHORUS_PROD_SUPPLIER_ID=
+CHORUS_PROD_DESTINATAIRE_CODE=
+CHORUS_PROD_SERVICE_EXECUTANT_CODE=
+CHORUS_PROD_BANK_ACCOUNT_CODE=
+\end{lstlisting}
+
+Pour la qualification, l'application utilise les variantes
+\texttt{CHORUS\_QUALIF\_*}.
+
+\subsection{Variables frontend}
+
+Les variables \texttt{VITE\_*} sont injectées dans le bundle navigateur et peuvent
+être visibles par l'utilisateur. Elles ne doivent donc pas contenir de secrets de
+production.
+
+\section{Sécurité}
+
+L'application applique plusieurs principes de sécurité :
+
+\begin{itemize}
+  \item les secrets Chorus ne sont pas exposés directement au navigateur ;
+  \item le frontend passe par le backend pour les appels sensibles ;
+  \item l'accès utilisateur repose sur une authentification avec session JWT ;
+  \item le backend peut limiter les fournisseurs synchronisés via
+        \texttt{CHORUS\_ALLOWED\_SUPPLIER\_IDS} ;
+  \item les traces techniques sont utiles au diagnostic mais doivent être
+        contrôlées en production.
+\end{itemize}
+
+Dans l'état actuel, l'application utilise un compte applicatif partagé. Une
+évolution multi-utilisateurs complète nécessiterait une table dédiée aux
+utilisateurs, des rôles et une traçabilité par personne.
+
+\section{Synchronisation et référentiels}
+
+La synchronisation permet de maintenir les données locales cohérentes avec
+Chorus Pro. Elle concerne notamment :
+
+\begin{itemize}
+  \item les structures fournisseur ;
+  \item les factures fournisseur ;
+  \item les clients publics ;
+  \item les services destinataires ;
+  \item les fichiers d'annuaire normalisés.
+\end{itemize}
+
+Le scheduler backend peut exécuter des synchronisations périodiques selon les
+variables suivantes :
+
+\begin{lstlisting}
+SYNC_CRON_ENABLED=true
+SYNC_CRON_INTERVAL_SECONDS=300
+SYNC_CRON_MODE=delta
+SYNC_CRON_PAGE_SIZE=3000
+\end{lstlisting}
+
+\section{Déploiement}
+
+Le projet fournit une stack Docker de production composée de :
+
+\begin{itemize}
+  \item un conteneur frontend servi par nginx ;
+  \item un conteneur API Python FastAPI ;
+  \item un conteneur PostgreSQL ;
+  \item un service de migration Alembic ;
+  \item des volumes persistants pour la base et l'annuaire.
+\end{itemize}
+
+Le démarrage de la stack se fait avec :
+
+\begin{lstlisting}
+docker-compose -f docker-compose.prod.yml up -d --build
+\end{lstlisting}
+
+Le port HTTP exposé est piloté par \texttt{APP\_HTTP\_PORT}. L'application peut
+être publiée sur une IP interne ou un nom DNS interne, par exemple
+\texttt{chorusPilot.gigalis.local}.
+
+\section{Tests et validation}
+
+Le projet contient une base de tests orientée à la fois frontend, payloads Chorus,
+extraction PDF et automatisation backend.
+
+\begin{itemize}
+  \item \textbf{Tests frontend et métier} : exécutés avec Vitest ;
+  \item \textbf{Tests Chorus} : validation des payloads, mappers, routes PISTE,
+        soumission, extraction et hydratation ;
+  \item \textbf{Tests Python} : validation de la configuration, de l'annuaire et
+        de la soumission facture ;
+  \item \textbf{Guides SOAPUI} : scénarios d'intégration pour tester les appels
+        Chorus en environnement de qualification.
+\end{itemize}
+
+Commandes utiles :
+
+\begin{lstlisting}
+npm run build
+npm test
+npm run lint
+npm run build:test-data
+python -m pytest
+\end{lstlisting}
+
+\section{Points forts}
+
+\begin{itemize}
+  \item Interface unifiée pour consulter, préparer et soumettre les factures ;
+  \item séparation claire entre frontend, backend et base de données ;
+  \item protection des secrets par passage obligatoire via le backend ;
+  \item compatibilité avec les environnements Chorus de qualification et de
+        production ;
+  \item support de l'extraction PDF via backend Python ;
+  \item référentiels clients publics et services destinataires intégrés ;
+  \item stack Docker adaptée au déploiement interne ;
+  \item jeux de tests et données de démonstration pour sécuriser les évolutions.
+\end{itemize}
+
+\section{Axes d'évolution possibles}
+
+Plusieurs améliorations peuvent être envisagées :
+
+\begin{itemize}
+  \item gestion multi-utilisateurs complète avec rôles et permissions ;
+  \item journal d'audit renforcé par utilisateur réel ;
+  \item supervision plus détaillée des jobs de synchronisation ;
+  \item notifications en cas de rejet Chorus ou d'échec technique ;
+  \item enrichissement de la validation métier avant soumission ;
+  \item export de rapports PDF ou CSV pour le suivi administratif ;
+  \item intégration d'un module d'archivage documentaire plus complet.
+\end{itemize}
+
+\section{Conclusion}
+
+Chorus Pilot fournit une base applicative complète pour piloter le cycle de
+vie des factures Chorus Pro. L'application couvre les besoins clés d'un outil
+interne : préparation, extraction, contrôle, soumission, synchronisation,
+consultation et diagnostic. Son architecture modulaire facilite les évolutions
+futures, en particulier autour de la gestion multi-utilisateurs, de la
+traçabilité et de l'exploitation en production.
+
+\end{document}

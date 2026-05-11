@@ -1,0 +1,764 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{titlesec}
+
+\geometry{margin=2.4cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\definecolor{chorusblue}{HTML}{1D4ED8}
+\definecolor{chorusgray}{HTML}{F3F4F6}
+\definecolor{chorusdark}{HTML}{111827}
+
+\titleformat{\section}
+  {\Large\bfseries\color{chorusblue}}
+  {\thesection}{0.75em}{}
+
+\titleformat{\subsection}
+  {\large\bfseries\color{chorusdark}}
+  {\thesubsection}{0.75em}{}
+
+\lstdefinestyle{chorus}{
+  backgroundcolor=\color{chorusgray},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!15},
+  columns=fullflexible
+}
+\lstset{style=chorus}
+
+\setlist[itemize]{leftmargin=1.2cm}
+\setlist[enumerate]{leftmargin=1.2cm}
+
+\title{
+  \vspace{-1.5cm}
+  \textbf{\Huge Documentation technique}\\
+  \vspace{0.3cm}
+  \Large Chorus Pilot
+}
+\author{Projet Chorus}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{center}
+  \vspace{0.5cm}
+  \begin{tabularx}{0.9\textwidth}{|X|}
+    \hline
+    \textbf{Objet du document} \\
+    Ce document regroupe la documentation technique globale du projet Chorus Path
+    Finder : architecture, frontend, backend, base de données, intégration Chorus,
+    configuration, sécurité, tests, Docker, CI/CD GitHub Actions et exploitation.
+    Il sert de support de présentation technique et de référence projet. \\
+    \hline
+  \end{tabularx}
+\end{center}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Présentation technique du projet}
+
+Chorus Pilot est une application web permettant de préparer, contrôler,
+synchroniser et soumettre des factures vers Chorus Pro via PISTE.
+
+Le projet combine :
+
+\begin{itemize}
+  \item un frontend React, TypeScript et Vite ;
+  \item une API backend Python FastAPI ;
+  \item une couche métier Python dédiée à Chorus ;
+  \item une base PostgreSQL ;
+  \item des migrations Alembic ;
+  \item une stack Docker de production ;
+  \item des workflows GitHub Actions pour la CI, la sécurité et le déploiement.
+\end{itemize}
+
+L'objectif technique principal est de séparer clairement l'interface utilisateur
+des appels sensibles à Chorus. Le navigateur ne manipule pas directement les
+secrets : les appels nécessitant des identifiants techniques passent par le
+backend.
+
+\section{Architecture générale}
+
+\subsection{Vue d'ensemble}
+
+\begin{lstlisting}
+Utilisateur
+  -> Navigateur web
+    -> Application React/Vite
+      -> nginx
+        -> /api/* vers FastAPI
+          -> Authentification JWT
+          -> Extraction PDF
+          -> Services Chorus / PISTE
+          -> API DB
+            -> PostgreSQL
+\end{lstlisting}
+
+\subsection{Responsabilités par couche}
+
+\begin{longtable}{|p{0.25\textwidth}|p{0.68\textwidth}|}
+  \hline
+  \textbf{Couche} & \textbf{Responsabilités} \\
+  \hline
+  Frontend &
+  Navigation, formulaires métier, extraction côté client lorsque possible,
+  préparation des données, affichage des factures, statuts, référentiels et
+  paramètres. \\
+  \hline
+  Backend FastAPI &
+  Authentification, endpoints applicatifs, extraction PDF côté serveur,
+  communication sécurisée avec Chorus, synchronisation, accès aux données. \\
+  \hline
+  Module \texttt{chorus\_python} &
+  Client Chorus, construction des payloads, authentification Chorus, modèles,
+  services métier, annuaire, extraction et accès base de données. \\
+  \hline
+  PostgreSQL &
+  Persistance des factures, référentiels, synchronisations, historiques et
+  données applicatives. \\
+  \hline
+  Docker / nginx &
+  Packaging de production, reverse proxy, exposition HTTP et orchestration des
+  services. \\
+  \hline
+  GitHub Actions &
+  Contrôles automatiques, tests, sécurité, validation Docker et déploiement
+  développement. \\
+  \hline
+\end{longtable}
+
+\section{Structure du dépôt}
+
+\begin{longtable}{|p{0.33\textwidth}|p{0.60\textwidth}|}
+  \hline
+  \textbf{Chemin} & \textbf{Rôle} \\
+  \hline
+  \texttt{src/} &
+  Code frontend React, pages, composants, hooks, types et logique Chorus côté
+  client. \\
+  \hline
+  \texttt{src/pages/} &
+  Ecrans principaux : tableau de bord, factures, création, détail, références,
+  paramètres et connexion. \\
+  \hline
+  \texttt{src/lib/chorus/} &
+  Préparation, normalisation, validation, hydratation et soumission des données
+  Chorus côté frontend. \\
+  \hline
+  \texttt{chorus\_python/} &
+  Modules Python métier : client Chorus, service de soumission, extraction,
+  annuaire, authentification, configuration et base de données. \\
+  \hline
+  \texttt{chorus\_python/db/} &
+  Entités, schémas, repositories, session, synchronisation et API DB. \\
+  \hline
+  \texttt{scripts/chorus\_submit\_server.py} &
+  Point d'entrée du serveur FastAPI. \\
+  \hline
+  \texttt{alembic/} &
+  Migrations de base de données PostgreSQL. \\
+  \hline
+  \texttt{public/test-data/} &
+  Données JSON de démonstration et de fallback. \\
+  \hline
+  \texttt{tests/} &
+  Tests Python. \\
+  \hline
+  \texttt{src/test/} &
+  Tests TypeScript avec Vitest. \\
+  \hline
+  \texttt{docker/} &
+  Configuration nginx. \\
+  \hline
+  \texttt{.github/workflows/} &
+  Workflows GitHub Actions. \\
+  \hline
+\end{longtable}
+
+\section{Frontend}
+
+\subsection{Technologies}
+
+Le frontend est basé sur :
+
+\begin{itemize}
+  \item React 18 ;
+  \item TypeScript ;
+  \item Vite ;
+  \item React Router ;
+  \item TanStack Query ;
+  \item Tailwind CSS ;
+  \item composants UI Radix ;
+  \item Recharts pour les graphiques ;
+  \item Vitest pour les tests.
+\end{itemize}
+
+\subsection{Routes principales}
+
+\begin{longtable}{|p{0.28\textwidth}|p{0.65\textwidth}|}
+  \hline
+  \textbf{Route} & \textbf{Ecran} \\
+  \hline
+  \texttt{/login} &
+  Connexion utilisateur. \\
+  \hline
+  \texttt{/} &
+  Tableau de bord. \\
+  \hline
+  \texttt{/invoices} &
+  Liste des factures. \\
+  \hline
+  \texttt{/invoices/new} &
+  Création et soumission d'une nouvelle facture. \\
+  \hline
+  \texttt{/invoices/:id} &
+  Détail d'une facture locale. \\
+  \hline
+  \texttt{/invoices/chorus/:id} &
+  Détail d'une facture issue de Chorus. \\
+  \hline
+  \texttt{/references/customers} &
+  Référentiel clients publics. \\
+  \hline
+  \texttt{/references/services} &
+  Référentiel services destinataires. \\
+  \hline
+  \texttt{/settings} &
+  Paramètres Chorus et connecteur. \\
+  \hline
+\end{longtable}
+
+\subsection{Gestion de session côté frontend}
+
+Les routes métier sont protégées par un composant de garde. Si la session
+utilisateur n'est pas valide, l'utilisateur est redirigé vers l'écran de
+connexion. Le frontend charge ensuite la configuration Chorus locale et initialise
+les catalogues de références lorsque l'utilisateur est authentifié.
+
+\subsection{Gestion des données}
+
+TanStack Query est utilisé pour :
+
+\begin{itemize}
+  \item charger les factures ;
+  \item charger les fournisseurs ;
+  \item charger les clients publics et services ;
+  \item déclencher les synchronisations ;
+  \item éviter les rechargements inutiles grâce au cache.
+\end{itemize}
+
+\section{Backend FastAPI}
+
+\subsection{Point d'entrée}
+
+Le serveur principal est défini dans :
+
+\begin{lstlisting}
+scripts/chorus_submit_server.py
+\end{lstlisting}
+
+Il démarre une application FastAPI exposant les endpoints nécessaires au
+frontend. Il charge aussi les routes d'authentification et, lorsque la base est
+disponible, les routes \texttt{/api/db/*}.
+
+\subsection{Endpoints principaux}
+
+\begin{longtable}{|p{0.35\textwidth}|p{0.58\textwidth}|}
+  \hline
+  \textbf{Endpoint} & \textbf{Rôle} \\
+  \hline
+  \texttt{GET /health} &
+  Vérification de santé de l'API. \\
+  \hline
+  \texttt{POST /api/auth/login} &
+  Connexion utilisateur. \\
+  \hline
+  \texttt{GET /api/auth/me} &
+  Lecture de la session courante. \\
+  \hline
+  \texttt{POST /api/chorus/oauth-token} &
+  Récupération d'un token OAuth2 Chorus côté serveur. \\
+  \hline
+  \texttt{POST /api/extract-pdf-text} &
+  Extraction de texte depuis un PDF encodé en base64. \\
+  \hline
+  \texttt{POST /api/chorus/submit} &
+  Upload PDF puis soumission de la facture à Chorus. \\
+  \hline
+  \texttt{POST /api/chorus/annuaire/sync} &
+  Synchronisation de l'annuaire Chorus. \\
+  \hline
+  \texttt{POST /api/chorus/siret/info} &
+  Récupération d'informations liées à une structure SIRET. \\
+  \hline
+  \texttt{GET /api/db/*} &
+  Accès aux données applicatives persistées. \\
+  \hline
+\end{longtable}
+
+\subsection{Rôle du backend}
+
+Le backend centralise les traitements sensibles :
+
+\begin{itemize}
+  \item lecture des secrets serveur ;
+  \item appel à l'API Chorus ;
+  \item obtention des tokens OAuth2 ;
+  \item upload des pièces jointes ;
+  \item soumission des factures ;
+  \item extraction PDF plus fiable via les bibliothèques Python ;
+  \item synchronisation des référentiels ;
+  \item exposition contrôlée des données au frontend.
+\end{itemize}
+
+\section{Intégration Chorus Pro}
+
+\subsection{Flux de soumission}
+
+Le flux technique de soumission est le suivant :
+
+\begin{enumerate}
+  \item l'utilisateur importe ou prépare une facture dans le frontend ;
+  \item les données sont normalisées et validées ;
+  \item le frontend construit un payload de soumission ;
+  \item la demande est envoyée au backend ;
+  \item le backend récupère un token OAuth2 Chorus ;
+  \item le backend charge le PDF vers Chorus ;
+  \item Chorus renvoie une référence de pièce jointe ;
+  \item le backend soumet la facture en associant cette pièce jointe ;
+  \item le retour Chorus est renvoyé au frontend ;
+  \item l'interface affiche le résultat à l'utilisateur.
+\end{enumerate}
+
+\subsection{Modes de dépôt}
+
+Les modes principaux pris en compte sont :
+
+\begin{itemize}
+  \item \texttt{DEPOT\_PDF\_API} : dépôt PDF via API ;
+  \item \texttt{SAISIE\_API} : soumission structurée sans PDF principal ;
+  \item \texttt{DEPOT\_PDF\_SIGNE\_API} : dépôt PDF signé si le flux est activé.
+\end{itemize}
+
+\subsection{Préparation des payloads}
+
+Le frontend contient des modules dédiés à la construction et à la validation des
+payloads Chorus. Les données extraites d'un PDF sont transformées en brouillon de
+facture, puis enrichies avec les référentiels et le contexte technique Chorus.
+
+Les validations portent notamment sur :
+
+\begin{itemize}
+  \item les montants ;
+  \item les dates ;
+  \item le fournisseur ;
+  \item le destinataire ;
+  \item le service exécutant ;
+  \item le mode de dépôt ;
+  \item les pièces jointes ;
+  \item les références de paiement, commande ou marché.
+\end{itemize}
+
+\section{Extraction PDF}
+
+\subsection{Principe}
+
+L'application tente d'extraire automatiquement le texte des factures PDF afin de
+préremplir les champs métier. L'extraction peut se faire côté frontend, mais le
+backend Python fournit une extraction plus robuste grâce aux bibliothèques
+spécialisées.
+
+\subsection{Nettoyage du texte}
+
+Le projet inclut une étape de nettoyage pour retirer le bruit technique souvent
+présent dans les PDF :
+
+\begin{itemize}
+  \item en-têtes PDF ;
+  \item objets internes ;
+  \item marqueurs de flux ;
+  \item métadonnées ;
+  \item caractères de contrôle.
+\end{itemize}
+
+\section{Base de données}
+
+\subsection{Technologies}
+
+La persistance repose sur PostgreSQL. Les migrations sont gérées avec Alembic.
+Le dossier \texttt{chorus\_python/db/} contient les entités, schémas,
+repositories, sessions et traitements de synchronisation.
+
+\subsection{Données gérées}
+
+La base peut contenir :
+
+\begin{itemize}
+  \item factures ;
+  \item lignes de facture ;
+  \item pièces jointes ;
+  \item historiques de statuts ;
+  \item fournisseurs ;
+  \item clients publics ;
+  \item services destinataires ;
+  \item logs d'échanges API ;
+  \item traces d'audit ;
+  \item jobs asynchrones ou synchronisations.
+\end{itemize}
+
+\subsection{Migrations}
+
+Les migrations sont stockées dans \texttt{alembic/versions/}. Elles permettent de
+faire évoluer le schéma PostgreSQL de manière contrôlée, notamment lors du
+démarrage de la stack Docker.
+
+\section{Configuration}
+
+\subsection{Fichiers de configuration}
+
+\begin{longtable}{|p{0.30\textwidth}|p{0.63\textwidth}|}
+  \hline
+  \textbf{Fichier} & \textbf{Usage} \\
+  \hline
+  \texttt{.env.example} &
+  Exemple de configuration versionné. \\
+  \hline
+  \texttt{.env} &
+  Variables lues par Docker Compose, par exemple le port HTTP exposé. \\
+  \hline
+  \texttt{.env.local} &
+  Secrets et configuration serveur non versionnés. \\
+  \hline
+  \texttt{vite.config.ts} &
+  Configuration Vite. \\
+  \hline
+  \texttt{docker-compose.prod.yml} &
+  Orchestration Docker de production. \\
+  \hline
+\end{longtable}
+
+\subsection{Variables Chorus}
+
+Les secrets Chorus doivent rester côté serveur. Les variables principales sont :
+
+\begin{lstlisting}
+CHORUS_ENV=prod
+CHORUS_PROD_CLIENT_ID=
+CHORUS_PROD_CLIENT_SECRET=
+CHORUS_PROD_TECHNICAL_LOGIN=
+CHORUS_PROD_TECHNICAL_PASSWORD=
+CHORUS_PROD_SUPPLIER_ID=
+CHORUS_PROD_DESTINATAIRE_CODE=
+CHORUS_PROD_SERVICE_EXECUTANT_CODE=
+CHORUS_PROD_BANK_ACCOUNT_CODE=
+\end{lstlisting}
+
+Les variantes de qualification utilisent le préfixe :
+
+\begin{lstlisting}
+CHORUS_QUALIF_*
+\end{lstlisting}
+
+\subsection{Variables frontend}
+
+Les variables préfixées par \texttt{VITE\_} sont injectées dans le bundle
+navigateur. Elles ne doivent pas contenir de secrets de production.
+
+\section{Sécurité}
+
+\subsection{Principes appliqués}
+
+\begin{itemize}
+  \item Les secrets Chorus sont lus côté serveur.
+  \item Le navigateur passe par le backend pour les appels sensibles.
+  \item L'authentification applicative repose sur des tokens JWT.
+  \item Les fichiers \texttt{.env} ne doivent pas être versionnés.
+  \item Les workflows GitHub bloquent les secrets évidents commis par erreur.
+  \item Les dépendances npm et Python sont auditées.
+\end{itemize}
+
+\subsection{Limite actuelle}
+
+L'application utilise actuellement un compte applicatif partagé. Une gestion
+multi-utilisateurs complète nécessiterait :
+
+\begin{itemize}
+  \item une table utilisateurs ;
+  \item une gestion des rôles ;
+  \item une traçabilité par utilisateur réel ;
+  \item des permissions par action ou périmètre.
+\end{itemize}
+
+\section{Docker et déploiement}
+
+\subsection{Services Docker}
+
+La stack Docker de production contient :
+
+\begin{itemize}
+  \item un service frontend servi par nginx ;
+  \item un service backend FastAPI ;
+  \item un service PostgreSQL ;
+  \item un service de migration Alembic ;
+  \item des volumes persistants pour la base et l'annuaire.
+\end{itemize}
+
+\subsection{Commande de démarrage}
+
+\begin{lstlisting}
+docker-compose -f docker-compose.prod.yml up -d --build
+\end{lstlisting}
+
+\subsection{Accès réseau}
+
+L'application peut être exposée :
+
+\begin{itemize}
+  \item sur \texttt{localhost} en local ;
+  \item sur une adresse IP interne ;
+  \item sur un nom DNS interne comme \texttt{chorusPilot.gigalis.local}.
+\end{itemize}
+
+Le port est piloté par la variable :
+
+\begin{lstlisting}
+APP_HTTP_PORT=8081
+\end{lstlisting}
+
+\section{GitHub Actions et CI/CD}
+
+\subsection{Vue d'ensemble}
+
+Le dossier \texttt{.github/workflows/} contient trois workflows :
+
+\begin{itemize}
+  \item \texttt{ci.yml} ;
+  \item \texttt{security.yml} ;
+  \item \texttt{deploy-development.yml}.
+\end{itemize}
+
+Le fichier \texttt{.github/dependabot.yml} configure la surveillance automatique
+des dépendances.
+
+\subsection{Workflow CI}
+
+Le workflow \textbf{CI} se déclenche sur les branches :
+
+\begin{itemize}
+  \item \texttt{main} ;
+  \item \texttt{PRE\_PROD\_V0} ;
+  \item \texttt{developpement}.
+\end{itemize}
+
+Il contient trois jobs :
+
+\begin{longtable}{|p{0.30\textwidth}|p{0.62\textwidth}|}
+  \hline
+  \textbf{Job} & \textbf{Contrôles} \\
+  \hline
+  Frontend checks &
+  Installation npm, lint, tests Vitest et build Vite. \\
+  \hline
+  Backend checks &
+  Installation Python, compilation des modules et tests backend. \\
+  \hline
+  Docker Compose config &
+  Validation du fichier \texttt{docker-compose.prod.yml}. \\
+  \hline
+\end{longtable}
+
+Commandes principales :
+
+\begin{lstlisting}
+npm ci
+npm run lint
+npm run test
+npm run build
+python -m compileall chorus_python scripts
+python -m unittest discover -s tests
+docker compose --env-file .env.local -f docker-compose.prod.yml config
+\end{lstlisting}
+
+\subsection{Workflow Security}
+
+Le workflow \textbf{Security} exécute :
+
+\begin{itemize}
+  \item un contrôle des fichiers sensibles suivis par Git ;
+  \item une recherche de secrets évidents ;
+  \item un audit npm avec \texttt{npm audit --audit-level=high} ;
+  \item un audit Python avec \texttt{pip-audit}.
+\end{itemize}
+
+Il est déclenché sur push, pull request, lancement manuel et planification
+hebdomadaire.
+
+\subsection{Workflow Deploy Development}
+
+Le workflow \textbf{Deploy Development} déploie automatiquement la branche
+\texttt{developpement} sur le serveur de développement après une CI réussie.
+
+Il utilise les secrets GitHub suivants :
+
+\begin{itemize}
+  \item \texttt{DEV\_SSH\_HOST} ;
+  \item \texttt{DEV\_SSH\_USER} ;
+  \item \texttt{DEV\_SSH\_PRIVATE\_KEY}.
+\end{itemize}
+
+Sur le serveur, il exécute les actions suivantes :
+
+\begin{enumerate}
+  \item récupération des derniers commits ;
+  \item bascule sur la branche \texttt{developpement} ;
+  \item \texttt{git pull --ff-only} ;
+  \item reconstruction et relance Docker Compose ;
+  \item affichage de l'état des conteneurs.
+\end{enumerate}
+
+\subsection{Dependabot}
+
+Dependabot vérifie chaque semaine :
+
+\begin{itemize}
+  \item les dépendances npm ;
+  \item les dépendances pip ;
+  \item les actions GitHub.
+\end{itemize}
+
+Il peut ouvrir jusqu'à cinq pull requests par écosystème.
+
+\section{Tests}
+
+\subsection{Tests frontend}
+
+Les tests frontend sont exécutés avec Vitest. Ils couvrent notamment :
+
+\begin{itemize}
+  \item les mappers Chorus ;
+  \item la normalisation des données ;
+  \item la préparation des payloads ;
+  \item l'extraction ;
+  \item le stockage ;
+  \item l'hydratation de soumission ;
+  \item les routes PISTE ;
+  \item les clients backend.
+\end{itemize}
+
+Commande :
+
+\begin{lstlisting}
+npm run test
+\end{lstlisting}
+
+\subsection{Tests backend}
+
+Les tests Python sont situés dans \texttt{tests/}. Ils couvrent notamment la
+configuration, l'annuaire et la soumission de facture.
+
+Commande utilisée par la CI :
+
+\begin{lstlisting}
+python -m unittest discover -s tests
+\end{lstlisting}
+
+\subsection{Validation Docker}
+
+La CI valide également que le fichier Compose de production est lisible et
+cohérent :
+
+\begin{lstlisting}
+docker compose --env-file .env.local -f docker-compose.prod.yml config
+\end{lstlisting}
+
+\section{Exploitation}
+
+\subsection{Commandes utiles}
+
+\begin{lstlisting}
+npm install
+npm run dev
+npm run build
+npm run lint
+npm run test
+python scripts/chorus_submit_server.py
+docker-compose -f docker-compose.prod.yml up -d --build
+docker-compose -f docker-compose.prod.yml ps
+docker-compose -f docker-compose.prod.yml logs -f chorus-api
+\end{lstlisting}
+
+\subsection{Points de contrôle en production}
+
+\begin{itemize}
+  \item vérifier que le backend répond sur \texttt{/health} ;
+  \item vérifier que le frontend est accessible ;
+  \item vérifier que PostgreSQL est démarré ;
+  \item vérifier que les migrations sont passées ;
+  \item vérifier que \texttt{.env.local} existe sur le serveur ;
+  \item tester la connexion Chorus depuis l'écran Paramètres ;
+  \item surveiller les logs backend en cas d'échec de soumission.
+\end{itemize}
+
+\section{Synthèse des apports techniques}
+
+Le projet met en place une base technique complète :
+
+\begin{itemize}
+  \item application web React structurée par pages et modules métier ;
+  \item backend FastAPI servant de passerelle sécurisée vers Chorus ;
+  \item extraction PDF côté serveur ;
+  \item intégration des workflows Chorus Pro via PISTE ;
+  \item base PostgreSQL avec migrations ;
+  \item déploiement Docker reproductible ;
+  \item validation automatique par GitHub Actions ;
+  \item audit de sécurité et dépendances ;
+  \item déploiement automatique de la branche de développement ;
+  \item documentation utilisateur, projet et technique.
+\end{itemize}
+
+\section{Axes d'amélioration}
+
+Les évolutions techniques possibles sont :
+
+\begin{itemize}
+  \item gestion multi-utilisateurs complète ;
+  \item rôles et permissions ;
+  \item audit applicatif par utilisateur réel ;
+  \item pipeline de déploiement préproduction et production ;
+  \item scans de sécurité plus avancés ;
+  \item supervision applicative ;
+  \item alertes en cas d'échec de synchronisation ou de rejet Chorus ;
+  \item sauvegardes et restauration documentées pour PostgreSQL ;
+  \item génération automatique d'une documentation PDF depuis la CI.
+\end{itemize}
+
+\section{Conclusion}
+
+Chorus Pilot dispose d'une architecture technique cohérente pour traiter
+les factures Chorus Pro de bout en bout. Le projet couvre l'interface métier, les
+traitements backend, l'intégration Chorus, la persistance, le déploiement Docker,
+les tests et l'automatisation GitHub. Cette base permet une exploitation interne
+fiable et prépare les futures évolutions vers une plateforme plus complète,
+traçable et industrialisée.
+
+\end{document}
