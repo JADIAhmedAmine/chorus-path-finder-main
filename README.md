@@ -1,4 +1,4 @@
-# Chorus Path Finder
+# Chorus Pilot
 
 Application React + FastAPI pour préparer, contrôler, synchroniser et soumettre des factures vers Chorus Pro via PISTE.
 
@@ -27,7 +27,7 @@ Le projet contient :
 
 ## Vue d'ensemble
 
-Chorus Path Finder sert à industrialiser le traitement des factures Chorus Pro :
+Chorus Pilot sert à industrialiser le traitement des factures Chorus Pro :
 
 - consultation des factures synchronisées depuis Chorus ;
 - préparation d'une facture à partir d'un PDF ;

@@ -1,0 +1,316 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{titlesec}
+
+\geometry{margin=2.4cm}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!55!black,
+  urlcolor=blue!55!black
+}
+
+\definecolor{chorusblue}{HTML}{1D4ED8}
+\definecolor{chorusgray}{HTML}{F3F4F6}
+\definecolor{chorusdark}{HTML}{111827}
+
+\titleformat{\section}
+  {\Large\bfseries\color{chorusblue}}
+  {\thesection}{0.75em}{}
+
+\titleformat{\subsection}
+  {\large\bfseries\color{chorusdark}}
+  {\thesubsection}{0.75em}{}
+
+\lstdefinestyle{chorus}{
+  backgroundcolor=\color{chorusgray},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!15},
+  columns=fullflexible
+}
+\lstset{style=chorus}
+
+\setlist[itemize]{leftmargin=1.2cm}
+\setlist[enumerate]{leftmargin=1.2cm}
+
+\title{
+  \vspace{-1.5cm}
+  \textbf{\Huge Automatisation GitHub}\\
+  \vspace{0.3cm}
+  \Large Workflows CI/CD du projet Chorus Pilot
+}
+\author{Projet Chorus}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+
+\begin{center}
+  \vspace{0.5cm}
+  \begin{tabularx}{0.9\textwidth}{|X|}
+    \hline
+    \textbf{Résumé} \\
+    Le projet Chorus Pilot utilise GitHub Actions pour automatiser les
+    contrôles qualité, les tests, la sécurité, la validation Docker et le
+    déploiement de l'environnement de développement. Cette automatisation permet
+    de sécuriser les changements avant leur intégration et de réduire les actions
+    manuelles lors des mises à jour. \\
+    \hline
+  \end{tabularx}
+\end{center}
+
+\newpage
+\tableofcontents
+\newpage
+
+\section{Objectif de l'automatisation}
+
+Le dossier \texttt{.github/workflows} contient les scénarios GitHub Actions du
+projet. Ces fichiers décrivent ce qui doit être exécuté automatiquement lorsqu'un
+développeur pousse du code, ouvre une pull request ou lance manuellement un
+workflow.
+
+L'objectif est de répondre à quatre besoins :
+
+\begin{itemize}
+  \item vérifier que le frontend fonctionne toujours ;
+  \item vérifier que le backend Python reste valide ;
+  \item contrôler les risques de sécurité ;
+  \item déployer automatiquement la branche de développement quand les contrôles
+        sont réussis.
+\end{itemize}
+
+\section{Branches surveillées}
+
+Les workflows principaux sont déclenchés sur les branches importantes du projet :
+
+\begin{itemize}
+  \item \texttt{main} ;
+  \item \texttt{PRE\_PROD\_V0} ;
+  \item \texttt{developpement}.
+\end{itemize}
+
+Ils se lancent lors d'un \textit{push}, d'une \textit{pull request} ou d'un
+lancement manuel depuis l'interface GitHub Actions.
+
+\section{Workflow CI}
+
+Le fichier \texttt{.github/workflows/ci.yml} met en place la chaîne de contrôle
+principale du projet. Il est nommé \textbf{CI}.
+
+\subsection{Contrôles frontend}
+
+Le job frontend exécute les étapes suivantes :
+
+\begin{enumerate}
+  \item récupération du code du dépôt ;
+  \item installation de Node.js 20 ;
+  \item installation propre des dépendances avec \texttt{npm ci} ;
+  \item vérification du code avec \texttt{npm run lint} ;
+  \item exécution des tests avec \texttt{npm run test} ;
+  \item génération du build avec \texttt{npm run build}.
+\end{enumerate}
+
+Ce job permet de vérifier que l'interface React compile correctement, que les
+tests passent et que le code respecte les règles de qualité définies dans le
+projet.
+
+\subsection{Contrôles backend}
+
+Le job backend vérifie la partie Python :
+
+\begin{enumerate}
+  \item installation de Python 3.12 ;
+  \item installation des dépendances depuis \texttt{requirements.txt} ;
+  \item compilation des modules Python avec \texttt{compileall} ;
+  \item exécution des tests Python avec \texttt{unittest}.
+\end{enumerate}
+
+Ce contrôle évite d'intégrer du code Python qui ne compile pas ou qui casse les
+tests existants.
+
+\subsection{Validation Docker Compose}
+
+Un troisième job valide la configuration Docker de production :
+
+\begin{enumerate}
+  \item copie du fichier \texttt{.env.example} vers \texttt{.env.local} pour
+        fournir une configuration minimale ;
+  \item validation du fichier \texttt{docker-compose.prod.yml} avec
+        \texttt{docker compose config}.
+\end{enumerate}
+
+Cette étape vérifie que la stack Docker reste cohérente et que le fichier Compose
+peut être interprété correctement.
+
+\section{Workflow Security}
+
+Le fichier \texttt{.github/workflows/security.yml} ajoute des contrôles de
+sécurité. Il est nommé \textbf{Security}.
+
+\subsection{Protection contre les secrets suivis par Git}
+
+Le premier contrôle bloque la présence de fichiers sensibles dans le dépôt :
+
+\begin{itemize}
+  \item fichiers \texttt{.env} ou dérivés ;
+  \item clés privées \texttt{.pem} ;
+  \item fichiers \texttt{.key}.
+\end{itemize}
+
+Le fichier \texttt{.env.example} reste autorisé, car il sert de modèle sans
+contenir de vrais secrets.
+
+\subsection{Recherche de secrets évidents}
+
+Le workflow recherche aussi des variables sensibles qui auraient été commitées
+par erreur, par exemple :
+
+\begin{itemize}
+  \item secret JWT applicatif ;
+  \item hash de mot de passe applicatif ;
+  \item secret client Chorus ;
+  \item mot de passe technique Chorus ;
+  \item secrets exposés dans des variables frontend.
+\end{itemize}
+
+Si une valeur suspecte est trouvée, le workflow échoue pour empêcher l'intégration
+du changement.
+
+\subsection{Audit des dépendances frontend}
+
+Le job \texttt{npm-audit} installe les dépendances frontend et exécute :
+
+\begin{lstlisting}
+npm audit --audit-level=high
+\end{lstlisting}
+
+L'objectif est de détecter les vulnérabilités importantes dans les dépendances
+JavaScript.
+
+\subsection{Audit des dépendances Python}
+
+Le job \texttt{pip-audit} installe l'outil \texttt{pip-audit} puis analyse les
+dépendances listées dans \texttt{requirements.txt}. Il permet d'identifier les
+vulnérabilités connues côté backend Python.
+
+\subsection{Exécution planifiée}
+
+En plus des push et pull requests, le workflow sécurité est lancé automatiquement
+chaque semaine. Cela permet de détecter une vulnérabilité même si le code n'a pas
+changé récemment.
+
+\section{Workflow Deploy Development}
+
+Le fichier \texttt{.github/workflows/deploy-development.yml} automatise le
+déploiement sur le serveur de développement. Il est nommé
+\textbf{Deploy Development}.
+
+\subsection{Condition de déclenchement}
+
+Le déploiement se lance automatiquement lorsque le workflow \textbf{CI} se
+termine avec succès sur la branche \texttt{developpement}. Il peut aussi être
+lancé manuellement depuis GitHub Actions.
+
+Cette logique évite de déployer une version qui n'a pas passé les contrôles de
+base.
+
+\subsection{Secrets nécessaires}
+
+Le workflow utilise des secrets GitHub pour se connecter au serveur :
+
+\begin{itemize}
+  \item \texttt{DEV\_SSH\_HOST} : adresse du serveur ;
+  \item \texttt{DEV\_SSH\_USER} : utilisateur SSH ;
+  \item \texttt{DEV\_SSH\_PRIVATE\_KEY} : clé privée SSH.
+\end{itemize}
+
+Ces informations ne sont pas stockées dans le dépôt. Elles sont configurées dans
+les paramètres GitHub du projet.
+
+\subsection{Variables optionnelles}
+
+Deux variables peuvent personnaliser le déploiement :
+
+\begin{itemize}
+  \item \texttt{DEV\_APP\_DIR} : dossier de l'application sur le serveur ;
+  \item \texttt{DEV\_COMPOSE\_PROJECT} : nom du projet Docker Compose.
+\end{itemize}
+
+Si elles ne sont pas définies, le workflow utilise des valeurs par défaut.
+
+\subsection{Étapes réalisées sur le serveur}
+
+Une fois connecté en SSH, le workflow :
+
+\begin{enumerate}
+  \item se place dans le dossier de l'application ;
+  \item récupère les dernières modifications de la branche \texttt{developpement} ;
+  \item bascule sur cette branche ;
+  \item applique un \texttt{git pull --ff-only} ;
+  \item reconstruit et relance la stack Docker ;
+  \item affiche l'état des conteneurs.
+\end{enumerate}
+
+La commande principale de redéploiement est :
+
+\begin{lstlisting}
+docker compose -p "$DEV_COMPOSE_PROJECT" \
+  --env-file .env.local \
+  -f docker-compose.prod.yml \
+  up -d --build
+\end{lstlisting}
+
+\section{Dependabot}
+
+Le fichier \texttt{.github/dependabot.yml} configure Dependabot pour surveiller
+les mises à jour de dépendances.
+
+Dependabot vérifie chaque semaine :
+
+\begin{itemize}
+  \item les dépendances npm du frontend ;
+  \item les dépendances pip du backend Python ;
+  \item les actions GitHub utilisées par les workflows.
+\end{itemize}
+
+Le nombre de pull requests ouvertes automatiquement est limité à cinq par
+écosystème afin de garder un volume de maintenance raisonnable.
+
+\section{Résultat obtenu}
+
+Grâce à cette configuration, le projet dispose d'un premier pipeline CI/CD
+complet :
+
+\begin{itemize}
+  \item les erreurs frontend sont détectées avant intégration ;
+  \item les erreurs backend sont détectées avant intégration ;
+  \item la configuration Docker est validée automatiquement ;
+  \item les secrets commis par erreur sont bloqués ;
+  \item les dépendances sont auditées régulièrement ;
+  \item les mises à jour de dépendances sont proposées automatiquement ;
+  \item l'environnement de développement peut être redéployé automatiquement
+        après une CI réussie.
+\end{itemize}
+
+\section{Conclusion}
+
+Le travail réalisé côté \texttt{.github/workflows} apporte une automatisation
+essentielle au projet Chorus Pilot. Il sécurise le cycle de développement,
+réduit les vérifications manuelles et prépare une base solide pour faire évoluer
+le projet vers une chaîne d'intégration et de déploiement plus complète.
+
+\end{document}

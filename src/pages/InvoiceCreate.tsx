@@ -10,7 +10,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
-import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye, FolderOpen } from 'lucide-react';
+import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye, FolderOpen, Send } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { ChorusApiReturnSummaryPanel } from '@/components/common/ChorusApiReturnSummaryPanel';
@@ -31,12 +31,12 @@ import {
   resolveAndHydrateChorusSubmissionPayload,
   type ChorusPayloadHydrationResult,
 } from '@/lib/chorus/hydrateSubmissionPayload';
-import type { InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
+import type { ChorusSubmissionPayload, InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
 import type { ChorusApiDebugEntry, ChorusSubmissionReferenceSnapshot, ChorusSubmitInvoiceResult } from '@/types/chorus';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
 
-type BatchSubmissionStatus = 'pending' | 'extracting' | 'submitting' | 'success' | 'error';
+type BatchSubmissionStatus = 'pending' | 'extracting' | 'ready' | 'submitting' | 'success' | 'error';
 
 interface BatchSubmissionResult {
   id: string;
@@ -46,6 +46,9 @@ interface BatchSubmissionResult {
   message?: string;
   invoiceNumber?: string;
   externalId?: string;
+  extraction?: LocalInvoiceExtractionResult;
+  draft?: InvoiceDraftFormData;
+  payload?: ChorusSubmissionPayload;
   summary?: ChorusApiReturnSummary | null;
   apiCalls: ChorusApiDebugEntry[];
 }
@@ -135,6 +138,10 @@ function getBatchStatusLabel(status: BatchSubmissionStatus): string {
     return 'Soumission';
   }
 
+  if (status === 'ready') {
+    return 'Prête';
+  }
+
   if (status === 'success') {
     return 'Réussie';
   }
@@ -160,6 +167,13 @@ function getBatchStatusBadgeVariant(status: BatchSubmissionStatus): 'default' | 
   }
 
   return 'secondary';
+}
+
+function isBatchResultSubmittable(
+  result: BatchSubmissionResult,
+): result is BatchSubmissionResult & { draft: InvoiceDraftFormData; extraction: LocalInvoiceExtractionResult } {
+  return (result.status === 'ready' || result.status === 'error')
+    && Boolean(result.draft && result.extraction && result.payload);
 }
 
 function normalizeForServiceMatch(value: string | undefined): string {
@@ -264,6 +278,74 @@ function DocumentPreviewCard({
         </Tabs>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BatchExtractionPreview({ result }: { result: BatchSubmissionResult }) {
+  const { draft, extraction } = result;
+
+  if (!draft || !extraction) {
+    return (
+      <p className="rounded-lg border bg-muted/20 p-3 text-xs text-muted-foreground">
+        L’aperçu des champs sera disponible après l’extraction de cette facture.
+      </p>
+    );
+  }
+
+  const fields = extraction.fields;
+  const service = draft.publicServiceCode && draft.publicServiceLabel
+    ? `${draft.publicServiceCode} - ${draft.publicServiceLabel}`
+    : draft.publicServiceCode || draft.publicServiceLabel || fields.publicServiceCode || fields.publicServiceLabel;
+  const lineItemCount = fields.lineItems?.length
+    ? `${fields.lineItems.length} ligne(s) détectée(s)`
+    : undefined;
+  const vatLineCount = fields.vatLines?.length
+    ? `${fields.vatLines.length} taux détecté(s)`
+    : undefined;
+  const previewRows = [
+    { label: 'Fournisseur', value: draft.supplierName || fields.supplierName },
+    { label: 'N° facture', value: draft.supplierInvoiceNumber || fields.supplierInvoiceNumber },
+    { label: 'Client public', value: draft.publicCustomerName || fields.publicCustomerName },
+    { label: 'Service destinataire', value: service },
+    { label: 'Date facture', value: draft.invoiceDate || fields.invoiceDate },
+    { label: 'Échéance', value: draft.dueDate || fields.dueDate },
+    { label: 'Mode paiement', value: draft.paymentMode || fields.paymentMode },
+    { label: 'Devise', value: draft.currencyCode || fields.currencyCode },
+    { label: 'SIRET fournisseur', value: draft.supplierSiret || fields.supplierSiret },
+    { label: 'SIRET destinataire', value: draft.publicCustomerCode || fields.publicCustomerSiret },
+    { label: 'Engagement', value: draft.engagementNumber || fields.engagementNumber },
+    { label: 'Marché', value: draft.marketNumber || fields.marketNumber },
+    { label: 'Bon de commande', value: draft.purchaseOrderNumber || fields.purchaseOrderNumber },
+    { label: 'Montant HT', value: formatAmountForDisplay(draft.totalAmountHt) },
+    { label: 'Montant TVA', value: formatExtractedAmountForDisplay(draft.totalVat ?? fields.totalVat) },
+    { label: 'Montant TTC', value: formatAmountForDisplay(draft.totalAmountTtc) },
+    { label: 'Lignes facture', value: lineItemCount },
+    { label: 'Lignes TVA', value: vatLineCount },
+    { label: 'Confiance extraction', value: `${Math.round(extraction.confidence * 100)}%` },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {previewRows.map((row, index) => (
+          <ExtractionInfoRow key={`${result.id}-${row.label}`} index={index} label={row.label} value={row.value} />
+        ))}
+      </div>
+
+      {extraction.warnings.length > 0 && (
+        <Alert>
+          <TriangleAlert className="h-4 w-4" />
+          <AlertTitle>Points à contrôler</AlertTitle>
+          <AlertDescription>
+            <ul className="list-disc space-y-1 pl-4">
+              {extraction.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
   );
 }
 
@@ -386,10 +468,13 @@ export default function InvoiceCreate() {
   );
   const batchSummary = useMemo(() => ({
     total: batchResults.length,
+    ready: batchResults.filter((result) => result.status === 'ready').length,
     success: batchResults.filter((result) => result.status === 'success').length,
     error: batchResults.filter((result) => result.status === 'error').length,
     running: batchResults.filter((result) => result.status === 'extracting' || result.status === 'submitting').length,
   }), [batchResults]);
+  const canSubmitBatchToChorus = batchResults.some(isBatchResultSubmittable);
+  const batchIsSubmittingToChorus = batchResults.some((result) => result.status === 'submitting');
   const debugSnapshot = useMemo(() => JSON.stringify({
     chorusConfig: {
       mode: chorusConfig.mode,
@@ -448,6 +533,31 @@ export default function InvoiceCreate() {
       result.id === id ? { ...result, ...patch } : result
     )));
   }, []);
+
+  const resolveBatchSubmissionContext = useCallback((batchDraft: InvoiceDraftFormData) => {
+    const batchSupplier = suppliers.find((supplier) => supplier.id === batchDraft.supplierOrganizationId);
+    const typedBatchPublicCustomerCode = normalizeReferenceLookup(batchDraft.publicCustomerCode);
+    const batchPublicCustomer = publicCustomers.find((customer) => customer.id === batchDraft.publicCustomerId)
+      ?? publicCustomers.find((customer) => {
+        if (!typedBatchPublicCustomerCode) {
+          return false;
+        }
+
+        return normalizeReferenceLookup(customer.codeDestinataire) === typedBatchPublicCustomerCode
+          || normalizeReferenceLookup(customer.siret) === typedBatchPublicCustomerCode;
+      });
+    const batchAvailableServices = batchPublicCustomer
+      ? publicServices.filter((service) => service.publicCustomerId === batchPublicCustomer.id && service.active)
+      : [];
+    const batchPublicService = publicServices.find((service) => service.id === batchDraft.publicServiceId);
+
+    return {
+      batchSupplier,
+      batchPublicCustomer,
+      batchAvailableServices,
+      batchPublicService,
+    };
+  }, [publicCustomers, publicServices, suppliers]);
 
   const handleViewTreatmentDetails = useCallback(() => {
     const target = treatmentDetailsRef.current
@@ -662,11 +772,11 @@ export default function InvoiceCreate() {
     }
   }, [toast]);
 
-  const handleBatchSubmit = async () => {
+  const handleBatchExtraction = async () => {
     if (batchFiles.length === 0) {
       toast({
         title: 'Lot vide',
-        description: 'Ajoutez plusieurs factures ou un dossier contenant des PDF/XML avant de lancer le lot.',
+        description: 'Ajoutez plusieurs factures ou un dossier contenant des PDF/XML avant de lancer l’extraction.',
         variant: 'destructive',
       });
       return;
@@ -684,7 +794,8 @@ export default function InvoiceCreate() {
     setBatchSubmitting(true);
     setBatchCurrentFile(null);
 
-    const connector = createChorusConnector(chorusConfig);
+    let readyCount = 0;
+    let errorCount = 0;
 
     for (const batchItem of initialResults) {
       setBatchCurrentFile(batchItem.displayPath);
@@ -706,21 +817,121 @@ export default function InvoiceCreate() {
           publicServiceCode: formData.publicServiceCode,
           currencyCode: formData.currencyCode || 'EUR',
         }, extraction);
-        const batchSupplier = suppliers.find((supplier) => supplier.id === batchDraft.supplierOrganizationId);
-        const typedBatchPublicCustomerCode = normalizeReferenceLookup(batchDraft.publicCustomerCode);
-        const batchPublicCustomer = publicCustomers.find((customer) => customer.id === batchDraft.publicCustomerId)
-          ?? publicCustomers.find((customer) => {
-            if (!typedBatchPublicCustomerCode) {
-              return false;
-            }
+        const {
+          batchSupplier,
+          batchPublicCustomer,
+          batchAvailableServices,
+          batchPublicService,
+        } = resolveBatchSubmissionContext(batchDraft);
+        const batchPreparation = prepareInvoiceSubmission({
+          formData: batchDraft,
+          supplier: batchSupplier,
+          publicCustomer: batchPublicCustomer,
+          publicService: batchPublicService,
+          availableServices: batchAvailableServices,
+          extraction,
+        });
 
-            return normalizeReferenceLookup(customer.codeDestinataire) === typedBatchPublicCustomerCode
-              || normalizeReferenceLookup(customer.siret) === typedBatchPublicCustomerCode;
+        if (batchPreparation.validation.errors.length > 0) {
+          errorCount += 1;
+          updateBatchResult(batchItem.id, {
+            status: 'error',
+            invoiceNumber: batchDraft.supplierInvoiceNumber,
+            message: batchPreparation.validation.errors[0]?.message || 'Facture incomplète pour la soumission.',
+            extraction,
+            draft: batchDraft,
+            summary: null,
+            apiCalls: [],
           });
-        const batchAvailableServices = batchPublicCustomer
-          ? publicServices.filter((service) => service.publicCustomerId === batchPublicCustomer.id && service.active)
-          : [];
-        const batchPublicService = publicServices.find((service) => service.id === batchDraft.publicServiceId);
+          continue;
+        }
+
+        const payloadForBatchSubmission = buildInvoiceSubmissionPayload(batchDraft, {
+          supplier: batchSupplier,
+          publicCustomer: batchPublicCustomer,
+          publicService: batchPublicService,
+          availableServices: batchAvailableServices,
+          extraction,
+          chorus: chorusTechnicalContext,
+          mainFileName: batchItem.file.name,
+        });
+
+        readyCount += 1;
+        updateBatchResult(batchItem.id, {
+          status: 'ready',
+          invoiceNumber: payloadForBatchSubmission.numeroFactureSaisi,
+          message: batchPreparation.validation.warnings.length > 0
+            ? 'Extraction terminée avec des points à contrôler avant soumission.'
+            : 'Extraction terminée. Aperçu prêt pour validation.',
+          extraction,
+          draft: batchDraft,
+          payload: payloadForBatchSubmission,
+          summary: null,
+          apiCalls: [],
+        });
+      } catch (error) {
+        errorCount += 1;
+        updateBatchResult(batchItem.id, {
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Erreur inconnue pendant l’extraction.',
+          summary: null,
+          apiCalls: [],
+        });
+      }
+    }
+
+    setBatchSubmitting(false);
+    setBatchCurrentFile(null);
+    toast({
+      title: 'Extraction du lot terminée',
+      description: `${readyCount} facture(s) prête(s) pour Chorus, ${errorCount} en échec.`,
+      ...(readyCount === 0 && errorCount > 0 ? { variant: 'destructive' as const } : {}),
+    });
+  };
+
+  const handleBatchSubmitToChorus = async () => {
+    const resultsToSubmit = batchResults.filter(isBatchResultSubmittable);
+
+    if (resultsToSubmit.length === 0) {
+      toast({
+        title: 'Aucune facture prête',
+        description: 'Lancez d’abord l’extraction du lot et contrôlez les champs détectés.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setBatchSubmitting(true);
+    setBatchCurrentFile(null);
+
+    const connector = createChorusConnector(chorusConfig);
+    let submittedSuccessCount = 0;
+    let submittedErrorCount = 0;
+
+    for (const batchItem of resultsToSubmit) {
+      const extraction = batchItem.extraction;
+      const batchDraft = batchItem.draft;
+
+      if (!extraction || !batchDraft) {
+        continue;
+      }
+
+      setBatchCurrentFile(batchItem.displayPath);
+      updateBatchResult(batchItem.id, {
+        status: 'submitting',
+        invoiceNumber: batchDraft.supplierInvoiceNumber,
+        message: 'Envoi à Chorus en cours.',
+        summary: null,
+        apiCalls: [],
+      });
+
+      try {
+        const {
+          batchSupplier,
+          batchPublicCustomer,
+          batchAvailableServices,
+          batchPublicService,
+        } = resolveBatchSubmissionContext(batchDraft);
         const batchPreparation = prepareInvoiceSubmission({
           formData: batchDraft,
           supplier: batchSupplier,
@@ -765,9 +976,8 @@ export default function InvoiceCreate() {
         }
 
         updateBatchResult(batchItem.id, {
-          status: 'submitting',
           invoiceNumber: payloadForBatchSubmission.numeroFactureSaisi,
-          message: 'Envoi à Chorus en cours.',
+          payload: payloadForBatchSubmission,
         });
 
         const itemAttachments = batchAttachments[batchItem.id] ?? [];
@@ -783,16 +993,19 @@ export default function InvoiceCreate() {
           })),
         });
         const summary = describeChorusSubmissionApiReturn(result.response, result.apiCalls);
+        submittedSuccessCount += 1;
 
         updateBatchResult(batchItem.id, {
           status: 'success',
           message: result.externalId ? `Référence retournée: ${result.externalId}` : 'Soumission acceptée.',
           invoiceNumber: payloadForBatchSubmission.numeroFactureSaisi,
           externalId: result.externalId,
+          payload: payloadForBatchSubmission,
           summary,
           apiCalls: result.apiCalls,
         });
       } catch (error) {
+        submittedErrorCount += 1;
         const apiCalls = error instanceof ChorusSubmitApiError ? error.apiCalls : [];
         const summary = describeChorusSubmissionApiReturn(undefined, apiCalls);
         updateBatchResult(batchItem.id, {
@@ -806,9 +1019,13 @@ export default function InvoiceCreate() {
 
     setBatchSubmitting(false);
     setBatchCurrentFile(null);
+    if (submittedSuccessCount > 0) {
+      celebrateSuccess();
+    }
     toast({
-      title: 'Soumission par lot terminée',
-      description: 'Le résultat est disponible dans le tableau dédié.',
+      title: 'Soumission Chorus par lot terminée',
+      description: `${submittedSuccessCount} facture(s) envoyée(s), ${submittedErrorCount} en échec.`,
+      ...(submittedSuccessCount === 0 ? { variant: 'destructive' as const } : {}),
     });
   };
 
@@ -1668,7 +1885,7 @@ export default function InvoiceCreate() {
             <div>
               <CardTitle className="text-base">Soumission par lot</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                Ajoutez plusieurs factures ou un dossier complet, puis suivez le résultat facture par facture.
+                Ajoutez plusieurs factures ou un dossier complet, lancez le lot pour extraire les champs, puis envoyez les factures prêtes à Chorus.
               </p>
             </div>
             <Badge variant={batchSubmitting ? 'secondary' : 'outline'}>
@@ -1698,11 +1915,19 @@ export default function InvoiceCreate() {
             </Button>
             <Button
               type="button"
-              onClick={() => void handleBatchSubmit()}
+              onClick={() => void handleBatchExtraction()}
               disabled={batchSubmitting || batchFiles.length === 0}
             >
-              {batchSubmitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
+              {batchSubmitting && !batchIsSubmittingToChorus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
               Lancer le lot
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleBatchSubmitToChorus()}
+              disabled={batchSubmitting || !canSubmitBatchToChorus}
+            >
+              {batchIsSubmittingToChorus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Envoyer à Chorus par lot
             </Button>
             {batchFiles.length > 0 && (
               <Button
@@ -1741,7 +1966,7 @@ export default function InvoiceCreate() {
           {batchCurrentFile && (
             <Alert>
               <Loader2 className="h-4 w-4 animate-spin" />
-              <AlertTitle>Traitement du lot</AlertTitle>
+              <AlertTitle>{batchIsSubmittingToChorus ? 'Soumission Chorus du lot' : 'Extraction du lot'}</AlertTitle>
               <AlertDescription>{batchCurrentFile}</AlertDescription>
             </Alert>
           )}
@@ -1916,62 +2141,55 @@ export default function InvoiceCreate() {
                 <div>
                   <p className="text-sm font-medium">Résultat du lot</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {batchSummary.success} réussie(s), {batchSummary.error} en échec, {batchSummary.running} en cours sur {batchSummary.total}.
+                    {batchSummary.ready} prête(s), {batchSummary.success} envoyée(s), {batchSummary.error} en échec, {batchSummary.running} en cours sur {batchSummary.total}.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="default">{batchSummary.success} OK</Badge>
+                  <Badge variant="secondary">{batchSummary.ready} prête(s)</Badge>
+                  <Badge variant="default">{batchSummary.success} envoyée(s)</Badge>
                   <Badge variant={batchSummary.error > 0 ? 'destructive' : 'outline'}>{batchSummary.error} KO</Badge>
                 </div>
               </div>
 
-              <div className="mt-4 overflow-x-auto">
-                <table className="w-full min-w-[760px] text-sm">
-                  <thead>
-                    <tr className="border-b">
-                      <th className="p-2 text-left font-medium">Facture</th>
-                      <th className="p-2 text-left font-medium">Statut</th>
-                      <th className="p-2 text-left font-medium">N° facture</th>
-                      <th className="p-2 text-left font-medium">Référence</th>
-                      <th className="p-2 text-left font-medium">Retour</th>
-                      <th className="p-2 text-left font-medium">Message</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {batchResults.map((result) => (
-                      <tr key={result.id} className="border-b align-top">
-                        <td className="max-w-[220px] p-2">
-                          <p className="truncate font-medium">{result.displayPath}</p>
-                        </td>
-                        <td className="p-2">
-                          <Badge variant={getBatchStatusBadgeVariant(result.status)}>
-                            {getBatchStatusLabel(result.status)}
+              <div className="mt-4 space-y-3">
+                {batchResults.map((result) => (
+                  <details
+                    key={`${result.id}-${result.status}`}
+                    className="group rounded-lg border bg-background"
+                    defaultOpen={result.status === 'ready' || result.status === 'error' || result.status === 'success'}
+                  >
+                    <summary className="flex cursor-pointer flex-col gap-3 px-3 py-3 text-sm md:flex-row md:items-center md:justify-between">
+                      <span className="flex min-w-0 items-center gap-2">
+                        <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        <span className="truncate font-medium">{result.displayPath}</span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-2">
+                        <Badge variant={getBatchStatusBadgeVariant(result.status)}>
+                          {getBatchStatusLabel(result.status)}
+                        </Badge>
+                        {result.invoiceNumber && <Badge variant="outline">Facture {result.invoiceNumber}</Badge>}
+                        {result.externalId && <Badge variant="default">Réf. {result.externalId}</Badge>}
+                        {result.summary?.httpStatus !== undefined && (
+                          <Badge variant="outline">HTTP {result.summary.httpStatus}</Badge>
+                        )}
+                        {result.summary?.codeRetour !== undefined && (
+                          <Badge variant={result.status === 'error' ? 'destructive' : 'outline'}>
+                            codeRetour {result.summary.codeRetour}
                           </Badge>
-                        </td>
-                        <td className="p-2">{result.invoiceNumber || '-'}</td>
-                        <td className="p-2">{result.externalId || '-'}</td>
-                        <td className="p-2">
-                          <div className="flex flex-wrap gap-1">
-                            {result.summary?.httpStatus !== undefined && (
-                              <Badge variant="outline">HTTP {result.summary.httpStatus}</Badge>
-                            )}
-                            {result.summary?.codeRetour !== undefined && (
-                              <Badge variant={result.status === 'error' ? 'destructive' : 'outline'}>
-                                codeRetour {result.summary.codeRetour}
-                              </Badge>
-                            )}
-                            {result.summary?.statutFacture && (
-                              <Badge variant="secondary">{result.summary.statutFacture}</Badge>
-                            )}
-                          </div>
-                        </td>
-                        <td className="max-w-[280px] p-2 text-xs text-muted-foreground">
-                          {result.message || result.summary?.libelle || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        )}
+                        {result.summary?.statutFacture && (
+                          <Badge variant="secondary">{result.summary.statutFacture}</Badge>
+                        )}
+                      </span>
+                    </summary>
+                    <div className="space-y-3 border-t bg-muted/10 p-3">
+                      <BatchExtractionPreview result={result} />
+                      <p className="text-xs text-muted-foreground">
+                        {result.message || result.summary?.libelle || '-'}
+                      </p>
+                    </div>
+                  </details>
+                ))}
               </div>
             </div>
           )}
