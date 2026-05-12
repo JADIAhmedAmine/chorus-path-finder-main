@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import type { HTMLAttributes } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,7 +18,7 @@ import { ChorusApiReturnSummaryPanel } from '@/components/common/ChorusApiReturn
 import { getInvoice, getInvoiceAttachments } from '@/data/mock-data';
 import { ChorusSubmitApiError, createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
-import { createEmptyInvoiceDraft, formatInvoiceAmountForInput, mergeExtractionIntoDraft } from '@/lib/chorus/normalization';
+import { createEmptyInvoiceDraft, formatInvoiceAmountForInput, mergeExtractionIntoDraft, parseInvoiceAmount } from '@/lib/chorus/normalization';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { prepareInvoiceSubmission } from '@/lib/chorus/preparation';
 import { extractInvoiceData } from '@/lib/chorus/extraction';
@@ -31,7 +32,7 @@ import {
   resolveAndHydrateChorusSubmissionPayload,
   type ChorusPayloadHydrationResult,
 } from '@/lib/chorus/hydrateSubmissionPayload';
-import type { ChorusSubmissionPayload, InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
+import type { ChorusPaymentMode, ChorusSubmissionPayload, InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
 import type { ChorusApiDebugEntry, ChorusSubmissionReferenceSnapshot, ChorusSubmitInvoiceResult } from '@/types/chorus';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
@@ -70,6 +71,14 @@ const COMPLEMENTARY_ATTACHMENT_TYPES = [
   { value: 'Bordereau de suivi de validation', label: 'Bordereau de suivi de validation' },
   { value: 'Document annexe', label: 'Document annexe' },
 ] as const;
+const PAYMENT_MODE_OPTIONS: Array<{ value: ChorusPaymentMode; label: string }> = [
+  { value: 'VIREMENT', label: 'Virement' },
+  { value: 'CHEQUE', label: 'Chèque' },
+  { value: 'PRELEVEMENT', label: 'Prélèvement' },
+  { value: 'ESPECE', label: 'Espèce' },
+  { value: 'AUTRE', label: 'Autre' },
+  { value: 'REPORT', label: 'Report' },
+];
 
 function formatAmountForDisplay(value?: string): string {
   if (!value?.trim()) {
@@ -281,8 +290,68 @@ function DocumentPreviewCard({
   );
 }
 
-function BatchExtractionPreview({ result }: { result: BatchSubmissionResult }) {
+type EditableBatchDraftTextField = Extract<keyof InvoiceDraftFormData,
+  | 'supplierName'
+  | 'supplierSiret'
+  | 'supplierInvoiceNumber'
+  | 'publicCustomerName'
+  | 'publicCustomerCode'
+  | 'publicServiceCode'
+  | 'publicServiceLabel'
+  | 'invoiceDate'
+  | 'dueDate'
+  | 'currencyCode'
+  | 'engagementNumber'
+  | 'marketNumber'
+  | 'purchaseOrderNumber'
+  | 'totalAmountHt'
+  | 'totalAmountTtc'
+>;
+
+function BatchDraftInput({
+  label,
+  value,
+  disabled,
+  type = 'text',
+  inputMode,
+  onChange,
+}: {
+  label: string;
+  value?: string;
+  disabled: boolean;
+  type?: 'text' | 'date';
+  inputMode?: HTMLAttributes<HTMLInputElement>['inputMode'];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <Input
+        type={type}
+        inputMode={inputMode}
+        value={value ?? ''}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+function BatchExtractionEditor({
+  result,
+  disabled,
+  onDraftChange,
+}: {
+  result: BatchSubmissionResult;
+  disabled: boolean;
+  onDraftChange: (id: string, patch: Partial<InvoiceDraftFormData>) => void;
+}) {
   const { draft, extraction } = result;
+  const [totalVatInput, setTotalVatInput] = useState('');
+
+  useEffect(() => {
+    setTotalVatInput(formatInvoiceAmountForInput(draft?.totalVat));
+  }, [draft?.totalVat, result.id]);
 
   if (!draft || !extraction) {
     return (
@@ -293,41 +362,95 @@ function BatchExtractionPreview({ result }: { result: BatchSubmissionResult }) {
   }
 
   const fields = extraction.fields;
-  const service = draft.publicServiceCode && draft.publicServiceLabel
-    ? `${draft.publicServiceCode} - ${draft.publicServiceLabel}`
-    : draft.publicServiceCode || draft.publicServiceLabel || fields.publicServiceCode || fields.publicServiceLabel;
+  const updateTextField = (field: EditableBatchDraftTextField) => (value: string) => {
+    const nextValue = field === 'supplierSiret'
+      ? value.replace(/\D/g, '')
+      : field === 'currencyCode'
+        ? value.toUpperCase().slice(0, 3)
+        : value;
+    const patch: Partial<InvoiceDraftFormData> = { [field]: nextValue };
+
+    if (field === 'totalAmountHt' || field === 'totalAmountTtc') {
+      patch.lineItems = undefined;
+      patch.vatLines = undefined;
+    }
+
+    onDraftChange(result.id, patch);
+  };
+  const commitTotalVat = () => {
+    onDraftChange(result.id, {
+      totalVat: parseInvoiceAmount(totalVatInput),
+      vatLines: undefined,
+    });
+  };
   const lineItemCount = fields.lineItems?.length
     ? `${fields.lineItems.length} ligne(s) détectée(s)`
     : undefined;
   const vatLineCount = fields.vatLines?.length
     ? `${fields.vatLines.length} taux détecté(s)`
     : undefined;
-  const previewRows = [
-    { label: 'Fournisseur', value: draft.supplierName || fields.supplierName },
-    { label: 'N° facture', value: draft.supplierInvoiceNumber || fields.supplierInvoiceNumber },
-    { label: 'Client public', value: draft.publicCustomerName || fields.publicCustomerName },
-    { label: 'Service destinataire', value: service },
-    { label: 'Date facture', value: draft.invoiceDate || fields.invoiceDate },
-    { label: 'Échéance', value: draft.dueDate || fields.dueDate },
-    { label: 'Mode paiement', value: draft.paymentMode || fields.paymentMode },
-    { label: 'Devise', value: draft.currencyCode || fields.currencyCode },
-    { label: 'SIRET fournisseur', value: draft.supplierSiret || fields.supplierSiret },
-    { label: 'SIRET destinataire', value: draft.publicCustomerCode || fields.publicCustomerSiret },
-    { label: 'Engagement', value: draft.engagementNumber || fields.engagementNumber },
-    { label: 'Marché', value: draft.marketNumber || fields.marketNumber },
-    { label: 'Bon de commande', value: draft.purchaseOrderNumber || fields.purchaseOrderNumber },
-    { label: 'Montant HT', value: formatAmountForDisplay(draft.totalAmountHt) },
-    { label: 'Montant TVA', value: formatExtractedAmountForDisplay(draft.totalVat ?? fields.totalVat) },
-    { label: 'Montant TTC', value: formatAmountForDisplay(draft.totalAmountTtc) },
+  const readOnlyRows = [
     { label: 'Lignes facture', value: lineItemCount },
     { label: 'Lignes TVA', value: vatLineCount },
     { label: 'Confiance extraction', value: `${Math.round(extraction.confidence * 100)}%` },
   ];
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        {previewRows.map((row, index) => (
+        <BatchDraftInput label="Fournisseur" value={draft.supplierName ?? fields.supplierName} disabled={disabled} onChange={updateTextField('supplierName')} />
+        <BatchDraftInput label="SIRET fournisseur" value={draft.supplierSiret ?? fields.supplierSiret} disabled={disabled} inputMode="numeric" onChange={updateTextField('supplierSiret')} />
+        <BatchDraftInput label="N° facture" value={draft.supplierInvoiceNumber} disabled={disabled} onChange={updateTextField('supplierInvoiceNumber')} />
+        <BatchDraftInput label="Client public" value={draft.publicCustomerName ?? fields.publicCustomerName} disabled={disabled} onChange={updateTextField('publicCustomerName')} />
+        <BatchDraftInput label="Code/SIRET destinataire" value={draft.publicCustomerCode ?? fields.publicCustomerSiret} disabled={disabled} onChange={updateTextField('publicCustomerCode')} />
+        <BatchDraftInput label="Code service" value={draft.publicServiceCode ?? fields.publicServiceCode} disabled={disabled} onChange={updateTextField('publicServiceCode')} />
+        <BatchDraftInput label="Libellé service" value={draft.publicServiceLabel ?? fields.publicServiceLabel} disabled={disabled} onChange={updateTextField('publicServiceLabel')} />
+        <BatchDraftInput label="Date facture" value={draft.invoiceDate} disabled={disabled} type="date" onChange={updateTextField('invoiceDate')} />
+        <BatchDraftInput label="Échéance" value={draft.dueDate ?? fields.dueDate} disabled={disabled} type="date" onChange={updateTextField('dueDate')} />
+        <div className="space-y-2">
+          <Label>Mode paiement</Label>
+          <Select
+            value={draft.paymentMode || fields.paymentMode || 'VIREMENT'}
+            disabled={disabled}
+            onValueChange={(value) => onDraftChange(result.id, { paymentMode: value as ChorusPaymentMode })}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAYMENT_MODE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <BatchDraftInput label="Devise" value={draft.currencyCode ?? fields.currencyCode ?? 'EUR'} disabled={disabled} onChange={updateTextField('currencyCode')} />
+        <BatchDraftInput label="Engagement" value={draft.engagementNumber} disabled={disabled} onChange={updateTextField('engagementNumber')} />
+        <BatchDraftInput label="Marché" value={draft.marketNumber} disabled={disabled} onChange={updateTextField('marketNumber')} />
+        <BatchDraftInput label="Bon de commande" value={draft.purchaseOrderNumber} disabled={disabled} onChange={updateTextField('purchaseOrderNumber')} />
+        <BatchDraftInput label="Montant HT" value={draft.totalAmountHt} disabled={disabled} inputMode="decimal" onChange={updateTextField('totalAmountHt')} />
+        <div className="space-y-2">
+          <Label>Montant TVA</Label>
+          <Input
+            inputMode="decimal"
+            value={totalVatInput}
+            disabled={disabled}
+            onBlur={commitTotalVat}
+            onChange={(event) => setTotalVatInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.currentTarget.blur();
+              }
+            }}
+          />
+        </div>
+        <BatchDraftInput label="Montant TTC" value={draft.totalAmountTtc} disabled={disabled} inputMode="decimal" onChange={updateTextField('totalAmountTtc')} />
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        {readOnlyRows.map((row, index) => (
           <ExtractionInfoRow key={`${result.id}-${row.label}`} index={index} label={row.label} value={row.value} />
         ))}
       </div>
@@ -558,6 +681,87 @@ export default function InvoiceCreate() {
       batchPublicService,
     };
   }, [publicCustomers, publicServices, suppliers]);
+
+  const buildBatchResultPatchFromDraft = useCallback((
+    result: BatchSubmissionResult,
+    nextDraft: InvoiceDraftFormData,
+  ): Partial<BatchSubmissionResult> => {
+    if (!result.extraction) {
+      return {
+        draft: nextDraft,
+        invoiceNumber: nextDraft.supplierInvoiceNumber,
+      };
+    }
+
+    const {
+      batchSupplier,
+      batchPublicCustomer,
+      batchAvailableServices,
+      batchPublicService,
+    } = resolveBatchSubmissionContext(nextDraft);
+    const batchPreparation = prepareInvoiceSubmission({
+      formData: nextDraft,
+      supplier: batchSupplier,
+      publicCustomer: batchPublicCustomer,
+      publicService: batchPublicService,
+      availableServices: batchAvailableServices,
+      extraction: result.extraction,
+    });
+
+    if (batchPreparation.validation.errors.length > 0) {
+      return {
+        status: 'error',
+        draft: nextDraft,
+        invoiceNumber: nextDraft.supplierInvoiceNumber,
+        externalId: undefined,
+        payload: undefined,
+        summary: null,
+        apiCalls: [],
+        message: batchPreparation.validation.errors[0]?.message || 'Facture incomplète pour la soumission.',
+      };
+    }
+
+    const payloadForBatchSubmission = buildInvoiceSubmissionPayload(nextDraft, {
+      supplier: batchSupplier,
+      publicCustomer: batchPublicCustomer,
+      publicService: batchPublicService,
+      availableServices: batchAvailableServices,
+      extraction: result.extraction,
+      chorus: chorusTechnicalContext,
+      mainFileName: result.file.name,
+    });
+
+    return {
+      status: 'ready',
+      draft: nextDraft,
+      invoiceNumber: payloadForBatchSubmission.numeroFactureSaisi,
+      externalId: undefined,
+      payload: payloadForBatchSubmission,
+      summary: null,
+      apiCalls: [],
+      message: batchPreparation.validation.warnings.length > 0
+        ? 'Corrections prises en compte avec des points à contrôler avant soumission.'
+        : 'Corrections prises en compte. Facture prête pour Chorus.',
+    };
+  }, [chorusTechnicalContext, resolveBatchSubmissionContext]);
+
+  const handleBatchDraftChange = useCallback((id: string, patch: Partial<InvoiceDraftFormData>) => {
+    setBatchResults((currentResults) => currentResults.map((result) => {
+      if (result.id !== id || !result.draft || result.status === 'submitting' || result.status === 'success') {
+        return result;
+      }
+
+      const nextDraft = {
+        ...result.draft,
+        ...patch,
+      };
+
+      return {
+        ...result,
+        ...buildBatchResultPatchFromDraft(result, nextDraft),
+      };
+    }));
+  }, [buildBatchResultPatchFromDraft]);
 
   const handleViewTreatmentDetails = useCallback(() => {
     const target = treatmentDetailsRef.current
@@ -2183,7 +2387,11 @@ export default function InvoiceCreate() {
                       </span>
                     </summary>
                     <div className="space-y-3 border-t bg-muted/10 p-3">
-                      <BatchExtractionPreview result={result} />
+                      <BatchExtractionEditor
+                        result={result}
+                        disabled={batchSubmitting || result.status === 'success'}
+                        onDraftChange={handleBatchDraftChange}
+                      />
                       <p className="text-xs text-muted-foreground">
                         {result.message || result.summary?.libelle || '-'}
                       </p>
