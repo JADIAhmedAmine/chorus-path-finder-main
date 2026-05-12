@@ -203,6 +203,39 @@ def _compact_audit_fields(fields: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _user_text(value: Any) -> str:
+    return str(value).strip() if value is not None else ""
+
+
+def _submitter_comment(user: dict[str, Any]) -> str:
+    first_name = _user_text(user.get("firstName"))
+    last_name = _user_text(user.get("lastName"))
+    email = _user_text(user.get("email"))
+    full_name = " ".join(part for part in (first_name, last_name) if part)
+
+    if full_name and email:
+        return f"Soumis par : {full_name} ({email})"
+    if email:
+        return f"Soumis par : {email}"
+    if full_name:
+        return f"Soumis par : {full_name}"
+    return "Soumis par : utilisateur authentifié"
+
+
+def _add_submitter_comment(payload: dict[str, Any], user: dict[str, Any]) -> dict[str, Any]:
+    submitter_line = _submitter_comment(user)
+    existing_comment = _user_text(payload.get("commentaire"))
+
+    if existing_comment and submitter_line in existing_comment:
+        payload["commentaire"] = existing_comment
+    elif existing_comment:
+        payload["commentaire"] = f"{existing_comment}\n{submitter_line}"
+    else:
+        payload["commentaire"] = submitter_line
+
+    return payload
+
+
 def _invoice_audit_fields(
     payload: dict[str, Any] | None,
     result: dict[str, Any] | None = None,
@@ -1150,6 +1183,7 @@ def handle_submit(
             error_message=error_message,
         )
 
+    payload = _add_submitter_comment(payload, auth_user)
     started_at = perf_counter()
     environment_override = _extract_environment_override(body)
     logger.debug(
