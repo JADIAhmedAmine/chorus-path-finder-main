@@ -40,6 +40,15 @@
       "active": true,
       "passwordHash": "$2b$12$foTlU9jttRcFDmW4JHDOQeU6GKpFMPdudjhxqNfUROXVsgZR/HYDK",
       "updatedAt": "2026-05-12T09:21:59.796460Z"
+    },
+    {
+      "email": "filipe.bica@gigalis.fr",
+      "firstName": "Filipe",
+      "lastName": "Bica",
+      "roleCode": "ADMINISTRATEUR",
+      "active": true,
+      "passwordHash": "$2b$12$foTlU9jttRcFDmW4JHDOQeU6GKpFMPdudjhxqNfUROXVsgZR/HYDK",
+      "updatedAt": "2026-05-12T09:21:59.796460Z"
     }
   ]
 }
