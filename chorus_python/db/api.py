@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from sqlalchemy import select
 
-from ..auth import require_auth
+from ..auth import get_current_auth_user, require_auth
 from ..client import ChorusClient
 from ..config import load_chorus_settings
 from . import repositories
@@ -190,18 +190,18 @@ def get_current_tenant_endpoint(
 
 @router.get("/users/me")
 def get_current_user_endpoint(
-    email: str = Depends(require_auth),
+    user: dict[str, Any] = Depends(get_current_auth_user),
 ) -> dict[str, Any]:
     return {
-        "id": email,
-        "tenantId": load_database_settings().default_tenant_id,
-        "email": email,
-        "firstName": email.split("@", 1)[0],
-        "lastName": "",
-        "roleCode": "GESTIONNAIRE",
-        "active": True,
-        "createdAt": "1970-01-01T00:00:00Z",
-        "updatedAt": "1970-01-01T00:00:00Z",
+        "id": user.get("id") or user["email"],
+        "tenantId": user.get("tenantId") or load_database_settings().default_tenant_id,
+        "email": user["email"],
+        "firstName": user.get("firstName") or user["email"].split("@", 1)[0],
+        "lastName": user.get("lastName") or "",
+        "roleCode": user.get("roleCode") or "GESTIONNAIRE",
+        "active": user.get("active", True),
+        "createdAt": user.get("createdAt") or "1970-01-01T00:00:00Z",
+        "updatedAt": user.get("updatedAt") or "1970-01-01T00:00:00Z",
     }
 
 

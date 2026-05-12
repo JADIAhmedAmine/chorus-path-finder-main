@@ -32,6 +32,11 @@ export function hasValidAuthSession(): boolean {
   return getAuthToken() !== null;
 }
 
+export function canSubmitInvoices(session: LocalAuthSession | null = loadAuthSession()): boolean {
+  const roleCode = session?.roleCode?.trim().toUpperCase();
+  return roleCode === 'ADMINISTRATEUR' || roleCode === 'GESTIONNAIRE' || roleCode === 'DEPOSANT';
+}
+
 export function authHeaders(extra?: HeadersInit): Record<string, string> {
   const headers = new Headers(extra);
   const token = getAuthToken();

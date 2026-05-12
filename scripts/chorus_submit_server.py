@@ -90,14 +90,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import uvicorn
-from fastapi import Body, Depends, FastAPI
+from fastapi import Body, Depends, FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from chorus_python import ChorusSubmissionService, load_chorus_settings
 from chorus_python.annuaire import build_annuaire_files_from_api_response, relative_to_repo
-from chorus_python.auth import require_auth, router as auth_router
+from chorus_python.audit import append_audit_event
+from chorus_python.auth import get_current_auth_user, require_auth, require_submit_permission, router as auth_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
 
@@ -142,6 +143,220 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+AUDITED_ACTIONS = {
+    SUBMIT_PATH: "invoice.submit",
+}
+
+
+def _audit_action_for_request(request: Request) -> str | None:
+    if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
+        return None
+    return AUDITED_ACTIONS.get(request.url.path)
+
+
+def _request_user_for_audit(request: Request) -> dict[str, Any]:
+    authorization = request.headers.get("authorization")
+    if not authorization:
+        return {}
+    try:
+        user = get_current_auth_user(authorization)
+    except Exception:  # noqa: BLE001
+        return {}
+    return {
+        "email": user.get("email"),
+        "roleCode": user.get("roleCode"),
+    }
+
+
+def _audit_text(value: Any, max_length: int = 160) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text if len(text) <= max_length else f"{text[:max_length - 1]}…"
+
+
+def _audit_value(value: Any, max_length: int = 160) -> Any:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    return _audit_text(value, max_length=max_length)
+
+
+def _nested_value(source: dict[str, Any], *path: str) -> Any:
+    current: Any = source
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _compact_audit_fields(fields: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in fields.items()
+        if value is not None and value != ""
+    }
+
+
+def _invoice_audit_fields(
+    payload: dict[str, Any] | None,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    return _compact_audit_fields({
+        "invoiceNumber": _audit_text(payload.get("numeroFactureSaisi"), max_length=80),
+        "invoiceDate": _audit_text(payload.get("dateFacture"), max_length=32),
+        "amountTtc": _audit_value(_nested_value(payload, "montantTotal", "montantTtcTotal")),
+        "amountToPay": _audit_value(_nested_value(payload, "montantTotal", "montantAPayer")),
+        "currency": _audit_text(_nested_value(payload, "references", "deviseFacture"), max_length=8),
+        "customerCode": _audit_text(_nested_value(payload, "destinataire", "codeDestinataire"), max_length=32),
+        "customerServiceCode": _audit_text(_nested_value(payload, "destinataire", "codeServiceExecutant"), max_length=64),
+        "supplierId": _audit_value(_nested_value(payload, "fournisseur", "idFournisseur")),
+        "supplierServiceId": _audit_value(_nested_value(payload, "fournisseur", "idServiceFournisseur")),
+        "chorusId": _audit_text(result.get("externalId") if isinstance(result, dict) else None, max_length=80),
+    })
+
+
+def _safe_append_audit_event(event: dict[str, Any]) -> None:
+    try:
+        append_audit_event(event)
+    except Exception as error:  # noqa: BLE001
+        logger.warning("Audit soumission facture indisponible: %s", error)
+
+
+def _audit_invoice_submission(
+    request: Request,
+    *,
+    user: dict[str, Any],
+    payload: dict[str, Any] | None,
+    status: str,
+    http_status: int | HTTPStatus,
+    started_at: float,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> None:
+    event = _compact_audit_fields({
+        "action": "invoice.submit",
+        "email": user.get("email"),
+        "roleCode": user.get("roleCode"),
+        **_invoice_audit_fields(payload, result=result),
+        "status": status,
+        "httpStatus": int(http_status),
+        "durationMs": round((perf_counter() - started_at) * 1000),
+        "errorMessage": _audit_text(error_message, max_length=240) if status != "success" else None,
+    })
+    _safe_append_audit_event(event)
+    request.state.audit_logged = True
+
+
+def _audit_submit_response(
+    request: Request,
+    *,
+    user: dict[str, Any],
+    payload: dict[str, Any] | None,
+    http_status: int | HTTPStatus,
+    response_payload: dict[str, Any],
+    started_at: float,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> JSONResponse:
+    _audit_invoice_submission(
+        request,
+        user=user,
+        payload=payload,
+        status="success" if int(http_status) < 400 else "failed",
+        http_status=http_status,
+        started_at=started_at,
+        result=result,
+        error_message=error_message,
+    )
+    return _json_response(http_status, response_payload)
+
+
+def _error_message_from_response_body(body: bytes) -> str | None:
+    if not body:
+        return None
+    try:
+        parsed = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+
+    for key in ("error", "detail", "message"):
+        value = parsed.get(key)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list) and value:
+            first = value[0]
+            if isinstance(first, dict) and isinstance(first.get("msg"), str):
+                return first["msg"]
+            if isinstance(first, str):
+                return first
+    return None
+
+
+async def _response_with_replayed_body(response: Response) -> tuple[bytes, Response]:
+    chunks: list[bytes] = []
+    async for chunk in response.body_iterator:  # type: ignore[attr-defined]
+        chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+
+    body = b"".join(chunks)
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    replayed_response = Response(
+        content=body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type=response.media_type,
+        background=response.background,
+    )
+    return body, replayed_response
+
+
+@app.middleware("http")
+async def audit_essential_actions(request: Request, call_next):
+    action = _audit_action_for_request(request)
+    if action is None:
+        return await call_next(request)
+
+    started_at = perf_counter()
+    user = _request_user_for_audit(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        _safe_append_audit_event({
+            "action": action,
+            **user,
+            "status": "error",
+            "httpStatus": 500,
+            "durationMs": round((perf_counter() - started_at) * 1000),
+        })
+        raise
+
+    if getattr(request.state, "audit_logged", False):
+        return response
+
+    response_body, replayed_response = await _response_with_replayed_body(response)
+    _safe_append_audit_event(_compact_audit_fields({
+        "action": action,
+        **user,
+        "status": "success" if response.status_code < 400 else "failed",
+        "httpStatus": response.status_code,
+        "durationMs": round((perf_counter() - started_at) * 1000),
+        "errorMessage": _audit_text(_error_message_from_response_body(response_body), max_length=240)
+        if response.status_code >= 400
+        else None,
+    }))
+    return replayed_response
+
 
 app.include_router(auth_router)
 
@@ -873,8 +1088,13 @@ def handle_sync_annuaire(body: dict[str, Any] | None = Body(default=None)) -> JS
         )
 
 
-@app.post(SUBMIT_PATH, dependencies=[Depends(require_auth)])
-def handle_submit(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+@app.post(SUBMIT_PATH)
+def handle_submit(
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+    auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    audit_started_at = perf_counter()
     body = body or {}
     _print_received_post_debug(SUBMIT_PATH, body)
     payload = body.get("payload")
@@ -882,40 +1102,52 @@ def handle_submit(body: dict[str, Any] | None = Body(default=None)) -> JSONRespo
     attachments = body.get("attachments") or []
 
     if not isinstance(payload, dict):
-        return _json_response(
-            HTTPStatus.BAD_REQUEST,
-            {
-                "ok": False,
-                "error": "Le champ payload est obligatoire et doit être un objet JSON.",
-            },
+        error_message = "Le champ payload est obligatoire et doit être un objet JSON."
+        return _audit_submit_response(
+            request,
+            user=auth_user,
+            payload=None,
+            http_status=HTTPStatus.BAD_REQUEST,
+            response_payload={"ok": False, "error": error_message},
+            started_at=audit_started_at,
+            error_message=error_message,
         )
 
     if main_file is not None and not isinstance(main_file, dict):
-        return _json_response(
-            HTTPStatus.BAD_REQUEST,
-            {
-                "ok": False,
-                "error": "Le champ mainFile doit être un objet JSON s'il est fourni.",
-            },
+        error_message = "Le champ mainFile doit être un objet JSON s'il est fourni."
+        return _audit_submit_response(
+            request,
+            user=auth_user,
+            payload=payload,
+            http_status=HTTPStatus.BAD_REQUEST,
+            response_payload={"ok": False, "error": error_message},
+            started_at=audit_started_at,
+            error_message=error_message,
         )
 
     if not isinstance(attachments, list):
-        return _json_response(
-            HTTPStatus.BAD_REQUEST,
-            {
-                "ok": False,
-                "error": "Le champ attachments doit être une liste JSON s'il est fourni.",
-            },
+        error_message = "Le champ attachments doit être une liste JSON s'il est fourni."
+        return _audit_submit_response(
+            request,
+            user=auth_user,
+            payload=payload,
+            http_status=HTTPStatus.BAD_REQUEST,
+            response_payload={"ok": False, "error": error_message},
+            started_at=audit_started_at,
+            error_message=error_message,
         )
 
     invalid_attachment = next((item for item in attachments if not isinstance(item, dict)), None)
     if invalid_attachment is not None:
-        return _json_response(
-            HTTPStatus.BAD_REQUEST,
-            {
-                "ok": False,
-                "error": "Chaque pièce jointe complémentaire doit être un objet JSON.",
-            },
+        error_message = "Chaque pièce jointe complémentaire doit être un objet JSON."
+        return _audit_submit_response(
+            request,
+            user=auth_user,
+            payload=payload,
+            http_status=HTTPStatus.BAD_REQUEST,
+            response_payload={"ok": False, "error": error_message},
+            started_at=audit_started_at,
+            error_message=error_message,
         )
 
     started_at = perf_counter()
@@ -944,7 +1176,15 @@ def handle_submit(body: dict[str, Any] | None = Body(default=None)) -> JSONRespo
             result.get("externalId"),
             duration_ms,
         )
-        return _json_response(HTTPStatus.OK, result)
+        return _audit_submit_response(
+            request,
+            user=auth_user,
+            payload=payload,
+            http_status=HTTPStatus.OK,
+            response_payload=result,
+            started_at=audit_started_at,
+            result=result,
+        )
     except Exception as error:  # noqa: BLE001
         message = str(error) or error.__class__.__name__
         api_calls = []
@@ -958,13 +1198,18 @@ def handle_submit(body: dict[str, Any] | None = Body(default=None)) -> JSONRespo
             message,
         )
 
-        return _json_response(
-            HTTPStatus.BAD_GATEWAY,
-            {
+        return _audit_submit_response(
+            request,
+            user=auth_user,
+            payload=payload,
+            http_status=HTTPStatus.BAD_GATEWAY,
+            response_payload={
                 "ok": False,
                 "error": message,
                 "apiCalls": api_calls,
             },
+            started_at=audit_started_at,
+            error_message=message,
         )
 
 

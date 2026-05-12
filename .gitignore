@@ -47,6 +47,7 @@ __pycache__/
 # Generated or temporary project artifacts
 annuaire_out/
 src/data/annuaire_out/
+config/audit-log*.jsonl
 vite.config.ts.timestamp-*.mjs
 output_base64.txt
 response.json

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
@@ -11,7 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
-import { loadAuthSession } from '@/lib/auth/session';
+import { authenticatedFetch, loadAuthSession } from '@/lib/auth/session';
 import { applyEnvironmentPreset, loadChorusConfig, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
 import type {
   ChorusConfig,
@@ -71,6 +71,10 @@ export default function SettingsPage() {
   const [lastTechnicalContextResult, setLastTechnicalContextResult] = useState<ChorusTechnicalContextResolutionResult | null>(null);
   const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? '');
   const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
   const { suppliers, loading: loadingReferenceSuppliers, error: referenceSuppliersError } = useReferenceCatalog(config, {
     includeSuppliers: true,
     includePublicCustomers: false,
@@ -127,6 +131,53 @@ export default function SettingsPage() {
       title: 'Configuration sauvegardée',
       description: 'Le connecteur Chorus Pro a été mis à jour dans ce navigateur.',
     });
+  };
+
+  const handleChangePassword = async (event: FormEvent) => {
+    event.preventDefault();
+
+    if (newPassword !== confirmPassword) {
+      toast({
+        title: 'Mot de passe non confirmé',
+        description: 'Les deux saisies du nouveau mot de passe doivent être identiques.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const response = await authenticatedFetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const detail = typeof body?.detail === 'string' ? body.detail : 'Changement de mot de passe impossible.';
+        throw new Error(detail);
+      }
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast({
+        title: 'Mot de passe modifié',
+        description: 'Le nouveau mot de passe sera demandé à la prochaine connexion.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Échec changement mot de passe',
+        description: error instanceof Error ? error.message : 'Erreur inconnue.',
+        variant: 'destructive',
+      });
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   const handleTestConnection = async () => {
@@ -231,6 +282,60 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-semibold">Paramètres</h1>
         <p className="text-sm text-muted-foreground">Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Compte utilisateur</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleChangePassword} className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="current-password">Mot de passe actuel</Label>
+              <Input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                autoComplete="current-password"
+                disabled={changingPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-password">Nouveau mot de passe</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                autoComplete="new-password"
+                disabled={changingPassword}
+                minLength={10}
+                onChange={(event) => setNewPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">Confirmation</Label>
+              <Input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                autoComplete="new-password"
+                disabled={changingPassword}
+                minLength={10}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Button type="submit" disabled={changingPassword}>
+                {changingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Changer le mot de passe
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

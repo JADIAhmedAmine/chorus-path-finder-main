@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { ChorusApiReturnSummaryPanel } from '@/components/common/ChorusApiReturnSummaryPanel';
 import { getInvoice, getInvoiceAttachments } from '@/data/mock-data';
+import { canSubmitInvoices } from '@/lib/auth/session';
 import { ChorusSubmitApiError, createChorusConnector } from '@/lib/chorus/client';
 import { buildInvoiceSubmissionPayload } from '@/lib/chorus/mappers';
 import { createEmptyInvoiceDraft, formatInvoiceAmountForInput, mergeExtractionIntoDraft, parseInvoiceAmount } from '@/lib/chorus/normalization';
@@ -632,6 +633,7 @@ export default function InvoiceCreate() {
     effectiveSubmissionPayload,
   ]);
   const isDirectMode = chorusConfig.mode === 'direct' && chorusConfig.enabled;
+  const canCurrentUserSubmitInvoices = canSubmitInvoices();
   const blockingIssues = [
     ...submissionPreparation.validation.errors.map((error) => error.message),
     ...(isDirectMode ? effectivePayloadValidation.errors.map((error) => error.message) : []),
@@ -642,14 +644,16 @@ export default function InvoiceCreate() {
   ];
   const hasBlockingSubmissionAlerts = isDirectMode && blockingIssues.length > 0;
   const hasVisibleSubmissionAlerts = isDirectMode && (blockingIssues.length > 0 || reviewIssues.length > 0);
-  const submissionBlockReason = extracting
-    ? 'Extraction du document en cours.'
-    : submitting
-      ? 'Soumission Chorus en cours.'
-      : hasBlockingSubmissionAlerts
-        ? `Soumission verrouillée : ${blockingIssues[0] ?? 'des champs obligatoires restent incomplets.'}`
-        : undefined;
-  const isSubmissionBlocked = extracting || submitting || hasBlockingSubmissionAlerts;
+  const submissionBlockReason = !canCurrentUserSubmitInvoices
+    ? 'Votre compte est en consultation seule et ne peut pas soumettre de factures.'
+    : extracting
+      ? 'Extraction du document en cours.'
+      : submitting
+        ? 'Soumission Chorus en cours.'
+        : hasBlockingSubmissionAlerts
+          ? `Soumission verrouillée : ${blockingIssues[0] ?? 'des champs obligatoires restent incomplets.'}`
+          : undefined;
+  const isSubmissionBlocked = !canCurrentUserSubmitInvoices || extracting || submitting || hasBlockingSubmissionAlerts;
 
   const updateBatchResult = useCallback((id: string, patch: Partial<BatchSubmissionResult>) => {
     setBatchResults((currentResults) => currentResults.map((result) => (
@@ -1094,6 +1098,15 @@ export default function InvoiceCreate() {
   };
 
   const handleBatchSubmitToChorus = async () => {
+    if (!canCurrentUserSubmitInvoices) {
+      toast({
+        title: 'Soumission non autorisée',
+        description: 'Votre compte est en consultation seule et ne peut pas soumettre de factures.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     const resultsToSubmit = batchResults.filter(isBatchResultSubmittable);
 
     if (resultsToSubmit.length === 0) {
@@ -1235,6 +1248,15 @@ export default function InvoiceCreate() {
 
   const handleSubmit = async (options?: { forceDebug?: boolean }) => {
     const forceDebug = options?.forceDebug === true;
+    if (!canCurrentUserSubmitInvoices) {
+      toast({
+        title: 'Soumission non autorisée',
+        description: 'Votre compte est en consultation seule et ne peut pas soumettre de factures.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
     if (!mainFile) {
       toast({ title: 'Erreur', description: 'Veuillez déposer une facture principale.', variant: 'destructive' });
       return;
@@ -2065,7 +2087,7 @@ export default function InvoiceCreate() {
                       variant="outline"
                       size="sm"
                       onClick={() => void handleSubmit({ forceDebug: true })}
-                      disabled={extracting || submitting || !mainFile}
+                      disabled={!canCurrentUserSubmitInvoices || extracting || submitting || !mainFile}
                     >
                       {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TriangleAlert className="mr-2 h-4 w-4" />}
                       Forcer l’envoi debug
@@ -2128,7 +2150,7 @@ export default function InvoiceCreate() {
             <Button
               type="button"
               onClick={() => void handleBatchSubmitToChorus()}
-              disabled={batchSubmitting || !canSubmitBatchToChorus}
+              disabled={batchSubmitting || !canCurrentUserSubmitInvoices || !canSubmitBatchToChorus}
             >
               {batchIsSubmittingToChorus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
               Envoyer à Chorus par lot

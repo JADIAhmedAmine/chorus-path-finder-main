@@ -1,13 +1,14 @@
 import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
-  ClipboardList, UserCircle2
+  ClipboardList, UserCircle2, Activity
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar,
 } from '@/components/ui/sidebar';
 import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
+import { loadAuthSession } from '@/lib/auth/session';
 
 const mainItems = [
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
@@ -20,7 +21,7 @@ const refItems = [
   { title: 'Services destinataires', url: '/references/services', icon: ClipboardList },
 ];
 
-const adminItems = [
+const baseAdminItems = [
   { title: 'Paramètres', url: '/settings', icon: Settings },
   { title: 'Connexion / Profil', url: '/login', icon: UserCircle2 },
 ];
@@ -29,6 +30,13 @@ export function AppSidebar() {
   const { state } = useSidebar();
   const collapsed = state === 'collapsed';
   const location = useLocation();
+  const session = loadAuthSession();
+  const adminItems = session?.roleCode === 'ADMINISTRATEUR'
+    ? [
+        { title: 'Monitoring', url: '/monitoring', icon: Activity },
+        ...baseAdminItems,
+      ]
+    : baseAdminItems;
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
     return location.pathname.startsWith(path);

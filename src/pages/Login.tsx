@@ -14,7 +14,15 @@ interface LoginResponse {
   access_token: string;
   token_type: string;
   expires_in: number;
+  id?: string;
   email: string;
+  firstName?: string;
+  lastName?: string;
+  roleCode?: string;
+  chorusCurrentUserId?: string;
+  chorusSupplierId?: string;
+  chorusSupplierServiceId?: string;
+  chorusBankAccountCode?: string;
 }
 
 export default function Login() {
@@ -52,13 +60,13 @@ export default function Login() {
 
       const session = {
         email: normalizedEmail,
-        firstName: existingSession?.firstName || namePart || 'Utilisateur',
-        lastName: existingSession?.lastName || '',
-        roleCode: existingSession?.roleCode || 'GESTIONNAIRE',
-        chorusCurrentUserId: existingSession?.chorusCurrentUserId,
-        chorusSupplierId: existingSession?.chorusSupplierId,
-        chorusSupplierServiceId: existingSession?.chorusSupplierServiceId,
-        chorusBankAccountCode: existingSession?.chorusBankAccountCode,
+        firstName: data.firstName?.trim() || existingSession?.firstName || namePart || 'Utilisateur',
+        lastName: data.lastName?.trim() || existingSession?.lastName || '',
+        roleCode: data.roleCode?.trim() || existingSession?.roleCode || 'GESTIONNAIRE',
+        chorusCurrentUserId: data.chorusCurrentUserId?.trim() || existingSession?.chorusCurrentUserId,
+        chorusSupplierId: data.chorusSupplierId?.trim() || existingSession?.chorusSupplierId,
+        chorusSupplierServiceId: data.chorusSupplierServiceId?.trim() || existingSession?.chorusSupplierServiceId,
+        chorusBankAccountCode: data.chorusBankAccountCode?.trim() || existingSession?.chorusBankAccountCode,
         accessToken: data.access_token,
         expiresAt,
         createdAt: existingSession?.createdAt || new Date().toISOString(),
