@@ -66,6 +66,7 @@ services:
     expose:
       - "8008"
     volumes:
+      - ./config:/app/config
       - chorus_annuaire_data:/app/public/annuaire
 
   frontend:

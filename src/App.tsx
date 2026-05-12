@@ -16,6 +16,7 @@ import ChorusInvoiceDetail from "./pages/ChorusInvoiceDetail";
 import InvoiceCreate from "./pages/InvoiceCreate";
 import References from "./pages/References";
 import SettingsPage from "./pages/SettingsPage";
+import Monitoring from "./pages/Monitoring";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -160,6 +161,7 @@ const App = () => (
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/references/customers" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
             <Route path="/references/services" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
+            <Route path="/monitoring" element={<RequireAuth><AppLayout><Monitoring /></AppLayout></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><AppLayout><SettingsPage /></AppLayout></RequireAuth>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
