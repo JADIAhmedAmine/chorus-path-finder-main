@@ -33,10 +33,12 @@ import {
   resolveAndHydrateChorusSubmissionPayload,
   type ChorusPayloadHydrationResult,
 } from '@/lib/chorus/hydrateSubmissionPayload';
+import type { PublicCustomer, PublicService } from '@/types';
 import type { ChorusPaymentMode, ChorusSubmissionPayload, InvoiceDraftFormData, LocalInvoiceExtractionResult } from '@/lib/chorus/types';
 import type { ChorusApiDebugEntry, ChorusSubmissionReferenceSnapshot, ChorusSubmitInvoiceResult } from '@/types/chorus';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
+const NO_PUBLIC_SERVICE_VALUE = '__no_public_service__';
 
 type BatchSubmissionStatus = 'pending' | 'extracting' | 'ready' | 'submitting' | 'success' | 'error';
 
@@ -99,6 +101,11 @@ function formatExtractedAmountForDisplay(value?: number): string | undefined {
 
 function normalizeReferenceLookup(value?: string): string {
   return value?.trim().replace(/\s/g, '').toLowerCase() ?? '';
+}
+
+function normalizeOptionalServiceCode(value?: string): string {
+  const trimmed = value?.trim() ?? '';
+  return trimmed === '0' || trimmed === '00' || trimmed === '01' ? '' : trimmed;
 }
 
 function isSupportedInvoiceFile(file: File): boolean {
@@ -291,6 +298,31 @@ function DocumentPreviewCard({
   );
 }
 
+function BatchDocumentPreview({ result }: { result: BatchSubmissionResult }) {
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const isPdf = result.file.type === 'application/pdf' || result.file.name.toLowerCase().endsWith('.pdf');
+    if (!isPdf) {
+      setPreviewUrl(null);
+      return undefined;
+    }
+
+    const objectUrl = URL.createObjectURL(result.file);
+    setPreviewUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [result.file]);
+
+  return (
+    <DocumentPreviewCard
+      file={result.file}
+      previewUrl={previewUrl ?? undefined}
+      extractedText={result.extraction?.rawText ?? ''}
+      rawTextPreview={result.extraction?.rawTextPreview ?? ''}
+    />
+  );
+}
+
 type EditableBatchDraftTextField = Extract<keyof InvoiceDraftFormData,
   | 'supplierName'
   | 'supplierSiret'
@@ -341,10 +373,14 @@ function BatchDraftInput({
 function BatchExtractionEditor({
   result,
   disabled,
+  publicCustomers,
+  publicServices,
   onDraftChange,
 }: {
   result: BatchSubmissionResult;
   disabled: boolean;
+  publicCustomers: PublicCustomer[];
+  publicServices: PublicService[];
   onDraftChange: (id: string, patch: Partial<InvoiceDraftFormData>) => void;
 }) {
   const { draft, extraction } = result;
@@ -366,6 +402,8 @@ function BatchExtractionEditor({
   const updateTextField = (field: EditableBatchDraftTextField) => (value: string) => {
     const nextValue = field === 'supplierSiret'
       ? value.replace(/\D/g, '')
+      : field === 'publicServiceCode' || field === 'publicServiceLabel'
+        ? normalizeOptionalServiceCode(value)
       : field === 'currencyCode'
         ? value.toUpperCase().slice(0, 3)
         : value;
@@ -374,6 +412,11 @@ function BatchExtractionEditor({
     if (field === 'totalAmountHt' || field === 'totalAmountTtc') {
       patch.lineItems = undefined;
       patch.vatLines = undefined;
+    }
+    if (field === 'publicCustomerCode') {
+      patch.publicServiceId = '';
+      patch.publicServiceCode = '';
+      patch.publicServiceLabel = '';
     }
 
     onDraftChange(result.id, patch);
@@ -395,59 +438,167 @@ function BatchExtractionEditor({
     { label: 'Lignes TVA', value: vatLineCount },
     { label: 'Confiance extraction', value: `${Math.round(extraction.confidence * 100)}%` },
   ];
+  const typedPublicCustomerCode = normalizeReferenceLookup(draft.publicCustomerCode);
+  const selectedBatchPublicCustomer = publicCustomers.find((customer) => customer.id === draft.publicCustomerId)
+    ?? publicCustomers.find((customer) => (
+      Boolean(typedPublicCustomerCode)
+      && (
+        normalizeReferenceLookup(customer.codeDestinataire) === typedPublicCustomerCode
+        || normalizeReferenceLookup(customer.siret) === typedPublicCustomerCode
+      )
+    ));
+  const batchServices = selectedBatchPublicCustomer
+    ? publicServices.filter((service) => service.publicCustomerId === selectedBatchPublicCustomer.id && service.active)
+    : [];
+  const selectedBatchPublicService = batchServices.find((service) => service.id === draft.publicServiceId);
+  const handlePublicCustomerSelect = (customerId: string) => {
+    const customer = publicCustomers.find((item) => item.id === customerId);
+    if (!customer) {
+      return;
+    }
+
+    onDraftChange(result.id, {
+      publicCustomerId: customer.id,
+      publicCustomerCode: customer.codeDestinataire || customer.siret,
+      publicCustomerName: customer.legalName,
+      publicServiceId: '',
+      publicServiceCode: '',
+      publicServiceLabel: '',
+    });
+  };
+  const handlePublicServiceSelect = (serviceId: string) => {
+    if (serviceId === NO_PUBLIC_SERVICE_VALUE) {
+      onDraftChange(result.id, {
+        publicServiceId: '',
+        publicServiceCode: '',
+        publicServiceLabel: '',
+      });
+      return;
+    }
+
+    const service = batchServices.find((item) => item.id === serviceId);
+    if (!service) {
+      return;
+    }
+
+    onDraftChange(result.id, {
+      publicServiceId: service.id,
+      publicServiceCode: service.codeServiceExecutant,
+      publicServiceLabel: service.label,
+    });
+  };
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <BatchDraftInput label="Fournisseur" value={draft.supplierName ?? fields.supplierName} disabled={disabled} onChange={updateTextField('supplierName')} />
-        <BatchDraftInput label="SIRET fournisseur" value={draft.supplierSiret ?? fields.supplierSiret} disabled={disabled} inputMode="numeric" onChange={updateTextField('supplierSiret')} />
-        <BatchDraftInput label="N° facture" value={draft.supplierInvoiceNumber} disabled={disabled} onChange={updateTextField('supplierInvoiceNumber')} />
-        <BatchDraftInput label="Client public" value={draft.publicCustomerName ?? fields.publicCustomerName} disabled={disabled} onChange={updateTextField('publicCustomerName')} />
-        <BatchDraftInput label="Code/SIRET destinataire" value={draft.publicCustomerCode ?? fields.publicCustomerSiret} disabled={disabled} onChange={updateTextField('publicCustomerCode')} />
-        <BatchDraftInput label="Code service" value={draft.publicServiceCode ?? fields.publicServiceCode} disabled={disabled} onChange={updateTextField('publicServiceCode')} />
-        <BatchDraftInput label="Libellé service" value={draft.publicServiceLabel ?? fields.publicServiceLabel} disabled={disabled} onChange={updateTextField('publicServiceLabel')} />
-        <BatchDraftInput label="Date facture" value={draft.invoiceDate} disabled={disabled} type="date" onChange={updateTextField('invoiceDate')} />
-        <BatchDraftInput label="Échéance" value={draft.dueDate ?? fields.dueDate} disabled={disabled} type="date" onChange={updateTextField('dueDate')} />
-        <div className="space-y-2">
-          <Label>Mode paiement</Label>
-          <Select
-            value={draft.paymentMode || fields.paymentMode || 'VIREMENT'}
-            disabled={disabled}
-            onValueChange={(value) => onDraftChange(result.id, { paymentMode: value as ChorusPaymentMode })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {PAYMENT_MODE_OPTIONS.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className="rounded-lg border bg-background p-3">
+        <div className="mb-3">
+          <p className="text-sm font-medium">Données facture</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Vérifiez et corrigez les champs extraits avant l’envoi de cette facture à Chorus.
+          </p>
         </div>
-        <BatchDraftInput label="Devise" value={draft.currencyCode ?? fields.currencyCode ?? 'EUR'} disabled={disabled} onChange={updateTextField('currencyCode')} />
-        <BatchDraftInput label="Engagement" value={draft.engagementNumber} disabled={disabled} onChange={updateTextField('engagementNumber')} />
-        <BatchDraftInput label="Marché" value={draft.marketNumber} disabled={disabled} onChange={updateTextField('marketNumber')} />
-        <BatchDraftInput label="Bon de commande" value={draft.purchaseOrderNumber} disabled={disabled} onChange={updateTextField('purchaseOrderNumber')} />
-        <BatchDraftInput label="Montant HT" value={draft.totalAmountHt} disabled={disabled} inputMode="decimal" onChange={updateTextField('totalAmountHt')} />
-        <div className="space-y-2">
-          <Label>Montant TVA</Label>
-          <Input
-            inputMode="decimal"
-            value={totalVatInput}
-            disabled={disabled}
-            onBlur={commitTotalVat}
-            onChange={(event) => setTotalVatInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.currentTarget.blur();
-              }
-            }}
-          />
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <BatchDraftInput label="Fournisseur" value={draft.supplierName ?? fields.supplierName} disabled={disabled} onChange={updateTextField('supplierName')} />
+          <BatchDraftInput label="SIRET fournisseur" value={draft.supplierSiret ?? fields.supplierSiret} disabled={disabled} inputMode="numeric" onChange={updateTextField('supplierSiret')} />
+          <BatchDraftInput label="N° facture" value={draft.supplierInvoiceNumber} disabled={disabled} onChange={updateTextField('supplierInvoiceNumber')} />
+          <div className="space-y-2">
+            <Label>Client public</Label>
+            <Select
+              value={selectedBatchPublicCustomer?.id ?? ''}
+              disabled={disabled}
+              onValueChange={handlePublicCustomerSelect}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Sélectionner..." />
+              </SelectTrigger>
+              <SelectContent>
+                {publicCustomers.filter((customer) => customer.active).map((customer) => (
+                  <SelectItem key={customer.id} value={customer.id}>
+                    {customer.legalName} ({customer.codeDestinataire})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="Ou saisir le code destinataire / SIRET"
+              value={draft.publicCustomerCode ?? fields.publicCustomerSiret ?? ''}
+              disabled={disabled}
+              onChange={(event) => updateTextField('publicCustomerCode')(event.target.value)}
+            />
+            {(draft.publicCustomerName || fields.publicCustomerName) && (
+              <p className="text-xs text-muted-foreground">{draft.publicCustomerName ?? fields.publicCustomerName}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label>Service destinataire</Label>
+            <Select
+              value={selectedBatchPublicService?.id ?? NO_PUBLIC_SERVICE_VALUE}
+              disabled={disabled || !selectedBatchPublicCustomer}
+              onValueChange={handlePublicServiceSelect}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder={selectedBatchPublicCustomer ? 'Aucun service destinataire' : 'Choisir un client d’abord'} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NO_PUBLIC_SERVICE_VALUE}>Aucun service destinataire</SelectItem>
+                {batchServices.map((service) => (
+                  <SelectItem key={service.id} value={service.id}>
+                    {service.codeServiceExecutant} — {service.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              placeholder="Ou saisir le code service exécutant"
+              value={normalizeOptionalServiceCode(draft.publicServiceCode ?? fields.publicServiceCode)}
+              disabled={disabled}
+              onChange={(event) => updateTextField('publicServiceCode')(event.target.value)}
+            />
+          </div>
+          <BatchDraftInput label="Libellé service" value={normalizeOptionalServiceCode(draft.publicServiceLabel ?? fields.publicServiceLabel)} disabled={disabled} onChange={updateTextField('publicServiceLabel')} />
+          <BatchDraftInput label="Date facture" value={draft.invoiceDate} disabled={disabled} type="date" onChange={updateTextField('invoiceDate')} />
+          <BatchDraftInput label="Échéance" value={draft.dueDate ?? fields.dueDate} disabled={disabled} type="date" onChange={updateTextField('dueDate')} />
+          <div className="space-y-2">
+            <Label>Mode paiement</Label>
+            <Select
+              value={draft.paymentMode || fields.paymentMode || 'VIREMENT'}
+              disabled={disabled}
+              onValueChange={(value) => onDraftChange(result.id, { paymentMode: value as ChorusPaymentMode })}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PAYMENT_MODE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <BatchDraftInput label="Devise" value={draft.currencyCode ?? fields.currencyCode ?? 'EUR'} disabled={disabled} onChange={updateTextField('currencyCode')} />
+          <BatchDraftInput label="Engagement" value={draft.engagementNumber} disabled={disabled} onChange={updateTextField('engagementNumber')} />
+          <BatchDraftInput label="Marché" value={draft.marketNumber} disabled={disabled} onChange={updateTextField('marketNumber')} />
+          <BatchDraftInput label="Bon de commande" value={draft.purchaseOrderNumber} disabled={disabled} onChange={updateTextField('purchaseOrderNumber')} />
+          <BatchDraftInput label="Montant HT" value={draft.totalAmountHt} disabled={disabled} inputMode="decimal" onChange={updateTextField('totalAmountHt')} />
+          <div className="space-y-2">
+            <Label>Montant TVA</Label>
+            <Input
+              inputMode="decimal"
+              value={totalVatInput}
+              disabled={disabled}
+              onBlur={commitTotalVat}
+              onChange={(event) => setTotalVatInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.currentTarget.blur();
+                }
+              }}
+            />
+          </div>
+          <BatchDraftInput label="Montant TTC" value={draft.totalAmountTtc} disabled={disabled} inputMode="decimal" onChange={updateTextField('totalAmountTtc')} />
         </div>
-        <BatchDraftInput label="Montant TTC" value={draft.totalAmountTtc} disabled={disabled} inputMode="decimal" onChange={updateTextField('totalAmountTtc')} />
       </div>
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -539,14 +690,16 @@ export default function InvoiceCreate() {
   const services = selectedPublicCustomer
     ? publicServices.filter((service) => service.publicCustomerId === selectedPublicCustomer.id && service.active)
     : [];
-  const selectedPublicService = publicServices.find((service) => service.id === formData.publicServiceId);
+  const selectedPublicService = services.find((service) => service.id === formData.publicServiceId);
   const detectedSupplierName = selectedSupplier?.legalName || extractionResult?.fields.supplierName;
   const detectedPublicCustomerName = selectedPublicCustomer?.legalName || extractionResult?.fields.publicCustomerName;
   const detectedSupplierSiret = formData.supplierSiret || selectedSupplier?.siret || extractionResult?.fields.supplierSiret;
   const detectedCustomerSiret = formData.publicCustomerCode || selectedPublicCustomer?.siret || extractionResult?.fields.publicCustomerSiret;
   const detectedService = selectedPublicService?.codeServiceExecutant
     ? `${selectedPublicService.codeServiceExecutant} — ${selectedPublicService.label}`
-    : formData.publicServiceCode || extractionResult?.fields.publicServiceCode || extractionResult?.fields.publicServiceLabel;
+    : normalizeOptionalServiceCode(formData.publicServiceCode)
+      || normalizeOptionalServiceCode(extractionResult?.fields.publicServiceCode)
+      || extractionResult?.fields.publicServiceLabel;
   const submissionPreparation = prepareInvoiceSubmission({
     formData,
     supplier: selectedSupplier,
@@ -676,7 +829,7 @@ export default function InvoiceCreate() {
     const batchAvailableServices = batchPublicCustomer
       ? publicServices.filter((service) => service.publicCustomerId === batchPublicCustomer.id && service.active)
       : [];
-    const batchPublicService = publicServices.find((service) => service.id === batchDraft.publicServiceId);
+    const batchPublicService = batchAvailableServices.find((service) => service.id === batchDraft.publicServiceId);
 
     return {
       batchSupplier,
@@ -1776,6 +1929,8 @@ export default function InvoiceCreate() {
                   ...current,
                   publicCustomerId: value,
                   publicServiceId: '',
+                  publicServiceCode: '',
+                  publicServiceLabel: '',
                 }))}
               >
                 <SelectTrigger><SelectValue placeholder="Sélectionner..." /></SelectTrigger>
@@ -2409,9 +2564,12 @@ export default function InvoiceCreate() {
                       </span>
                     </summary>
                     <div className="space-y-3 border-t bg-muted/10 p-3">
+                      <BatchDocumentPreview result={result} />
                       <BatchExtractionEditor
                         result={result}
                         disabled={batchSubmitting || result.status === 'success'}
+                        publicCustomers={publicCustomers}
+                        publicServices={publicServices}
                         onDraftChange={handleBatchDraftChange}
                       />
                       <p className="text-xs text-muted-foreground">

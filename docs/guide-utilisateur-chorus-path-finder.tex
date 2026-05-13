@@ -10,6 +10,10 @@
 \usepackage{longtable}
 \usepackage{enumitem}
 \usepackage{titlesec}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{array}
 
 \geometry{margin=2.4cm}
 \hypersetup{
@@ -21,6 +25,7 @@
 \definecolor{chorusblue}{HTML}{1D4ED8}
 \definecolor{chorusgray}{HTML}{F3F4F6}
 \definecolor{chorusdark}{HTML}{111827}
+\definecolor{placeholdergray}{HTML}{E5E7EB}
 
 \titleformat{\section}
   {\Large\bfseries\color{chorusblue}}
@@ -33,11 +38,49 @@
 \setlist[itemize]{leftmargin=1.2cm}
 \setlist[enumerate]{leftmargin=1.2cm}
 
+% =========================================================
+% Commande pour insérer des screenshots.
+% Si l'image existe, elle est affichée.
+% Sinon, un bloc gris est affiché comme emplacement réservé.
+% =========================================================
+\newcommand{\screenshot}[4][0.95]{
+\begin{figure}[H]
+  \centering
+  \IfFileExists{#2}{
+    \includegraphics[width=#1\textwidth]{#2}
+  }{
+    \fbox{
+      \begin{minipage}[c][6cm][c]{#1\textwidth}
+        \centering
+        \vspace{0.5cm}
+        \textbf{Emplacement réservé pour screenshot}\\[0.3cm]
+        \texttt{\detokenize{#2}}\\[0.3cm]
+        Ajouter cette image dans le dossier \texttt{images/}
+        \vspace{0.5cm}
+      \end{minipage}
+    }
+  }
+  \caption{#3}
+  \label{#4}
+\end{figure}
+}
+
 \title{
   \vspace{-1.5cm}
+  \IfFileExists{Chorus-pilot.png}{
+    \includegraphics[width=0.22\textwidth]{Chorus-pilot.png}\\[0.5cm]
+  }{
+    \fbox{
+      \begin{minipage}[c][3cm][c]{0.35\textwidth}
+        \centering
+        \textbf{Logo}\\
+        \texttt{Chorus-pilot.png}
+      \end{minipage}
+    }\\[0.5cm]
+  }
   \textbf{\Huge Guide utilisateur}\\
   \vspace{0.3cm}
-  \Large Chorus Pilot
+  \Large CHORUS PILOT
 }
 \author{Projet Chorus}
 \date{\today}
@@ -52,12 +95,19 @@
   \begin{tabularx}{0.9\textwidth}{|X|}
     \hline
     \textbf{Objectif du document} \\
-    Ce guide explique comment utiliser Chorus Pilot au quotidien pour
+    Ce guide explique comment utiliser CHORUS PILOT au quotidien pour
     consulter, préparer et envoyer des factures vers Chorus Pro. Il s'adresse à
     un utilisateur métier ou à un référent applicatif qui n'a pas besoin de
     connaître le code source ou les détails techniques internes. \\
     \hline
   \end{tabularx}
+\end{center}
+
+\vfill
+\begin{center}
+  \small
+  Version : 1.1 \\
+  Dernière mise à jour : \today
 \end{center}
 
 \newpage
@@ -66,9 +116,13 @@
 
 \section{Présentation rapide}
 
-Chorus Pilot est une application qui aide à traiter les factures destinées
+CHORUS PILOT est une application qui aide à traiter les factures destinées
 à Chorus Pro. Elle permet de consulter les factures, d'importer un document, de
 vérifier les informations importantes et de transmettre la facture à Chorus.
+
+\screenshot[0.90]{Accueil.png}
+{Vue générale de l'application CHORUS PILOT}
+{fig:application-accueil}
 
 L'application sert principalement à :
 
@@ -76,9 +130,11 @@ L'application sert principalement à :
   \item suivre les factures déjà connues ;
   \item préparer une nouvelle facture ;
   \item extraire les informations d'un PDF ;
+  \item vérifier et corriger les informations extraites avant envoi ;
   \item vérifier les montants, le fournisseur, le destinataire et le service ;
-  \item envoyer la facture vers Chorus Pro ;
-  \item consulter les statuts et les retours de traitement.
+  \item envoyer une facture seule ou plusieurs factures par lot vers Chorus Pro ;
+  \item consulter les statuts, les retours de traitement et l'historique de
+        soumission.
 \end{itemize}
 
 \section{À qui s'adresse ce guide ?}
@@ -105,9 +161,9 @@ Depuis votre navigateur, ouvrez l'adresse fournie par votre administrateur.
 Selon l'installation, l'adresse peut ressembler à :
 
 \begin{itemize}
-  \item \texttt{http://localhost}
+  \item \texttt{http://localhost:8081}
   \item \texttt{http://adresse-du-serveur}
-  \item \texttt{http://chorusPilot.gigalis.local}
+  \item \texttt{http://chorus-pilot.gigalis.local}
 \end{itemize}
 
 \subsection{Se connecter}
@@ -123,10 +179,53 @@ Sur l'écran de connexion :
 Si la connexion échoue, vérifiez d'abord l'identifiant et le mot de passe. Si le
 problème persiste, contactez la personne qui administre l'application.
 
+\subsection{Droits utilisateurs}
+
+Les actions disponibles dépendent du rôle associé au compte connecté.
+
+\begin{longtable}{|p{0.28\textwidth}|p{0.64\textwidth}|}
+  \hline
+  \textbf{Rôle} & \textbf{Droits principaux} \\
+  \hline
+  Administrateur &
+  Peut soumettre des factures, accéder aux paramètres et consulter le monitoring
+  des soumissions. \\
+  \hline
+  Gestionnaire &
+  Peut préparer, contrôler et soumettre des factures. \\
+  \hline
+  Auditeur ou passager &
+  Peut consulter l'application, mais ne peut pas soumettre de factures. \\
+  \hline
+\end{longtable}
+
+Lorsqu'un compte n'a pas le droit de soumettre, l'application bloque l'envoi et
+affiche un message indiquant que le compte est en consultation seule.
+
+\subsection{Changer son mot de passe}
+
+Chaque utilisateur peut modifier son mot de passe depuis la page
+\textbf{Paramètres}, dans le bloc \textbf{Compte utilisateur}.
+
+\begin{enumerate}
+  \item saisissez le mot de passe actuel ;
+  \item saisissez le nouveau mot de passe ;
+  \item confirmez le nouveau mot de passe ;
+  \item cliquez sur \textbf{Changer le mot de passe}.
+\end{enumerate}
+
+Le nouveau mot de passe sera demandé à la prochaine connexion. En cas d'erreur,
+l'application affiche la raison du refus, par exemple un mot de passe actuel
+incorrect ou une confirmation différente.
+
 \section{Navigation générale}
 
 Après connexion, le menu latéral donne accès aux principales parties de
 l'application.
+
+\screenshot[0.90]{TAB.png}
+{Menu principal de navigation}
+{fig:menu-lateral}
 
 \begin{longtable}{|p{0.3\textwidth}|p{0.62\textwidth}|}
   \hline
@@ -148,8 +247,13 @@ l'application.
   Services destinataires &
   Rechercher les services associés aux clients publics. \\
   \hline
+  Monitoring &
+  Consulter l'historique concis des soumissions de factures. Ce menu est réservé
+  aux administrateurs. \\
+  \hline
   Paramètres &
-  Vérifier la configuration Chorus et tester la connexion. \\
+  Vérifier la configuration Chorus, tester la connexion et changer son mot de
+  passe. \\
   \hline
   Connexion / Profil &
   Accéder à la session utilisateur. \\
@@ -160,6 +264,10 @@ l'application.
 
 Le tableau de bord donne une vue d'ensemble de l'activité.
 
+\screenshot[0.95]{DASH.png}
+{Vue générale du tableau de bord}
+{fig:dashboard}
+
 Vous pouvez l'utiliser pour :
 
 \begin{itemize}
@@ -168,6 +276,20 @@ Vous pouvez l'utiliser pour :
   \item repérer les factures rejetées ou en attente ;
   \item filtrer par fournisseur, client public, statut ou période ;
   \item lancer une actualisation des données.
+\end{itemize}
+
+\subsection{Indicateurs affichés}
+
+Le tableau de bord peut afficher plusieurs indicateurs utiles pour le suivi de
+l'activité :
+
+\begin{itemize}
+  \item nombre total de factures ;
+  \item montant total ;
+  \item factures en attente ;
+  \item factures rejetées ;
+  \item factures traitées ou payées ;
+  \item dernière date de synchronisation.
 \end{itemize}
 
 \subsection{Actualiser les données}
@@ -183,6 +305,10 @@ messages d'erreur.
 
 L'écran \textbf{Factures} permet de retrouver rapidement une facture.
 
+\screenshot[0.95]{Facture.png}
+{Liste des factures disponibles dans l'application}
+{fig:factures-liste}
+
 \subsection{Rechercher une facture}
 
 Vous pouvez rechercher une facture avec :
@@ -197,6 +323,10 @@ Vous pouvez rechercher une facture avec :
   \item un numéro de bon de commande ;
   \item un mode de dépôt.
 \end{itemize}
+
+\screenshot[0.95]{Filtre.png}
+{Filtres de recherche des factures}
+{fig:factures-filtres}
 
 \subsection{Comprendre les statuts}
 
@@ -235,6 +365,10 @@ Depuis la liste, ouvrez une facture pour consulter :
   \item les éventuels retours de Chorus.
 \end{itemize}
 
+\screenshot[0.95]{Consult.png}
+{Page de détail d'une facture}
+{fig:facture-detail}
+
 \section{Créer une nouvelle facture}
 
 L'écran \textbf{Nouvelle facture} sert à préparer une facture avant son envoi à
@@ -256,6 +390,11 @@ informations utiles.
 \subsection{Vérifier les informations extraites}
 
 Les informations détectées automatiquement doivent toujours être vérifiées.
+
+\screenshot[0.95]{Extract.png}
+{Résultat de l'extraction automatique des informations depuis une facture}
+{fig:extraction-pdf}
+
 Contrôlez en priorité :
 
 \begin{itemize}
@@ -272,6 +411,51 @@ Contrôlez en priorité :
 
 Si une information est absente ou incorrecte, corrigez-la avant de poursuivre.
 
+\subsection{Sélectionner le fournisseur}
+
+Le fournisseur correspond à la structure qui émet la facture. Il doit être
+correctement renseigné pour que la facture soit acceptée par Chorus.
+
+\subsection{Sélectionner le client public destinataire}
+
+Le client public destinataire correspond à la structure publique qui reçoit la
+facture. Cette information est importante, car une erreur de destinataire peut
+entraîner un rejet ou un mauvais acheminement.
+
+\screenshot[0.95]{Upload.png}
+{Sélection du client public destinataire}
+{fig:selection-destinataire}
+
+\subsection{Sélectionner le service destinataire}
+
+Certaines structures publiques exigent un service destinataire. Si ce service est
+obligatoire et qu'il est absent ou incorrect, la facture peut être rejetée.
+
+\screenshot[0.95]{Upload.png}
+{Sélection du service destinataire}
+{fig:selection-service}
+
+\subsection{Vérifier les lignes de facture}
+
+Avant la soumission, vérifiez que les lignes de facture correspondent bien au
+document original.
+
+\screenshot[0.95]{READY.png}
+{Vérification des lignes de facture}
+{fig:lignes-facture}
+
+Les points à contrôler sont :
+
+\begin{itemize}
+  \item la désignation ;
+  \item la quantité ;
+  \item le montant unitaire hors taxes ;
+  \item le taux de TVA ;
+  \item le montant total hors taxes ;
+  \item le montant total de TVA ;
+  \item le montant toutes taxes comprises.
+\end{itemize}
+
 \subsection{Ajouter des pièces complémentaires}
 
 Selon le cas, vous pouvez associer des documents complémentaires, par exemple :
@@ -284,6 +468,10 @@ Selon le cas, vous pouvez associer des documents complémentaires, par exemple :
 \end{itemize}
 
 Chaque pièce doit être nommée clairement pour faciliter le contrôle ultérieur.
+
+\screenshot[0.95]{PIECE.png}
+{Ajout de pièces justificatives complémentaires}
+{fig:pieces-jointes}
 
 \subsection{Envoyer la facture}
 
@@ -300,6 +488,186 @@ Si l'envoi réussit, l'application affiche un retour positif et peut indiquer un
 référence Chorus. Si l'envoi échoue, un message d'erreur aide à identifier le
 point à corriger.
 
+Lors de l'envoi à Chorus, l'application ajoute automatiquement dans le champ
+\textbf{commentaire} de la soumission l'identité de l'utilisateur connecté, sous
+la forme :
+
+\begin{center}
+  \texttt{Soumis par : Prénom Nom (email@domaine.fr)}
+\end{center}
+
+Si un commentaire métier existe déjà, il est conservé et cette ligne est ajoutée
+en complément. Cette information permet de retrouver, côté Chorus, la personne
+qui a réalisé la soumission.
+
+\screenshot[0.95]{Soumission.png}
+{Écran de confirmation avant soumission}
+{fig:confirmation-soumission}
+
+\screenshot[0.95]{echec.png}
+{Exemple de message d'erreur retourné après une soumission}
+{fig:erreur-chorus}
+
+\section{Soumission par lot}
+
+La fonctionnalité de soumission par lot permet de traiter plusieurs factures en
+une seule opération. Elle est particulièrement utile lorsque plusieurs documents
+doivent être envoyés à Chorus Pro dans une même session.
+
+\screenshot[0.95]{lot.png}
+{Écran de soumission par lot}
+{fig:soumission-lot}
+
+\subsection{Objectif}
+
+La soumission par lot permet :
+
+\begin{itemize}
+  \item d'importer plusieurs factures simultanément ;
+  \item de réduire le temps de traitement manuel ;
+  \item de centraliser les contrôles avant envoi ;
+  \item de corriger les champs extraits avant soumission ;
+  \item de suivre facilement les factures envoyées ;
+  \item de détecter rapidement les erreurs sur une ou plusieurs factures.
+\end{itemize}
+
+\subsection{Importer plusieurs documents}
+
+Depuis l'écran de soumission par lot :
+
+\begin{enumerate}
+  \item cliquez sur \textbf{Ajouter des factures} ou \textbf{Ajouter un dossier} ;
+  \item sélectionnez plusieurs fichiers PDF ou XML ;
+  \item cliquez sur \textbf{Lancer le lot} ;
+  \item attendez la fin de l'extraction automatique ;
+  \item vérifiez les informations extraites avant tout envoi à Chorus.
+\end{enumerate}
+
+\screenshot[0.95]{soum_lot.png}
+{Import de plusieurs factures}
+{fig:import-lot}
+
+\textbf{Important :} le bouton \textbf{Lancer le lot} ne soumet pas directement
+les factures à Chorus. Il lance l'extraction et prépare l'aperçu de chaque
+facture. La soumission réelle se fait ensuite avec le bouton
+\textbf{Envoyer à Chorus par lot}.
+
+\subsection{Contrôler et corriger les factures du lot}
+
+Après extraction, chaque facture apparaît avec un aperçu des champs détectés.
+Avant l'envoi, vérifiez les informations principales pour chaque facture :
+
+\begin{itemize}
+  \item numéro de facture ;
+  \item date de facture ;
+  \item fournisseur ;
+  \item client public destinataire ;
+  \item service destinataire ;
+  \item montants HT, TVA et TTC ;
+  \item présence des pièces jointes ;
+  \item statut de validation.
+\end{itemize}
+
+Les champs extraits peuvent être modifiés directement dans l'aperçu du lot. Cette
+étape permet de corriger une erreur de lecture avant l'envoi à Chorus.
+
+Les factures contenant une erreur ou une information manquante peuvent être
+signalées visuellement afin d'éviter une soumission incorrecte.
+
+\subsection{Envoyer le lot à Chorus}
+
+Une fois les vérifications terminées :
+
+\begin{enumerate}
+  \item contrôlez les factures prêtes à envoyer ;
+  \item corrigez les champs manquants ou incorrects ;
+  \item cliquez sur \textbf{Envoyer à Chorus par lot} ;
+  \item attendez la fin du traitement ;
+  \item consultez les résultats affichés.
+\end{enumerate}
+
+Pendant le traitement, l'application peut afficher :
+
+\begin{itemize}
+  \item le nombre de factures déjà traitées ;
+  \item les factures en cours d'envoi ;
+  \item les éventuelles erreurs ;
+  \item les factures acceptées ;
+  \item les factures rejetées.
+\end{itemize}
+
+Lorsque des factures sont envoyées avec succès, l'application affiche un retour
+positif. Les mêmes informations de soumission que pour une facture seule sont
+appliquées, notamment le commentaire automatique indiquant l'utilisateur qui a
+soumis la facture.
+
+\subsection{Consulter les résultats}
+
+À la fin du traitement, un récapitulatif du lot est affiché.
+
+Le résultat peut contenir :
+
+\begin{itemize}
+  \item le nombre total de factures envoyées ;
+  \item le nombre de succès ;
+  \item le nombre d'échecs ;
+  \item les références Chorus générées ;
+  \item les messages d'erreur associés aux factures rejetées.
+\end{itemize}
+
+\subsection{Bonnes pratiques pour les traitements par lot}
+
+\begin{itemize}
+  \item vérifier les informations extraites avant l'envoi ;
+  \item éviter les doublons dans le même lot ;
+  \item contrôler les montants et les destinataires ;
+  \item utiliser des noms de fichiers explicites ;
+  \item corriger les erreurs avant une nouvelle tentative ;
+  \item privilégier des lots de taille raisonnable pour faciliter le suivi.
+\end{itemize}
+
+\section{Monitoring des soumissions}
+
+La page \textbf{Monitoring} est réservée aux administrateurs. Elle permet de
+consulter un historique concis des soumissions de factures.
+
+\screenshot[0.95]{monitoring.png}
+{Historique des soumissions de factures}
+{fig:monitoring}
+
+\subsection{Informations affichées}
+
+Le monitoring se concentre uniquement sur les soumissions de factures. Il ne
+trace pas l'ensemble des actions de navigation ou de consultation.
+
+Chaque ligne peut afficher :
+
+\begin{itemize}
+  \item la date et l'heure de la soumission ;
+  \item l'utilisateur et son rôle ;
+  \item le numéro et la date de facture ;
+  \item le montant et la devise ;
+  \item le destinataire et le fournisseur ;
+  \item la référence Chorus lorsqu'elle est disponible ;
+  \item le statut de la tentative ;
+  \item le code HTTP et la durée ;
+  \item le message d'erreur en cas d'échec.
+\end{itemize}
+
+\subsection{Filtrer l'historique}
+
+Un administrateur peut filtrer l'historique par adresse e-mail afin de retrouver
+les soumissions réalisées par un utilisateur précis.
+
+\subsection{Utilisation des erreurs}
+
+En cas d'échec, le message affiché dans le monitoring aide à comprendre le point
+à corriger : droit insuffisant, champ obligatoire manquant, erreur Chorus ou
+problème de communication.
+
+Les logs restent volontairement courts : ils ne contiennent pas le PDF, le mot de
+passe, ni le payload complet envoyé à Chorus.
+
 \section{Utiliser les référentiels}
 
 \subsection{Clients publics}
@@ -313,8 +681,16 @@ destinataires connues. Vous pouvez rechercher une structure par :
   \item SIRET.
 \end{itemize}
 
+\screenshot[0.95]{Client_pub.png}
+{Référentiel des clients publics}
+{fig:clients-publics}
+
 La consultation d'une fiche peut afficher des informations utiles sur la
 structure, comme son identité ou son état d'activité.
+
+\screenshot[0.95]{infos_client.png}
+{Fiche détail d'un client public}
+{fig:client-public-detail}
 
 \subsection{Services destinataires}
 
@@ -322,10 +698,18 @@ Le référentiel des services destinataires permet de trouver le service à util
 pour une facture. Ce point est important : une facture peut être rejetée si le
 service destinataire est absent ou incorrect lorsque Chorus l'exige.
 
+\screenshot[0.95]{SERVICES.png}
+{Liste des services destinataires}
+{fig:services-destinataires}
+
 \subsection{Synchroniser l'annuaire}
 
 La synchronisation de l'annuaire met à jour les clients publics et services
 destinataires disponibles dans l'application.
+
+\screenshot[0.95]{synchro.png}
+{Action de synchronisation de l'annuaire Chorus}
+{fig:synchronisation-annuaire}
 
 À utiliser notamment :
 
@@ -341,13 +725,18 @@ destinataires disponibles dans l'application.
 L'écran \textbf{Paramètres} sert à vérifier que l'application est correctement
 reliée à Chorus.
 
+\screenshot[0.95]{PARA.png}
+{Écran des paramètres de l'application}
+{fig:parametres}
+
 Un utilisateur non technique peut principalement contrôler :
 
 \begin{itemize}
   \item l'environnement sélectionné : qualification ou production ;
   \item l'état du connecteur ;
   \item les valeurs métier utilisées par défaut ;
-  \item le résultat du test de connexion.
+  \item le résultat du test de connexion ;
+  \item son mot de passe utilisateur.
 \end{itemize}
 
 \subsection{Qualification ou production}
@@ -369,6 +758,15 @@ Chorus.
 
 Si le test échoue, il ne faut pas insister sur les soumissions. Contactez la
 personne responsable de la configuration avec le message affiché à l'écran.
+
+\subsection{Changer le mot de passe}
+
+La page \textbf{Paramètres} contient également un espace permettant à
+l'utilisateur connecté de changer son mot de passe.
+
+Le nouveau mot de passe doit être suffisamment long et différent de l'ancien. Si
+la modification réussit, l'utilisateur peut continuer sa session courante, puis
+utiliser le nouveau mot de passe lors de la prochaine connexion.
 
 \section{Que faire en cas de problème ?}
 
@@ -425,16 +823,31 @@ Si le test de connexion échoue ou si les soumissions ne partent plus :
   \item transmettez le message à l'administrateur.
 \end{itemize}
 
+\subsection{Le bouton de soumission est indisponible}
+
+Si le bouton de soumission est grisé ou si l'application indique que le compte
+est en consultation seule, vérifiez le rôle associé au compte. Les comptes
+auditeurs ou passagers ne peuvent pas envoyer de factures à Chorus.
+
+\subsection{Une soumission par lot n'est pas partie}
+
+Dans la soumission par lot, vérifiez que vous avez bien cliqué sur
+\textbf{Envoyer à Chorus par lot}. Le bouton \textbf{Lancer le lot} sert à
+extraire et préparer les factures, mais il ne réalise pas l'envoi final à Chorus.
+
 \section{Bonnes pratiques}
 
 \begin{itemize}
   \item Toujours vérifier les informations extraites automatiquement.
+  \item Corriger les champs extraits avant de soumettre une facture.
   \item Contrôler les montants avant soumission.
   \item Utiliser le bon environnement : qualification pour les tests, production
         pour les factures réelles.
   \item Rechercher le destinataire avec le SIRET lorsque le nom ne suffit pas.
   \item Ne pas ignorer un message d'erreur Chorus.
   \item Conserver les pièces justificatives utiles.
+  \item Pour les lots, lancer d'abord l'extraction, contrôler chaque facture,
+        puis seulement envoyer à Chorus.
   \item Signaler les rejets récurrents pour améliorer le paramétrage.
 \end{itemize}
 
@@ -467,6 +880,14 @@ Si le test de connexion échoue ou si les soumissions ne partent plus :
   Ensemble des informations envoyées à Chorus. Pour l'utilisateur, cela correspond
   simplement au dossier de données préparé par l'application. \\
   \hline
+  Soumission par lot &
+  Traitement de plusieurs factures dans une même session, avec extraction,
+  contrôle, correction puis envoi à Chorus. \\
+  \hline
+  Monitoring &
+  Page réservée aux administrateurs pour consulter l'historique concis des
+  soumissions de factures. \\
+  \hline
   Synchronisation &
   Action de mettre à jour les données locales avec les données connues côté Chorus. \\
   \hline
@@ -478,7 +899,7 @@ Si le test de connexion échoue ou si les soumissions ne partent plus :
 
 \section{Conclusion}
 
-Chorus Pilot accompagne l'utilisateur dans les étapes importantes du
+CHORUS PILOT accompagne l'utilisateur dans les étapes importantes du
 traitement d'une facture : recherche, préparation, contrôle, soumission et suivi.
 L'application automatise une partie du travail, mais la vérification humaine reste
 essentielle avant chaque envoi à Chorus Pro.
