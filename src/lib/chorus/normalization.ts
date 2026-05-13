@@ -46,6 +46,19 @@ function normalizeLookup(value: string | undefined): string {
   return value?.trim().toLowerCase() ?? '';
 }
 
+function isPlaceholderServiceCode(value: string | undefined): boolean {
+  const normalized = value?.trim();
+  return normalized === '0' || normalized === '00' || normalized === '01';
+}
+
+function normalizeServiceCode(value: string | undefined): string | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized || isPlaceholderServiceCode(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
 function resolvePublicCustomerCode(fields: LocalInvoiceExtractionResult['fields']): string | undefined {
   const destinationCode = normalizeText(fields.publicCustomerCode);
   if (destinationCode && /^\d+$/.test(destinationCode)) {
@@ -60,7 +73,7 @@ function resolvePublicServiceCode(
   context: InvoiceDraftNormalizationContext,
   fields: LocalInvoiceExtractionResult['fields'] | undefined,
 ): string | undefined {
-  const manualCode = normalizeText(formData.publicServiceCode);
+  const manualCode = normalizeServiceCode(formData.publicServiceCode);
   if (manualCode) {
     return manualCode;
   }
@@ -69,7 +82,7 @@ function resolvePublicServiceCode(
     return context.publicService.codeServiceExecutant;
   }
 
-  const detectedCode = normalizeText(fields?.publicServiceCode);
+  const detectedCode = normalizeServiceCode(fields?.publicServiceCode);
   const detectedLabel = normalizeLookup(fields?.publicServiceLabel);
   if (!detectedCode && !detectedLabel) {
     return undefined;
@@ -119,8 +132,8 @@ export function mergeExtractionIntoDraft(
     publicCustomerCode: resolvePublicCustomerCode(fields) ?? currentDraft.publicCustomerCode,
     publicCustomerName: fields.publicCustomerName ?? currentDraft.publicCustomerName,
     publicServiceId: fields.publicServiceId ?? currentDraft.publicServiceId,
-    publicServiceCode: fields.publicServiceCode ?? currentDraft.publicServiceCode,
-    publicServiceLabel: fields.publicServiceLabel ?? currentDraft.publicServiceLabel,
+    publicServiceCode: normalizeServiceCode(fields.publicServiceCode) ?? normalizeServiceCode(currentDraft.publicServiceCode),
+    publicServiceLabel: normalizeServiceCode(fields.publicServiceLabel) ?? normalizeServiceCode(currentDraft.publicServiceLabel),
     engagementNumber: fields.engagementNumber ?? currentDraft.engagementNumber,
     marketNumber: fields.marketNumber ?? currentDraft.marketNumber,
     purchaseOrderNumber: fields.purchaseOrderNumber ?? currentDraft.purchaseOrderNumber,
@@ -171,7 +184,9 @@ export function normalizeInvoiceDraft(
       || context.publicCustomer?.codeDestinataire
       || (extractedFields ? resolvePublicCustomerCode(extractedFields) : undefined),
     publicServiceCode: resolvePublicServiceCode(formData, context, extractedFields),
-    publicServiceLabel: normalizeText(formData.publicServiceLabel) || context.publicService?.label || extractedFields?.publicServiceLabel,
+    publicServiceLabel: normalizeServiceCode(formData.publicServiceLabel)
+      || context.publicService?.label
+      || normalizeServiceCode(extractedFields?.publicServiceLabel),
     customerReference: normalizeText(formData.customerReference) || extractedFields?.customerReference,
     lineItems: formData.lineItems ?? extractedFields?.lineItems,
     vatLines: formData.vatLines ?? extractedFields?.vatLines,
