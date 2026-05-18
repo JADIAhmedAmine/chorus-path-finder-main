@@ -79,19 +79,30 @@ interface DashboardFilters {
   toDate: string;
 }
 
-const EMPTY_FILTERS: DashboardFilters = {
-  supplierId: ALL_VALUE,
-  status: ALL_VALUE,
-  customerId: ALL_VALUE,
-  fromDate: '',
-  toDate: '',
-};
+const DEFAULT_FROM_DATE = '2026-01-01';
+
+function toDateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+
+  return `${year}-${month}-${day}`;
+}
+
+function createDefaultFilters(): DashboardFilters {
+  return {
+    supplierId: ALL_VALUE,
+    status: ALL_VALUE,
+    customerId: ALL_VALUE,
+    fromDate: DEFAULT_FROM_DATE,
+    toDate: toDateInputValue(new Date()),
+  };
+}
 
 export default function Dashboard() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [filters, setFilters] = useState<DashboardFilters>(EMPTY_FILTERS);
-
+  const [filters, setFilters] = useState<DashboardFilters>(() => createDefaultFilters());
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
   const customersQuery = usePublicCustomersQuery();
@@ -180,12 +191,14 @@ export default function Dashboard() {
     });
   }, [invoices, filters]);
 
+  const defaultFilters = createDefaultFilters();
+
   const filtersActive =
-    filters.supplierId !== ALL_VALUE
-    || filters.status !== ALL_VALUE
-    || filters.customerId !== ALL_VALUE
-    || filters.fromDate !== ''
-    || filters.toDate !== '';
+    filters.supplierId !== defaultFilters.supplierId
+    || filters.status !== defaultFilters.status
+    || filters.customerId !== defaultFilters.customerId
+    || filters.fromDate !== defaultFilters.fromDate
+    || filters.toDate !== defaultFilters.toDate;
 
   const statusCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -399,7 +412,7 @@ export default function Dashboard() {
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <CardTitle className="text-base">Filtres</CardTitle>
             {filtersActive && (
-              <Button variant="ghost" size="sm" onClick={() => setFilters(EMPTY_FILTERS)}>
+              <Button variant="ghost" size="sm" onClick={() => setFilters(createDefaultFilters())}>
                 <X className="mr-1.5 h-3.5 w-3.5" /> Réinitialiser
               </Button>
             )}
