@@ -11,6 +11,7 @@ import { useSyncInvoicesMutation, useSyncSuppliersMutation } from "@/lib/queries
 import { ReferenceCatalogClient } from "@/lib/references/client";
 import Dashboard from "./pages/Dashboard";
 import InvoiceList from "./pages/InvoiceList";
+import InvoicesToProcess from "./pages/InvoicesToProcess";
 import InvoiceDetail from "./pages/InvoiceDetail";
 import ChorusInvoiceDetail from "./pages/ChorusInvoiceDetail";
 import InvoiceCreate from "./pages/InvoiceCreate";
@@ -156,6 +157,7 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/to-process" element={<RequireAuth><AppLayout><InvoicesToProcess /></AppLayout></RequireAuth>} />
             <Route path="/invoices/new" element={<RequireAuth><AppLayout><InvoiceCreate /></AppLayout></RequireAuth>} />
             <Route path="/invoices/chorus/:id" element={<RequireAuth><AppLayout><ChorusInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />

@@ -15,6 +15,12 @@ import {
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import {
+  getInvoiceChorusStatus,
+  isActionableInvoice,
+  isPaidChorusStatus,
+} from '@/lib/chorus/actionableInvoices';
+import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
+import {
   type SyncRunResult,
   useInvoicesQuery,
   usePublicCustomersQuery,
@@ -22,7 +28,6 @@ import {
   useSyncInvoicesMutation,
   useSyncSuppliersMutation,
 } from '@/lib/queries/db';
-import type { Invoice } from '@/types';
 import {
   AlertTriangle,
   ArrowRight,
@@ -52,19 +57,6 @@ import {
 } from 'recharts';
 
 const ALL_VALUE = '__all__';
-
-function isRejectedStatus(status: string): boolean {
-  return status.toUpperCase().includes('REJET');
-}
-
-function isPaidStatus(status: string): boolean {
-  const normalized = status.toUpperCase();
-  return normalized.includes('PAY') || normalized.includes('PAIE') || normalized.includes('PAIEMENT');
-}
-
-function getInvoiceStatusLabel(invoice: Invoice): string {
-  return invoice.statusChorus || invoice.statusInternal;
-}
 
 function parsePositiveInteger(value: string): number | undefined {
   const parsed = Number(value);
@@ -137,7 +129,7 @@ export default function Dashboard() {
       await syncSuppliers.mutateAsync(syncInput).catch((supplierSyncError) => {
         console.warn('[dashboard] sync suppliers skipped', supplierSyncError);
       });
-      const runs = await syncInvoices.mutateAsync({ ...syncInput, mode: 'delta' });
+      const runs = await syncInvoices.mutateAsync({ ...syncInput, mode: 'full' });
       const lastRun = runs[runs.length - 1];
       if (lastRun) {
         setLastSyncAt(lastRun.finishedAt || lastRun.startedAt);
@@ -164,7 +156,7 @@ export default function Dashboard() {
   const availableStatuses = useMemo(() => {
     const set = new Set<string>();
     for (const invoice of invoices) {
-      const status = getInvoiceStatusLabel(invoice);
+      const status = getInvoiceChorusStatus(invoice);
       if (status) set.add(status);
     }
     return [...set].sort();
@@ -178,7 +170,7 @@ export default function Dashboard() {
       if (filters.customerId !== ALL_VALUE && invoice.publicCustomerId !== filters.customerId) {
         return false;
       }
-      if (filters.status !== ALL_VALUE && getInvoiceStatusLabel(invoice) !== filters.status) {
+      if (filters.status !== ALL_VALUE && getInvoiceChorusStatus(invoice) !== filters.status) {
         return false;
       }
       if (filters.fromDate && (!invoice.invoiceDate || invoice.invoiceDate < filters.fromDate)) {
@@ -203,7 +195,7 @@ export default function Dashboard() {
   const statusCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const invoice of filteredInvoices) {
-      const status = getInvoiceStatusLabel(invoice);
+      const status = getInvoiceChorusStatus(invoice);
       counts.set(status, (counts.get(status) ?? 0) + 1);
     }
     return counts;
@@ -221,7 +213,7 @@ export default function Dashboard() {
   const statusAmounts = useMemo(() => {
     const amounts = new Map<string, number>();
     for (const invoice of filteredInvoices) {
-      const status = getInvoiceStatusLabel(invoice);
+      const status = getInvoiceChorusStatus(invoice);
       amounts.set(status, (amounts.get(status) ?? 0) + invoice.totalTtc);
     }
     return amounts;
@@ -287,17 +279,6 @@ export default function Dashboard() {
     [filteredInvoices],
   );
 
-  const rejectedInvoices = useMemo(
-    () => filteredInvoices
-      .filter((invoice) => isRejectedStatus(getInvoiceStatusLabel(invoice)))
-      .sort((left, right) =>
-        new Date(right.lastStatusSyncAt || right.updatedAt).getTime()
-        - new Date(left.lastStatusSyncAt || left.updatedAt).getTime(),
-      )
-      .slice(0, 8),
-    [filteredInvoices],
-  );
-
   const recentStatuses = useMemo(
     () => [...filteredInvoices]
       .sort((left, right) =>
@@ -315,19 +296,19 @@ export default function Dashboard() {
 
   const averageTtc = filteredInvoices.length > 0 ? totalTtc / filteredInvoices.length : 0;
 
-  const rejectedCount = useMemo(
-    () => filteredInvoices.filter((invoice) => isRejectedStatus(getInvoiceStatusLabel(invoice))).length,
+  const actionableCount = useMemo(
+    () => filteredInvoices.filter(isActionableInvoice).length,
     [filteredInvoices],
   );
 
   const paidCount = useMemo(
-    () => filteredInvoices.filter((invoice) => isPaidStatus(getInvoiceStatusLabel(invoice))).length,
+    () => filteredInvoices.filter((invoice) => isPaidChorusStatus(getInvoiceChorusStatus(invoice))).length,
     [filteredInvoices],
   );
 
-  const rejectionRate =
+  const actionableRate =
     filteredInvoices.length > 0
-      ? Math.round((rejectedCount / filteredInvoices.length) * 1000) / 10
+      ? Math.round((actionableCount / filteredInvoices.length) * 1000) / 10
       : 0;
 
   const statCards = useMemo(() => [
@@ -346,12 +327,12 @@ export default function Dashboard() {
     },
     { label: 'Paiement / payées', value: paidCount, icon: CheckCircle, color: 'text-success' },
     {
-      label: `Rejets (${rejectionRate}%)`,
-      value: rejectedCount,
+      label: `À traiter (${actionableRate}%)`,
+      value: actionableCount,
       icon: AlertTriangle,
       color: 'text-destructive',
     },
-  ], [averageTtc, filteredInvoices.length, filtersActive, paidCount, rejectedCount, rejectionRate, totalTtc]);
+  ], [actionableCount, actionableRate, averageTtc, filteredInvoices.length, filtersActive, paidCount, totalTtc]);
 
   function updateFilter<K extends keyof DashboardFilters>(key: K, value: DashboardFilters[K]) {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -394,17 +375,10 @@ export default function Dashboard() {
         </Alert>
       )}
 
+      {syncing && <SyncRunProgress />}
+
       {lastSyncRuns.length > 0 && (
-        <Alert>
-          <AlertDescription>
-            Sync sur {lastSyncRuns.length} fournisseur(s) :{' '}
-            {lastSyncRuns.reduce((sum, run) => sum + run.rowsFetched, 0)} ligne(s) reçues,{' '}
-            {lastSyncRuns.reduce((sum, run) => sum + run.rowsUpserted, 0)} upsertée(s)
-            {lastSyncRuns.some((run) => run.rowsFailed > 0)
-              ? `, ${lastSyncRuns.reduce((sum, run) => sum + run.rowsFailed, 0)} échec(s)`
-              : ''}.
-          </AlertDescription>
-        </Alert>
+        <SyncRunSummary runs={lastSyncRuns} />
       )}
 
       <Card>
@@ -644,7 +618,7 @@ export default function Dashboard() {
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
                       <span className="text-sm font-medium">{formatCurrency(invoice.totalTtc)}</span>
-                      <ChorusStatusPill value={getInvoiceStatusLabel(invoice)} />
+                      <ChorusStatusPill value={getInvoiceChorusStatus(invoice)} />
                     </div>
                   </Link>
                 );
@@ -670,9 +644,9 @@ export default function Dashboard() {
                     to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`}
                     className="flex items-start gap-3 rounded-lg px-3 py-2 hover:bg-muted/50 transition-colors"
                   >
-                    <StatusDot value={getInvoiceStatusLabel(invoice)} />
+                    <StatusDot value={getInvoiceChorusStatus(invoice)} />
                     <div className="min-w-0">
-                      <div className="text-sm">{getInvoiceStatusLabel(invoice)}</div>
+                      <div className="text-sm">{getInvoiceChorusStatus(invoice)}</div>
                       <div className="text-xs text-muted-foreground">
                         {invoice.supplierInvoiceNumber} · {customer?.legalName || 'Destinataire Chorus'} · {formatDate(invoice.lastStatusSyncAt || invoice.updatedAt)}
                       </div>

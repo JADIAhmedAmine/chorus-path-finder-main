@@ -399,9 +399,7 @@ def _invoice_id_from(supplier_id: str, invoice: dict[str, Any]) -> str:
     )
     if chorus_id:
         return f"chorus-{chorus_id}"
-    supplier_number = _as_str(
-        _first_present(invoice, "numeroFacture", "numeroFactureSaisi")
-    )
+    supplier_number = _invoice_supplier_invoice_number(invoice)
     if supplier_number:
         return f"{supplier_id}::{supplier_number}"
     return f"chorus-{uuid.uuid5(uuid.NAMESPACE_OID, repr(invoice))}"
@@ -414,24 +412,27 @@ def _invoice_supplier_invoice_number(invoice: dict[str, Any]) -> Optional[str]:
             "numeroFacture",
             "numeroFactureSaisi",
             "numeroFactureFournisseur",
+            "numeroDemandePaiement",
+            "numeroFactureChorus",
+            "identifiantFactureCPP",
+            "idFacture",
+            "numeroDp",
+            "numeroDP",
         )
     )
 
 
-def _invoice_already_exists(
+def _resolve_invoice_storage_id(
     session: Session,
     *,
     tenant_id: str,
     local_supplier_id: str,
+    supplier_invoice_number: str,
     invoice: dict[str, Any],
-) -> bool:
-    supplier_invoice_number = _invoice_supplier_invoice_number(invoice)
-    if not supplier_invoice_number:
-        return False
-
+) -> tuple[str, bool]:
     invoice_id = _invoice_id_from(local_supplier_id, invoice)
     if session.get(Invoice, invoice_id) is not None:
-        return True
+        return invoice_id, True
 
     existing_id = session.scalar(
         select(Invoice.id).where(
@@ -440,7 +441,49 @@ def _invoice_already_exists(
             Invoice.supplier_invoice_number == supplier_invoice_number,
         )
     )
-    return existing_id is not None
+    if existing_id is not None:
+        return str(existing_id), True
+
+    return invoice_id, False
+
+
+def _normalize_chorus_status_internal(status_chorus: Optional[str]) -> str:
+    if not status_chorus:
+        return "SUBMITTED_TO_CHORUS"
+
+    normalized = status_chorus.upper()
+    if "PAY" in normalized or "MISE_EN_PAIEMENT" in normalized:
+        return "PAID"
+    if "TECHNIQUE" in normalized:
+        return "REJECTED_TECHNICAL"
+    if any(
+        marker in normalized
+        for marker in (
+            "REJET",
+            "REFUS",
+            "NON_CONFORME",
+            "ERREUR",
+            "ABANDON",
+            "SUPPRIM",
+        )
+    ):
+        return "REJECTED_BUSINESS"
+    if any(
+        marker in normalized
+        for marker in (
+            "ACCEPT",
+            "VALID",
+            "MISE_A_DISPOSITION",
+            "PRISE_EN_COMPTE",
+            "COMPTABILISEE",
+            "MANDATEE",
+            "SERVICE_FAIT",
+        )
+    ):
+        return "ACCEPTED_BY_CHORUS"
+    if "ARCHIV" in normalized:
+        return "ARCHIVED"
+    return "SUBMITTED_TO_CHORUS"
 
 
 def _count_local_invoices(
@@ -704,9 +747,10 @@ def sync_invoices_for_supplier(
     Modes:
       - "recent" (default) : top N most recent invoices (sorted by deposit date desc).
                              Cheap, ideal for an "Actualiser" button.
-      - "delta"            : count-check Chorus, then fetch exactly the 100 most
-                             recent invoices only if Chorus has more rows than DB.
-                             Existing invoices are skipped; missing invoices are inserted.
+      - "delta"            : count-check Chorus, then refresh the 100 most recent
+                             invoices. If the local DB is empty, bootstrap with a
+                             full page. Existing invoices are updated in place so
+                             status changes are not missed.
       - "full"             : retrieve everything (rare; bootstrap or repair).
     """
     ensure_tenant(session, tenant_id)
@@ -780,19 +824,6 @@ def sync_invoices_for_supplier(
                 if local_count == 0:
                     effective_mode = "full"
                     effective_page_size = min(max(remote_total or DEFAULT_FULL_PAGE_SIZE, 1), 5000)
-                elif remote_total <= local_count:
-                    run.rows_fetched = 0
-                    run.payload_summary = {
-                        "supplier_id": supplier_id,
-                        "mode": mode,
-                        "strategy": "count-check",
-                        "local_count": local_count,
-                        "remote_total": remote_total,
-                        "skipped": True,
-                        "reason": "remote_total_not_greater_than_local_count",
-                        "chorus_count_response": count_response_summary,
-                    }
-                    return run
                 else:
                     effective_page_size = _resolved_page_size("recent", page_size)
 
@@ -820,30 +851,21 @@ def sync_invoices_for_supplier(
         run.rows_fetched = len(invoices_raw)
 
         now = datetime.now(timezone.utc)
-        insert_missing_only = effective_mode != "full"
-        skipped_existing = 0
+        refreshed_existing = 0
         for invoice in invoices_raw:
             try:
-                inserted = False
+                existing_invoice = False
                 with session.begin_nested():
-                    if insert_missing_only and _invoice_already_exists(
+                    existing_invoice = _upsert_invoice(
                         session,
+                        invoice=invoice,
                         tenant_id=tenant_id,
                         local_supplier_id=local_supplier_id,
-                        invoice=invoice,
-                    ):
-                        skipped_existing += 1
-                    else:
-                        _upsert_invoice(
-                            session,
-                            invoice=invoice,
-                            tenant_id=tenant_id,
-                            local_supplier_id=local_supplier_id,
-                            now=now,
-                        )
-                        inserted = True
-                if inserted:
-                    run.rows_upserted += 1
+                        now=now,
+                    )
+                if existing_invoice:
+                    refreshed_existing += 1
+                run.rows_upserted += 1
             except Exception as error:  # noqa: BLE001
                 logger.exception("Echec upsert facture: %s", error)
                 run.rows_failed += 1
@@ -859,7 +881,7 @@ def sync_invoices_for_supplier(
             "remote_total": remote_total,
             "fetched": run.rows_fetched,
             "upserted": run.rows_upserted,
-            "skipped_existing": skipped_existing,
+            "refreshed_existing": refreshed_existing,
             "failed": run.rows_failed,
             "chorus_request": payload,
             "chorus_count_response": count_response_summary,
@@ -901,12 +923,18 @@ def _upsert_invoice(
     tenant_id: str,
     local_supplier_id: str,
     now: datetime,
-) -> None:
+) -> bool:
     supplier_invoice_number = _invoice_supplier_invoice_number(invoice)
     if not supplier_invoice_number:
-        raise ValueError("numeroFacture absent dans la réponse Chorus")
+        raise ValueError("Identifiant facture absent dans la réponse Chorus")
 
-    invoice_id = _invoice_id_from(local_supplier_id, invoice)
+    invoice_id, existing_invoice = _resolve_invoice_storage_id(
+        session,
+        tenant_id=tenant_id,
+        local_supplier_id=local_supplier_id,
+        supplier_invoice_number=supplier_invoice_number,
+        invoice=invoice,
+    )
 
     total_ht = _as_decimal(_first_present(invoice, "montantHT", "montantTotalHt"))
     total_vat = _as_decimal(_first_present(invoice, "montantTVA", "montantTva"))
@@ -934,6 +962,16 @@ def _upsert_invoice(
     if market_number and market_number.lower() == "null":
         market_number = None
 
+    status_chorus = _as_str(
+        _first_present(
+            invoice,
+            "statut",
+            "statutCourant",
+            "libelleStatutCourant",
+            "libelleEtatCourant",
+        )
+    )
+
     payload = {
         "id": invoice_id,
         "tenant_id": tenant_id,
@@ -943,7 +981,15 @@ def _upsert_invoice(
         "source_format": _as_str(_first_present(invoice, "formatDepot", "format")) or "PDF",
         "supplier_invoice_number": supplier_invoice_number,
         "chorus_invoice_number": _as_str(
-            _first_present(invoice, "numeroFactureChorus", "identifiantFactureCPP")
+            _first_present(
+                invoice,
+                "numeroFactureChorus",
+                "identifiantFactureCPP",
+                "numeroDemandePaiement",
+                "numeroDp",
+                "numeroDP",
+                "idFacture",
+            )
         ),
         "external_reference": _as_str(_first_present(invoice, "referenceExterne")),
         "invoice_date": _as_date(_first_present(invoice, "dateFacture", "dateEmission")),
@@ -981,16 +1027,8 @@ def _upsert_invoice(
             if isinstance(invoice.get("taille"), int)
             else None
         ),
-        "status_internal": "STATUS_SYNC_PENDING",
-        "status_chorus": _as_str(
-            _first_present(
-                invoice,
-                "statut",
-                "statutCourant",
-                "libelleStatutCourant",
-                "libelleEtatCourant",
-            )
-        ),
+        "status_internal": _normalize_chorus_status_internal(status_chorus),
+        "status_chorus": status_chorus,
         "status_reason_code": _as_str(
             _first_present(
                 invoice,
@@ -1052,6 +1090,7 @@ def _upsert_invoice(
             "created_by_name": stmt.excluded.created_by_name,
             "rejection_processed": stmt.excluded.rejection_processed,
             "attachment_count": stmt.excluded.attachment_count,
+            "status_internal": stmt.excluded.status_internal,
             "status_chorus": stmt.excluded.status_chorus,
             "status_reason_code": stmt.excluded.status_reason_code,
             "status_reason_label": stmt.excluded.status_reason_label,
@@ -1060,9 +1099,11 @@ def _upsert_invoice(
             "last_status_sync_at": stmt.excluded.last_status_sync_at,
             "raw_payload": stmt.excluded.raw_payload,
             "last_synced_at": stmt.excluded.last_synced_at,
+            "updated_at": func.now(),
         },
     )
     session.execute(stmt)
+    return existing_invoice
 
 
 # ---------------------------------------------------------------------------
