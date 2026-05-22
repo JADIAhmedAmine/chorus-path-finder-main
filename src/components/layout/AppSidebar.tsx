@@ -1,7 +1,7 @@
 import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
-  ClipboardList, UserCircle2, Activity
+  ClipboardList, UserCircle2, Activity, AlertTriangle
 } from 'lucide-react';
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -13,6 +13,7 @@ import { loadAuthSession } from '@/lib/auth/session';
 const mainItems = [
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
   { title: 'Factures', url: '/invoices', icon: FileText },
+  { title: 'Factures à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle facture', url: '/invoices/new', icon: Upload },
 ];
 
@@ -39,6 +40,17 @@ export function AppSidebar() {
     : baseAdminItems;
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
+    if (path === '/invoices') {
+      return location.pathname === '/invoices'
+        || (
+          location.pathname.startsWith('/invoices/')
+          && location.pathname !== '/invoices/new'
+          && location.pathname !== '/invoices/to-process'
+        );
+    }
+    if (path === '/invoices/new' || path === '/invoices/to-process') {
+      return location.pathname === path;
+    }
     return location.pathname.startsWith(path);
   };
 
