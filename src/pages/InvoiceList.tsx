@@ -8,12 +8,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CHORUS_INVOICE_STATUS_CODES, formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { Search, Download, Plus, ChevronLeft, ChevronRight, Loader2, Server, ExternalLink } from 'lucide-react';
 import {
+  type SyncRunResult,
   useInvoicesQuery,
   usePublicCustomersQuery,
   useSuppliersQuery,
   useSyncInvoicesMutation,
   useSyncSuppliersMutation,
 } from '@/lib/queries/db';
+import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
 import { saveChorusLiveInvoiceDetails } from '@/lib/chorus/liveInvoiceDetails';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import type { Invoice } from '@/types';
@@ -220,6 +222,7 @@ export default function InvoiceList() {
   const visibleInvoices = invoicesQuery.data?.items ?? [];
   const suppliers = suppliersQuery.data ?? [];
   const customers = customersQuery.data ?? [];
+  const lastSyncRuns: SyncRunResult[] = syncInvoices.data ?? [];
   const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
   const syncing = syncInvoices.isPending || syncSuppliers.isPending;
   const error =
@@ -375,8 +378,11 @@ export default function InvoiceList() {
       await syncSuppliers.mutateAsync(syncInput).catch((supplierSyncError) => {
         console.warn('[invoices] sync suppliers skipped', supplierSyncError);
       });
-      const run = await syncInvoices.mutateAsync({ ...syncInput, mode: 'delta' });
-      setLastSyncAt(run.finishedAt || run.startedAt);
+      const runs = await syncInvoices.mutateAsync({ ...syncInput, mode: 'full' });
+      const lastRun = runs[runs.length - 1];
+      if (lastRun) {
+        setLastSyncAt(lastRun.finishedAt || lastRun.startedAt);
+      }
       setPage(1);
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : 'Synchronisation des factures Chorus impossible.');
@@ -416,14 +422,10 @@ export default function InvoiceList() {
         </Alert>
       )}
 
-      {syncInvoices.data && (
-        <Alert>
-          <AlertDescription>
-            Sync delta: {syncInvoices.data.rowsFetched} ligne(s) reçue(s), {syncInvoices.data.rowsUpserted} upsertée(s)
-            {syncInvoices.data.rowsFailed > 0 ? `, ${syncInvoices.data.rowsFailed} échec(s)` : ''}.
-            {activeChorusSearchCriteria > 0 ? ` Critères actifs : ${activeChorusSearchCriteria}.` : ''}
-          </AlertDescription>
-        </Alert>
+      {syncing && <SyncRunProgress />}
+
+      {lastSyncRuns.length > 0 && (
+        <SyncRunSummary runs={lastSyncRuns} />
       )}
 
       <Card>
