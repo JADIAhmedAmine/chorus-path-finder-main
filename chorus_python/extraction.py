@@ -27,6 +27,7 @@ DOCLING_TIMEOUT = int(os.getenv("DOCLING_TIMEOUT", "1800"))
 DOCLING_ENABLE_PICTURE_DESCRIPTION = os.getenv(
     "DOCLING_ENABLE_PICTURE_DESCRIPTION", "false"
 ).lower()
+PDF_EXTRACTION_ENGINE = os.getenv("PDF_EXTRACTION_ENGINE", "local").strip().lower()
 
 MONEY_QUANTIZER = Decimal("0.01")
 AMOUNT_PATTERN = r"([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)"
@@ -131,14 +132,7 @@ def extract_pdf_text_from_base64_docling(pdf_base64: str) -> str:
         tmp_path = Path(tmp.name)
 
     try:
-        docling_text = extract_pdf_text_docling(tmp_path)
-        try:
-            pdfplumber_text = extract_pdf_text_pdfplumber(tmp_path)
-        except Exception:
-            pdfplumber_text = ""
-        return _prepend_reconciled_invoice_totals(
-            _merge_text_sources(docling_text, pdfplumber_text)
-        )
+        return extract_pdf_text(tmp_path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
@@ -283,14 +277,48 @@ def extract_pdf_text_pdfplumber(pdf_path: Path | str) -> str:
     return _merge_text_sources(*page_texts)
 
 
+def extract_pdf_text_pymupdf(pdf_path: Path | str) -> str:
+    page_texts: list[str] = []
+
+    with fitz.open(str(pdf_path)) as document:
+        for page in document:
+            text = page.get_text("text", sort=True) or ""
+            blocks = [
+                str(block[4]).strip()
+                for block in page.get_text("blocks", sort=True)
+                if len(block) >= 5 and str(block[4]).strip()
+            ]
+            page_texts.append(_merge_text_sources(text, "\n".join(blocks)))
+
+    return _merge_text_sources(*page_texts)
+
+
+def _use_docling_extraction(prefer_docling: bool) -> bool:
+    if not prefer_docling:
+        return False
+    if PDF_EXTRACTION_ENGINE in {"local", "pymupdf", "pdfplumber"}:
+        return False
+    if PDF_EXTRACTION_ENGINE in {"docling", "remote"}:
+        return True
+    return bool(DOCLING_SERVER_URL)
+
+
 def extract_pdf_text(pdf_path: Path | str, prefer_docling: bool = True) -> str:
     """
     Extraction principale :
-    - Docling d'abord
+    - locale PyMuPDF + pdfplumber par défaut
+    - Docling seulement si PDF_EXTRACTION_ENGINE=docling/remote/auto
     - fusion avec pdfplumber layout pour conserver les zones de totaux parfois
       omises par le markdown Docling
-    - fallback pdfplumber si Docling est indisponible
+    - fallback local si Docling est indisponible
     """
+    pymupdf_text = ""
+    pymupdf_error: Exception | None = None
+    try:
+        pymupdf_text = extract_pdf_text_pymupdf(pdf_path)
+    except Exception as e:
+        pymupdf_error = e
+
     pdfplumber_text = ""
     pdfplumber_error: Exception | None = None
     try:
@@ -298,16 +326,27 @@ def extract_pdf_text(pdf_path: Path | str, prefer_docling: bool = True) -> str:
     except Exception as e:
         pdfplumber_error = e
 
-    if prefer_docling:
+    local_text = _merge_text_sources(pymupdf_text, pdfplumber_text)
+
+    if _use_docling_extraction(prefer_docling):
         try:
             return _prepend_reconciled_invoice_totals(
-                _merge_text_sources(extract_pdf_text_docling(pdf_path), pdfplumber_text)
+                _merge_text_sources(extract_pdf_text_docling(pdf_path), local_text)
             )
         except Exception as e:
-            print(f"Warning: Docling failed, fallback to pdfplumber: {e}")
+            print(f"Warning: Docling failed, fallback to local PDF extraction: {e}")
 
-    if pdfplumber_text:
-        return _prepend_reconciled_invoice_totals(pdfplumber_text)
+    if local_text:
+        return _prepend_reconciled_invoice_totals(local_text)
+
+    if pymupdf_error is not None and pdfplumber_error is not None:
+        raise RuntimeError(
+            "Extraction locale impossible: "
+            f"PyMuPDF: {pymupdf_error} | pdfplumber: {pdfplumber_error}"
+        ) from pdfplumber_error
+
+    if pymupdf_error is not None:
+        raise RuntimeError(f"Extraction PyMuPDF impossible: {pymupdf_error}") from pymupdf_error
 
     if pdfplumber_error is not None:
         raise RuntimeError(f"Extraction pdfplumber impossible: {pdfplumber_error}") from pdfplumber_error

@@ -119,6 +119,8 @@ except Exception as _db_import_error:  # noqa: BLE001
 HOST = os.environ.get("CHORUS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHORUS_PORT", "8008"))
 SUBMIT_PATH = "/api/chorus/submit"
+RECYCLE_PATH = "/api/chorus/recycle"
+TREAT_REJECTION_PATH = "/api/chorus/rejection/treat"
 EXTRACT_PDF_PATH = "/api/extract-pdf-text"
 OAUTH_TOKEN_PATH = "/api/chorus/oauth-token"
 SYNC_ANNUAIRE_PATH = "/api/chorus/annuaire/sync"
@@ -146,6 +148,8 @@ app.add_middleware(
 
 AUDITED_ACTIONS = {
     SUBMIT_PATH: "invoice.submit",
+    RECYCLE_PATH: "invoice.recycle",
+    TREAT_REJECTION_PATH: "invoice.rejection.treat",
 }
 
 
@@ -257,6 +261,71 @@ def _invoice_audit_fields(
     })
 
 
+def _first_payment_request_id(payload: dict[str, Any] | None) -> Any:
+    if not isinstance(payload, dict):
+        return None
+    requests = payload.get("listeDemandePaiement")
+    if not isinstance(requests, list) or not requests:
+        return None
+    first_request = requests[0]
+    if not isinstance(first_request, dict):
+        return None
+    return first_request.get("idDemandePaiement")
+
+
+def _payment_request_count(payload: dict[str, Any] | None) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    requests = payload.get("listeDemandePaiement")
+    if not isinstance(requests, list):
+        return None
+    return len(requests)
+
+
+def _recycle_audit_fields(
+    payload: dict[str, Any] | None,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    chorus_id = payload.get("identifiantFactureCPP")
+    if isinstance(result, dict):
+        chorus_id = result.get("externalId") or chorus_id
+
+    return _compact_audit_fields({
+        "chorusId": _audit_value(chorus_id, max_length=80),
+        "customerCode": _audit_text(_nested_value(payload, "destinataire", "codeDestinataire"), max_length=32),
+        "comment": _audit_text(payload.get("commentaire"), max_length=240),
+    })
+
+
+def _treat_rejection_audit_fields(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    payment_request_id = _first_payment_request_id(payload)
+    return _compact_audit_fields({
+        "chorusId": _audit_value(payment_request_id, max_length=80),
+        "paymentRequestId": _audit_value(payment_request_id, max_length=80),
+        "paymentRequestCount": _payment_request_count(payload),
+        "rejectionReason": _audit_text(payload.get("motifRejet"), max_length=160),
+        "comment": _audit_text(payload.get("cpltInfos"), max_length=240),
+    })
+
+
+def _chorus_operation_audit_fields(
+    action: str,
+    payload: dict[str, Any] | None,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if action == "invoice.recycle":
+        return _recycle_audit_fields(payload, result=result)
+    if action == "invoice.rejection.treat":
+        return _treat_rejection_audit_fields(payload)
+    return _invoice_audit_fields(payload, result=result)
+
+
 def _safe_append_audit_event(event: dict[str, Any]) -> None:
     try:
         append_audit_event(event)
@@ -280,6 +349,32 @@ def _audit_invoice_submission(
         "email": user.get("email"),
         "roleCode": user.get("roleCode"),
         **_invoice_audit_fields(payload, result=result),
+        "status": status,
+        "httpStatus": int(http_status),
+        "durationMs": round((perf_counter() - started_at) * 1000),
+        "errorMessage": _audit_text(error_message, max_length=240) if status != "success" else None,
+    })
+    _safe_append_audit_event(event)
+    request.state.audit_logged = True
+
+
+def _audit_chorus_operation(
+    request: Request,
+    *,
+    action: str,
+    user: dict[str, Any],
+    payload: dict[str, Any] | None,
+    status: str,
+    http_status: int | HTTPStatus,
+    started_at: float,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> None:
+    event = _compact_audit_fields({
+        "action": action,
+        "email": user.get("email"),
+        "roleCode": user.get("roleCode"),
+        **_chorus_operation_audit_fields(action, payload, result=result),
         "status": status,
         "httpStatus": int(http_status),
         "durationMs": round((perf_counter() - started_at) * 1000),
@@ -866,7 +961,7 @@ def handle_extract_pdf(body: dict[str, Any] | None = Body(default=None)) -> JSON
             HTTPStatus.BAD_GATEWAY,
             {
                 "ok": False,
-                "error": f"Erreur Docling lors de l'extraction: {error}",
+                "error": f"Erreur lors de l'extraction PDF: {error}",
             },
         )
     except Exception as error:  # noqa: BLE001
@@ -1247,6 +1342,168 @@ def handle_submit(
         )
 
 
+@app.post(RECYCLE_PATH)
+def handle_recycle(
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+    auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    body = body or {}
+    _print_received_post_debug(RECYCLE_PATH, body)
+    payload = body.get("payload")
+
+    if not isinstance(payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload est obligatoire et doit être un objet JSON.",
+            },
+        )
+
+    payload = _add_submitter_comment(payload, auth_user)
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Recyclage start: identifiantFactureCPP=%s, env=%s",
+        payload.get("identifiantFactureCPP"),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.recycle_invoice(payload)
+        result["externalId"] = _extract_external_id(result.get("response"))
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Recyclage success: identifiantFactureCPP=%s, externalId=%s, duration=%s ms",
+            payload.get("identifiantFactureCPP"),
+            result.get("externalId"),
+            duration_ms,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.recycle",
+            user=auth_user,
+            payload=payload,
+            status="success",
+            http_status=HTTPStatus.OK,
+            started_at=started_at,
+            result=result,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Recyclage error: identifiantFactureCPP=%s, duration=%s ms, error=%s",
+            payload.get("identifiantFactureCPP"),
+            duration_ms,
+            message,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.recycle",
+            user=auth_user,
+            payload=payload,
+            status="failed",
+            http_status=HTTPStatus.BAD_GATEWAY,
+            started_at=started_at,
+            error_message=message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
+
+
+@app.post(TREAT_REJECTION_PATH)
+def handle_treat_rejection(
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+    auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    body = body or {}
+    _print_received_post_debug(TREAT_REJECTION_PATH, body)
+    payload = body.get("payload")
+
+    if not isinstance(payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload est obligatoire et doit être un objet JSON.",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Traitement rejet start: demandes=%s, motif=%s, env=%s",
+        len(payload.get("listeDemandePaiement") or []) if isinstance(payload.get("listeDemandePaiement"), list) else 0,
+        payload.get("motifRejet"),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.treat_rejection(payload)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Traitement rejet success: duration=%s ms",
+            duration_ms,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.rejection.treat",
+            user=auth_user,
+            payload=payload,
+            status="success",
+            http_status=HTTPStatus.OK,
+            started_at=started_at,
+            result=result,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Traitement rejet error: duration=%s ms, error=%s",
+            duration_ms,
+            message,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.rejection.treat",
+            user=auth_user,
+            payload=payload,
+            status="failed",
+            http_status=HTTPStatus.BAD_GATEWAY,
+            started_at=started_at,
+            error_message=message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
+
+
 def main() -> int:
     logging.basicConfig(level=os.environ.get("CHORUS_LOG_LEVEL", "INFO").upper())
     print(f"Python executable: {sys.executable}")
@@ -1254,6 +1511,8 @@ def main() -> int:
     print(f"FastAPI listening on http://{HOST}:{PORT}")
     print(f"  - OAuth token: {OAUTH_TOKEN_PATH}")
     print(f"  - Submit:      {SUBMIT_PATH}")
+    print(f"  - Recycle:     {RECYCLE_PATH}")
+    print(f"  - Treat reject:{TREAT_REJECTION_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")
     print(f"  - Annuaire:    {SYNC_ANNUAIRE_PATH}")
     print(f"  - SIRET info:  {SIRET_INFO_PATH}")

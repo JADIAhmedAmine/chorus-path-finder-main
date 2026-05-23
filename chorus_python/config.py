@@ -33,7 +33,7 @@ CHORUS_ENV_PRESETS: dict[str, dict[str, str]] = {
 
 
 def resolve_chorus_environment(env: dict[str, str]) -> str:
-    raw = (env.get("CHORUS_ENV") or env.get("VITE_CHORUS_ENV") or CHORUS_ENV_PROD).strip().lower()
+    raw = (env.get("CHORUS_ENV") or env.get("VITE_CHORUS_ENV") or CHORUS_ENV_QUALIF).strip().lower()
     if raw in {CHORUS_ENV_PROD, "production"}:
         return CHORUS_ENV_PROD
     return CHORUS_ENV_QUALIF

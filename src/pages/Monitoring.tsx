@@ -23,6 +23,10 @@ interface AuditEvent {
   supplierId?: number | string;
   supplierServiceId?: number | string;
   chorusId?: string;
+  paymentRequestId?: number | string;
+  paymentRequestCount?: number;
+  rejectionReason?: string;
+  comment?: string;
   status?: string;
   httpStatus?: number;
   durationMs?: number;
@@ -52,6 +56,70 @@ function statusVariant(status?: string): 'default' | 'secondary' | 'destructive'
   }
 
   return 'secondary';
+}
+
+function actionLabel(action?: string): string {
+  if (action === 'invoice.submit') {
+    return 'Soumission';
+  }
+  if (action === 'invoice.recycle') {
+    return 'Recycler';
+  }
+  if (action === 'invoice.rejection.treat') {
+    return 'Traiter rejet';
+  }
+  return action || '-';
+}
+
+function actionVariant(action?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (action === 'invoice.submit') {
+    return 'default';
+  }
+  if (action === 'invoice.recycle') {
+    return 'outline';
+  }
+  if (action === 'invoice.rejection.treat') {
+    return 'secondary';
+  }
+  return 'outline';
+}
+
+function invoiceDisplay(event: AuditEvent): string {
+  if (event.invoiceNumber) {
+    return event.invoiceNumber;
+  }
+  if (event.action === 'invoice.recycle' && event.chorusId) {
+    return `CPP ${event.chorusId}`;
+  }
+  if (event.action === 'invoice.rejection.treat') {
+    const requestId = event.paymentRequestId ?? event.chorusId;
+    return requestId ? `Demande ${requestId}` : '-';
+  }
+  return event.chorusId || '-';
+}
+
+function invoiceDetails(event: AuditEvent): string[] {
+  const details: string[] = [];
+  if (event.invoiceDate) {
+    details.push(event.invoiceDate);
+  }
+  if (event.paymentRequestCount !== undefined && event.paymentRequestCount > 1) {
+    details.push(`${event.paymentRequestCount} demandes`);
+  }
+  return details;
+}
+
+function eventDetails(event: AuditEvent): string {
+  if (event.errorMessage) {
+    return event.errorMessage;
+  }
+  if (event.rejectionReason) {
+    return `Motif : ${event.rejectionReason}`;
+  }
+  if (event.comment) {
+    return event.comment;
+  }
+  return '-';
 }
 
 function formatAmount(value?: number | string, currency?: string): string {
@@ -136,7 +204,7 @@ export default function Monitoring() {
       <div className="max-w-5xl space-y-6 animate-fade-in">
         <div>
           <h1 className="text-2xl font-semibold">Monitoring</h1>
-          <p className="text-sm text-muted-foreground">Historique des soumissions de factures.</p>
+          <p className="text-sm text-muted-foreground">Historique des actions Chorus sur les factures.</p>
         </div>
         <Alert variant="destructive">
           <ShieldAlert className="h-4 w-4" />
@@ -152,7 +220,7 @@ export default function Monitoring() {
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">Monitoring</h1>
-          <p className="text-sm text-muted-foreground">Historique concis des soumissions de factures.</p>
+          <p className="text-sm text-muted-foreground">Historique concis des soumissions, recyclages et traitements de rejet.</p>
         </div>
         <div className="flex flex-col gap-2 md:w-[360px]">
           <Label htmlFor="monitoring-email">Filtrer par email</Label>
@@ -183,7 +251,7 @@ export default function Monitoring() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Activity className="h-4 w-4" />
-            Soumissions factures
+            Actions factures
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -193,13 +261,14 @@ export default function Monitoring() {
               Chargement de l’historique...
             </div>
           ) : events.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Aucune soumission de facture enregistrée.</p>
+            <p className="text-sm text-muted-foreground">Aucune action facture enregistrée.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[1120px] text-sm">
+              <table className="w-full min-w-[1240px] text-sm">
                 <thead>
                   <tr className="border-b text-left">
                     <th className="p-3 font-medium">Date</th>
+                    <th className="p-3 font-medium">Action</th>
                     <th className="p-3 font-medium">Utilisateur</th>
                     <th className="p-3 font-medium">Facture</th>
                     <th className="p-3 font-medium">Montant</th>
@@ -207,7 +276,7 @@ export default function Monitoring() {
                     <th className="p-3 font-medium">Fournisseur</th>
                     <th className="p-3 font-medium">Chorus</th>
                     <th className="p-3 font-medium">Statut</th>
-                    <th className="p-3 font-medium">Erreur</th>
+                    <th className="p-3 font-medium">Détails</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -215,14 +284,17 @@ export default function Monitoring() {
                     <tr key={`${event.timestamp}-${event.email}-${index}`} className="border-b">
                       <td className="p-3 whitespace-nowrap">{formatDate(event.timestamp)}</td>
                       <td className="p-3">
+                        <Badge variant={actionVariant(event.action)}>{actionLabel(event.action)}</Badge>
+                      </td>
+                      <td className="p-3">
                         <div>{event.email || '-'}</div>
                         <Badge variant="outline" className="mt-1">{event.roleCode || '-'}</Badge>
                       </td>
                       <td className="p-3">
-                        <div className="font-medium">{event.invoiceNumber || '-'}</div>
-                        {event.invoiceDate ? (
-                          <div className="text-xs text-muted-foreground">{event.invoiceDate}</div>
-                        ) : null}
+                        <div className="font-medium">{invoiceDisplay(event)}</div>
+                        {invoiceDetails(event).map((detail) => (
+                          <div key={detail} className="text-xs text-muted-foreground">{detail}</div>
+                        ))}
                       </td>
                       <td className="p-3 whitespace-nowrap">
                         {formatAmount(event.amountTtc ?? event.amountToPay, event.currency)}
@@ -247,7 +319,7 @@ export default function Monitoring() {
                         ) : null}
                       </td>
                       <td className="max-w-[280px] whitespace-normal break-words p-3 text-muted-foreground">
-                        {event.errorMessage || '-'}
+                        {eventDetails(event)}
                       </td>
                     </tr>
                   ))}

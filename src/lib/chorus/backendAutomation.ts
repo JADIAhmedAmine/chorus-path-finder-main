@@ -1,8 +1,17 @@
 import { authHeaders } from '@/lib/auth/session';
-import type { ChorusApiDebugEntry, ChorusConfig } from '@/types/chorus';
+import type {
+  ChorusApiDebugEntry,
+  ChorusConfig,
+  ChorusRecycleInvoicePayload,
+  ChorusRecycleInvoiceResult,
+  ChorusTreatRejectionPayload,
+  ChorusTreatRejectionResult,
+} from '@/types/chorus';
 
 export const CHORUS_OAUTH_TOKEN_PATH = '/api/chorus/oauth-token';
 export const CHORUS_SUBMIT_PATH = '/api/chorus/submit';
+export const CHORUS_RECYCLE_PATH = '/api/chorus/recycle';
+export const CHORUS_TREAT_REJECTION_PATH = '/api/chorus/rejection/treat';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
 export const CHORUS_SIRET_INFO_PATH = '/api/chorus/siret/info';
 export const CHORUS_ACTIVE_RECIPIENT_STRUCTURES_PATH = '/api/chorus/structures/active-destinataire';
@@ -227,6 +236,33 @@ function normalizeActiveRecipientStructuresResult(body: unknown): ChorusActiveRe
   };
 }
 
+function normalizeRecycleInvoiceResult(body: unknown): ChorusRecycleInvoiceResult {
+  if (!isRecord(body)) {
+    throw new ChorusBackendAutomationError('Réponse backend recyclage invalide.');
+  }
+
+  return {
+    ok: body.ok === true,
+    externalId: asString(body.externalId),
+    payload: body.payload,
+    response: body.response,
+    apiCalls: isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
+  };
+}
+
+function normalizeTreatRejectionResult(body: unknown): ChorusTreatRejectionResult {
+  if (!isRecord(body)) {
+    throw new ChorusBackendAutomationError('Réponse backend traitement rejet invalide.');
+  }
+
+  return {
+    ok: body.ok === true,
+    payload: body.payload,
+    response: body.response,
+    apiCalls: isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
+  };
+}
+
 export class ChorusBackendAutomationClient {
   constructor(
     private readonly config: ChorusConfig,
@@ -247,6 +283,14 @@ export class ChorusBackendAutomationClient {
 
   get supplierInvoicesSearchUrl(): string {
     return resolveChorusBridgeUrl(this.config, CHORUS_SUPPLIER_INVOICES_SEARCH_PATH);
+  }
+
+  get recycleInvoiceUrl(): string {
+    return resolveChorusBridgeUrl(this.config, CHORUS_RECYCLE_PATH);
+  }
+
+  get treatRejectionUrl(): string {
+    return resolveChorusBridgeUrl(this.config, CHORUS_TREAT_REJECTION_PATH);
   }
 
   async syncAnnuaire(): Promise<ChorusAnnuaireSyncResult> {
@@ -348,5 +392,57 @@ export class ChorusBackendAutomationClient {
     }
 
     return normalizeActiveRecipientStructuresResult(body);
+  }
+
+  async recycleInvoice(payload: ChorusRecycleInvoicePayload): Promise<ChorusRecycleInvoiceResult> {
+    const response = await this.fetchImpl(this.recycleInvoiceUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({
+        environment: this.config.environment,
+        payload,
+      }),
+    });
+
+    const body = await parseResponseBody(response);
+    const apiCalls = isRecord(body) && isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (!response.ok || !isRecord(body) || body.ok !== true) {
+      const message = isRecord(body) && typeof body.error === 'string'
+        ? body.error
+        : `Recyclage facture impossible (${response.status}).`;
+      throw new ChorusBackendAutomationError(message, apiCalls);
+    }
+
+    return normalizeRecycleInvoiceResult(body);
+  }
+
+  async treatRejection(payload: ChorusTreatRejectionPayload): Promise<ChorusTreatRejectionResult> {
+    const response = await this.fetchImpl(this.treatRejectionUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({
+        environment: this.config.environment,
+        payload,
+      }),
+    });
+
+    const body = await parseResponseBody(response);
+    const apiCalls = isRecord(body) && isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (!response.ok || !isRecord(body) || body.ok !== true) {
+      const message = isRecord(body) && typeof body.error === 'string'
+        ? body.error
+        : `Traitement rejet impossible (${response.status}).`;
+      throw new ChorusBackendAutomationError(message, apiCalls);
+    }
+
+    return normalizeTreatRejectionResult(body);
   }
 }

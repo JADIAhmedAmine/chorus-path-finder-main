@@ -21,6 +21,8 @@ class FakeChorusClient:
         self.uploaded_paths: list[Path] = []
         self.uploaded_content: list[dict[str, str]] = []
         self.submitted_payload: dict[str, object] | None = None
+        self.recycled_payload: dict[str, object] | None = None
+        self.treated_rejection_payload: dict[str, object] | None = None
 
     def reset_api_calls(self) -> None:
         self.api_calls = []
@@ -72,6 +74,21 @@ class FakeChorusClient:
         self.submitted_payload = payload
         return {
             "invoiceId": "CHORUS-TEST-001",
+        }
+
+    def recycle_invoice(self, payload: dict[str, object]) -> dict[str, object]:
+        self.recycled_payload = payload
+        return {
+            "codeRetour": 0,
+            "identifiantFactureCPP": payload["identifiantFactureCPP"],
+            "statutFacture": "BROUILLON",
+        }
+
+    def treat_rejection(self, payload: dict[str, object]) -> dict[str, object]:
+        self.treated_rejection_payload = payload
+        return {
+            "codeRetour": 0,
+            "libelle": "TRA_MSG_00.000",
         }
 
 
@@ -444,6 +461,62 @@ class SoumissionFactureTest(unittest.TestCase):
                 "additional_preferred_ids": (32242033407300,),
             }
         ])
+
+    def test_recycle_invoice_posts_recycler_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "commentaire": "Correction acheminement",
+            "destinataire": {
+                "codeDestinataire": "32242033407300",
+            },
+            "identifiantFactureCPP": 8426157,
+        }
+
+        result = service.recycle_invoice(payload)
+
+        self.assertEqual(result["response"], {
+            "codeRetour": 0,
+            "identifiantFactureCPP": 8426157,
+            "statutFacture": "BROUILLON",
+        })
+        self.assertNotIn("reference", result["payload"])
+        self.assertNotIn("idUtilisateurCourant", result["payload"])
+        self.assertEqual(fake_client.recycled_payload, result["payload"])
+
+    def test_treat_rejection_posts_traiter_rejet_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "cpltInfos": "Rejet traité après contrôle métier",
+            "listeDemandePaiement": [
+                {
+                    "idDemandePaiement": 123456,
+                }
+            ],
+            "motifRejet": "REJET_METIER",
+        }
+
+        result = service.treat_rejection(payload)
+
+        self.assertEqual(result["response"], {
+            "codeRetour": 0,
+            "libelle": "TRA_MSG_00.000",
+        })
+        self.assertEqual(result["payload"], payload)
+        self.assertEqual(fake_client.treated_rejection_payload, payload)
 
 
 if __name__ == "__main__":

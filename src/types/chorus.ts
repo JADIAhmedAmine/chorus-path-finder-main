@@ -139,6 +139,37 @@ export interface ChorusSubmitInvoiceResult {
   apiCalls: ChorusApiDebugEntry[];
 }
 
+export interface ChorusRecycleInvoicePayload {
+  commentaire?: string;
+  destinataire: {
+    codeDestinataire: string;
+  };
+  identifiantFactureCPP: number;
+}
+
+export interface ChorusRecycleInvoiceResult {
+  ok: boolean;
+  externalId?: string;
+  payload?: unknown;
+  response?: unknown;
+  apiCalls: ChorusApiDebugEntry[];
+}
+
+export interface ChorusTreatRejectionPayload {
+  cpltInfos?: string;
+  listeDemandePaiement: Array<{
+    idDemandePaiement: number;
+  }>;
+  motifRejet: string;
+}
+
+export interface ChorusTreatRejectionResult {
+  ok: boolean;
+  payload?: unknown;
+  response?: unknown;
+  apiCalls: ChorusApiDebugEntry[];
+}
+
 export interface ChorusTransverseCodeListItem {
   code: string;
   label?: string;
