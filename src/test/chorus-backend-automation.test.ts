@@ -143,6 +143,76 @@ describe('ChorusBackendAutomationClient', () => {
     expect(result.structures).toHaveLength(1);
   });
 
+  it('recycles an invoice through the backend bridge', async () => {
+    const payload = {
+      commentaire: 'Correction acheminement',
+      destinataire: {
+        codeDestinataire: '32242033407300',
+      },
+      identifiantFactureCPP: 8426157,
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      externalId: '8426157',
+      payload,
+      response: {
+        codeRetour: 0,
+        libelle: 'TRA_MSG_00.000',
+        identifiantFactureCPP: 8426157,
+        statutFacture: 'BROUILLON',
+      },
+      apiCalls: [],
+    }));
+
+    const client = new ChorusBackendAutomationClient({
+      ...getDefaultChorusConfig(),
+      submissionBridgeUrl: 'http://127.0.0.1:8008/api/chorus/submit',
+    }, fetchMock);
+
+    const result = await client.recycleInvoice(payload);
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/recycle', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ environment: 'qualif', payload }),
+    }));
+    expect(result.externalId).toBe('8426157');
+    expect(result.response).toMatchObject({ statutFacture: 'BROUILLON' });
+  });
+
+  it('marks rejected payment requests as treated through the backend bridge', async () => {
+    const payload = {
+      cpltInfos: 'Rejet traité après contrôle métier',
+      listeDemandePaiement: [
+        {
+          idDemandePaiement: 123456,
+        },
+      ],
+      motifRejet: 'REJET_METIER',
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      payload,
+      response: {
+        codeRetour: 0,
+        libelle: 'TRA_MSG_00.000',
+      },
+      apiCalls: [],
+    }));
+
+    const client = new ChorusBackendAutomationClient({
+      ...getDefaultChorusConfig(),
+      submissionBridgeUrl: 'http://127.0.0.1:8008/api/chorus/submit',
+    }, fetchMock);
+
+    const result = await client.treatRejection(payload);
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/rejection/treat', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ environment: 'qualif', payload }),
+    }));
+    expect(result.response).toMatchObject({ libelle: 'TRA_MSG_00.000' });
+  });
+
   it('raises backend errors with debug api calls attached', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
       ok: false,

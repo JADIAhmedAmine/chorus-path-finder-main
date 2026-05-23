@@ -659,6 +659,20 @@ class ChorusClient:
             "Soumission de la facture",
         )
 
+    def recycle_invoice(self, payload: dict[str, Any]) -> Any:
+        return self._post_json(
+            "/factures/v1/recycler",
+            payload,
+            "Recyclage de la facture",
+        )
+
+    def treat_rejection(self, payload: dict[str, Any]) -> Any:
+        return self._post_json(
+            "/factures/v1/traiterRejet",
+            payload,
+            "Traitement du rejet",
+        )
+
     def search_supplier_invoices(self, payload: dict[str, Any]) -> Any:
         return self._post_json(
             "/factures/v1/rechercher/fournisseur",

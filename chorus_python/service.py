@@ -45,6 +45,15 @@ def enforce_submission_vat_type(payload: dict[str, Any]) -> None:
     references["typeTva"] = normalize_submission_vat_type(references.get("typeTva"))
 
 
+def enforce_recycle_vat_type(payload: dict[str, Any]) -> None:
+    reference = payload.get("reference")
+    if not isinstance(reference, dict):
+        reference = {}
+        payload["reference"] = reference
+
+    reference["typeTva"] = normalize_submission_vat_type(reference.get("typeTva"))
+
+
 def mode_depot_for_pdf(is_signed: bool) -> str:
     return SIGNED_PDF_MODE_DEPOT if is_signed else DEFAULT_MODE_DEPOT
 
@@ -262,6 +271,30 @@ class ChorusSubmissionService:
                 "response": main_upload_result.response,
             }
         return result
+
+    def recycle_invoice(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.client.reset_api_calls()
+        final_payload = deepcopy(payload)
+        response = self.client.recycle_invoice(final_payload)
+        return {
+            "ok": True,
+            "payload": final_payload,
+            "response": response,
+            "apiCalls": list(self.client.api_calls),
+            "uploadedFiles": [],
+        }
+
+    def treat_rejection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.client.reset_api_calls()
+        final_payload = deepcopy(payload)
+        response = self.client.treat_rejection(final_payload)
+        return {
+            "ok": True,
+            "payload": final_payload,
+            "response": response,
+            "apiCalls": list(self.client.api_calls),
+            "uploadedFiles": [],
+        }
 
     def submit_invoice(self, invoice: ChorusMinimalInvoiceInput) -> dict[str, Any]:
         self.client.reset_api_calls()

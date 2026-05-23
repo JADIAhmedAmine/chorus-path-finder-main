@@ -1,23 +1,114 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, Building2, FileJson, Hash, Info, Loader2 } from 'lucide-react';
+import { ArrowLeft, Building2, CheckCircle2, FileJson, Hash, Info, Loader2, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { useQueryClient } from '@tanstack/react-query';
+import { ChorusBackendAutomationClient, ChorusBackendAutomationError } from '@/lib/chorus/backendAutomation';
+import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import {
+  dbQueryKeys,
   useInvoiceDetailQuery,
   usePublicCustomersQuery,
   useSuppliersQuery,
 } from '@/lib/queries/db';
+import type {
+  ChorusRecycleInvoicePayload,
+  ChorusTreatRejectionPayload,
+} from '@/types/chorus';
+import type { Invoice } from '@/types';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+function firstPresent(record: Record<string, unknown> | null | undefined, keys: string[]): unknown {
+  if (!record) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (value !== undefined && value !== null && value !== '') {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function parsePositiveInteger(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const digits = value.trim().replace(/\s/g, '');
+    if (!/^\d+$/.test(digits)) {
+      return undefined;
+    }
+    const parsed = Number(digits);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
+  }
+
+  return undefined;
+}
+
+function isRecycleStatus(value: string): boolean {
+  return value.toUpperCase().includes('RECYCL');
+}
+
+function resolveChorusPaymentRequestId(invoice: Invoice, raw: Record<string, unknown> | Invoice | null): number | undefined {
+  return parsePositiveInteger(
+    firstPresent(isRecord(raw) ? raw : null, [
+      'idDemandePaiement',
+      'identifiantFactureCPP',
+      'idFacture',
+      'numeroFactureChorus',
+      'numeroDemandePaiement',
+      'numeroDp',
+      'numeroDP',
+    ]) ?? invoice.chorusInvoiceNumber,
+  );
+}
+
+function extractResponseStatus(response: unknown): string | undefined {
+  if (!isRecord(response)) {
+    return undefined;
+  }
+
+  const status = response.statutFacture ?? response.statutCourant ?? response.statut;
+  return typeof status === 'string' && status.trim() ? status.trim() : undefined;
+}
+
+interface RecycleFormState {
+  codeDestinataire: string;
+  commentaire: string;
+}
+
+const EMPTY_RECYCLE_FORM: RecycleFormState = {
+  codeDestinataire: '',
+  commentaire: '',
+};
+
+interface TreatRejectionFormState {
+  motifRejet: string;
+  cpltInfos: string;
+}
+
+const EMPTY_TREAT_REJECTION_FORM: TreatRejectionFormState = {
+  motifRejet: '',
+  cpltInfos: '',
+};
 
 function formatOptionalDate(value: string | undefined, withTime = false): string {
   if (!value) {
@@ -47,9 +138,18 @@ function formatOptionalDate(value: string | undefined, withTime = false): string
 
 export default function ChorusInvoiceDetail() {
   const { id } = useParams();
+  const queryClient = useQueryClient();
   const invoiceQuery = useInvoiceDetailQuery(id);
   const suppliersQuery = useSuppliersQuery();
   const customersQuery = usePublicCustomersQuery();
+  const [recycleForm, setRecycleForm] = useState<RecycleFormState>(EMPTY_RECYCLE_FORM);
+  const [recycleLoading, setRecycleLoading] = useState(false);
+  const [recycleError, setRecycleError] = useState<string | null>(null);
+  const [recycleSuccess, setRecycleSuccess] = useState<string | null>(null);
+  const [treatRejectionForm, setTreatRejectionForm] = useState<TreatRejectionFormState>(EMPTY_TREAT_REJECTION_FORM);
+  const [treatRejectionLoading, setTreatRejectionLoading] = useState(false);
+  const [treatRejectionError, setTreatRejectionError] = useState<string | null>(null);
+  const [treatRejectionSuccess, setTreatRejectionSuccess] = useState<string | null>(null);
 
   const supplierById = useMemo(
     () => new Map((suppliersQuery.data ?? []).map((s) => [s.id, s])),
@@ -67,6 +167,34 @@ export default function ChorusInvoiceDetail() {
   const raw = invoice && isRecord((invoice as { rawPayload?: unknown }).rawPayload)
     ? (invoice as { rawPayload?: Record<string, unknown> }).rawPayload
     : invoice;
+
+  useEffect(() => {
+    if (!invoice) {
+      setRecycleForm(EMPTY_RECYCLE_FORM);
+      setTreatRejectionForm(EMPTY_TREAT_REJECTION_FORM);
+      return;
+    }
+
+    setRecycleForm({
+      codeDestinataire: customer?.codeDestinataire || invoice.recipientChorusCode || '32242033407300',
+      commentaire: 'Traitement recyclage : correction des données d’acheminement.',
+    });
+    setTreatRejectionForm({
+      motifRejet: invoice.statusReasonCode || invoice.statusReasonLabel || 'TRAITE',
+      cpltInfos: 'Rejet traité depuis Chorus Pilot.',
+    });
+    setRecycleError(null);
+    setRecycleSuccess(null);
+    setTreatRejectionError(null);
+    setTreatRejectionSuccess(null);
+  }, [
+    customer?.codeDestinataire,
+    invoice?.id,
+    invoice?.recipientChorusCode,
+    invoice?.serviceChorusCode,
+    invoice?.statusReasonCode,
+    invoice?.statusReasonLabel,
+  ]);
 
   if (isLoading) {
     return (
@@ -99,6 +227,7 @@ export default function ChorusInvoiceDetail() {
   }
 
   const rawStatus = (invoice.statusChorus || invoice.statusInternal).toUpperCase();
+  const isRecyclable = isRecycleStatus(rawStatus);
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS'
     || invoice.statusInternal === 'REJECTED_TECHNICAL'
     || rawStatus.includes('REJET')
@@ -109,6 +238,108 @@ export default function ChorusInvoiceDetail() {
   const customerLabel = customer?.legalName || invoice.recipientChorusName || 'Destinataire Chorus';
   const customerSiret = customer?.siret || invoice.recipientChorusCode || '';
   const customerCode = customer?.codeDestinataire || invoice.recipientChorusCode || '';
+  const chorusPaymentRequestId = resolveChorusPaymentRequestId(invoice, raw);
+
+  async function handleRecycleInvoice() {
+    setRecycleLoading(true);
+    setRecycleError(null);
+    setRecycleSuccess(null);
+
+    try {
+      const config = resolveChorusRuntimeConfig(loadChorusConfig());
+      const identifiantFactureCPP = chorusPaymentRequestId;
+      const codeDestinataire = recycleForm.codeDestinataire.trim();
+
+      if (!identifiantFactureCPP) {
+        throw new Error('Identifiant facture CPP introuvable dans la facture synchronisée.');
+      }
+      if (!codeDestinataire) {
+        throw new Error('Code destinataire obligatoire pour recycler la facture.');
+      }
+
+      const payload: ChorusRecycleInvoicePayload = {
+        commentaire: recycleForm.commentaire.trim() || undefined,
+        destinataire: {
+          codeDestinataire,
+        },
+        identifiantFactureCPP,
+      };
+
+      const result = await new ChorusBackendAutomationClient(config).recycleInvoice(payload);
+      const nextStatus = extractResponseStatus(result.response);
+      const statusMessage = nextStatus ? `Statut Chorus retourné : ${nextStatus}` : 'Recyclage envoyé à Chorus.';
+      setRecycleSuccess(statusMessage);
+
+      queryClient.setQueryData<Invoice | null>(dbQueryKeys.invoiceDetail(invoice.id), (current) => {
+        if (!current) {
+          return current;
+        }
+        return {
+          ...current,
+          statusChorus: nextStatus ?? current.statusChorus,
+          lastStatusSyncAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      });
+      void queryClient.invalidateQueries({ queryKey: ['db', 'invoices'] });
+    } catch (error) {
+      const message = error instanceof ChorusBackendAutomationError || error instanceof Error
+        ? error.message
+        : 'Recyclage Chorus impossible.';
+      setRecycleError(message);
+    } finally {
+      setRecycleLoading(false);
+    }
+  }
+
+  async function handleTreatRejection() {
+    setTreatRejectionLoading(true);
+    setTreatRejectionError(null);
+    setTreatRejectionSuccess(null);
+
+    try {
+      const idDemandePaiement = chorusPaymentRequestId;
+      const motifRejet = treatRejectionForm.motifRejet.trim();
+
+      if (!idDemandePaiement) {
+        throw new Error('Identifiant demande de paiement introuvable dans la facture synchronisée.');
+      }
+      if (!motifRejet) {
+        throw new Error('Motif de traitement du rejet obligatoire.');
+      }
+
+      const payload: ChorusTreatRejectionPayload = {
+        cpltInfos: treatRejectionForm.cpltInfos.trim() || undefined,
+        listeDemandePaiement: [{ idDemandePaiement }],
+        motifRejet,
+      };
+
+      const config = resolveChorusRuntimeConfig(loadChorusConfig());
+      await new ChorusBackendAutomationClient(config).treatRejection(payload);
+      setTreatRejectionSuccess('Rejet marqué comme traité côté Chorus.');
+
+      queryClient.setQueryData<Invoice | null>(dbQueryKeys.invoiceDetail(invoice.id), (current) => {
+        if (!current) {
+          return current;
+        }
+        const now = new Date().toISOString();
+        return {
+          ...current,
+          rejectionProcessed: true,
+          lastStatusSyncAt: now,
+          updatedAt: now,
+        };
+      });
+      void queryClient.invalidateQueries({ queryKey: ['db', 'invoices'] });
+    } catch (error) {
+      const message = error instanceof ChorusBackendAutomationError || error instanceof Error
+        ? error.message
+        : 'Traitement du rejet impossible.';
+      setTreatRejectionError(message);
+    } finally {
+      setTreatRejectionLoading(false);
+    }
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -141,6 +372,124 @@ export default function ChorusInvoiceDetail() {
             <p className="mt-1 text-sm text-muted-foreground">{invoice.statusReasonLabel}</p>
           </AlertDescription>
         </Alert>
+      )}
+
+      {isRejected && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center text-base">
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Traiter le rejet
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {invoice.rejectionProcessed && !treatRejectionSuccess && (
+              <Alert className="border-success/30 bg-success/5">
+                <CheckCircle2 className="h-4 w-4 text-success" />
+                <AlertDescription>Ce rejet est déjà marqué comme traité dans les données synchronisées.</AlertDescription>
+              </Alert>
+            )}
+            {treatRejectionError && (
+              <Alert variant="destructive">
+                <AlertDescription>{treatRejectionError}</AlertDescription>
+              </Alert>
+            )}
+            {treatRejectionSuccess && (
+              <Alert className="border-success/30 bg-success/5">
+                <CheckCircle2 className="h-4 w-4 text-success" />
+                <AlertDescription>{treatRejectionSuccess}</AlertDescription>
+              </Alert>
+            )}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="treat-rejection-payment-id">ID demande paiement</Label>
+                <Input id="treat-rejection-payment-id" value={chorusPaymentRequestId ? String(chorusPaymentRequestId) : ''} disabled />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="treat-rejection-motif">Motif rejet</Label>
+                <Input
+                  id="treat-rejection-motif"
+                  value={treatRejectionForm.motifRejet}
+                  onChange={(event) => setTreatRejectionForm((current) => ({ ...current, motifRejet: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="treat-rejection-info">Complément d’information</Label>
+              <Textarea
+                id="treat-rejection-info"
+                value={treatRejectionForm.cpltInfos}
+                onChange={(event) => setTreatRejectionForm((current) => ({ ...current, cpltInfos: event.target.value }))}
+                rows={3}
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button
+                onClick={() => void handleTreatRejection()}
+                disabled={treatRejectionLoading || !chorusPaymentRequestId || invoice.rejectionProcessed === true}
+              >
+                {treatRejectionLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                Marquer le rejet traité
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {isRecyclable && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center text-base">
+              <RefreshCw className="mr-2 h-4 w-4" />
+              Traiter le recyclage
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {recycleError && (
+              <Alert variant="destructive">
+                <AlertDescription>{recycleError}</AlertDescription>
+              </Alert>
+            )}
+            {recycleSuccess && (
+              <Alert className="border-success/30 bg-success/5">
+                <CheckCircle2 className="h-4 w-4 text-success" />
+                <AlertDescription>{recycleSuccess}</AlertDescription>
+              </Alert>
+            )}
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="recycle-cpp-id">Identifiant CPP</Label>
+                <Input id="recycle-cpp-id" value={chorusPaymentRequestId ? String(chorusPaymentRequestId) : ''} disabled />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="recycle-destinataire">Code destinataire</Label>
+                <Input
+                  id="recycle-destinataire"
+                  value={recycleForm.codeDestinataire}
+                  onChange={(event) => setRecycleForm((current) => ({ ...current, codeDestinataire: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="recycle-comment">Commentaire</Label>
+              <Textarea
+                id="recycle-comment"
+                value={recycleForm.commentaire}
+                onChange={(event) => setRecycleForm((current) => ({ ...current, commentaire: event.target.value }))}
+                rows={3}
+              />
+            </div>
+            <div className="flex justify-end">
+              <Button
+                onClick={() => void handleRecycleInvoice()}
+                disabled={recycleLoading || !chorusPaymentRequestId}
+              >
+                {recycleLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                Recycler la facture
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       <Tabs defaultValue="summary">
