@@ -2,16 +2,20 @@ import { authHeaders } from '@/lib/auth/session';
 import type {
   ChorusApiDebugEntry,
   ChorusConfig,
+  ChorusCorrectValidatorPayload,
+  ChorusCorrectValidatorResult,
+  ChorusInvoiceHistoryPayload,
+  ChorusInvoiceHistoryResponse,
+  ChorusInvoiceHistoryResult,
   ChorusRecycleInvoicePayload,
   ChorusRecycleInvoiceResult,
-  ChorusTreatRejectionPayload,
-  ChorusTreatRejectionResult,
 } from '@/types/chorus';
 
 export const CHORUS_OAUTH_TOKEN_PATH = '/api/chorus/oauth-token';
 export const CHORUS_SUBMIT_PATH = '/api/chorus/submit';
 export const CHORUS_RECYCLE_PATH = '/api/chorus/recycle';
-export const CHORUS_TREAT_REJECTION_PATH = '/api/chorus/rejection/treat';
+export const CHORUS_CORRECT_VALIDATOR_PATH = '/api/chorus/validator/correct';
+export const CHORUS_INVOICE_HISTORY_PATH = '/api/chorus/invoices/history';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
 export const CHORUS_SIRET_INFO_PATH = '/api/chorus/siret/info';
 export const CHORUS_ACTIVE_RECIPIENT_STRUCTURES_PATH = '/api/chorus/structures/active-destinataire';
@@ -250,15 +254,28 @@ function normalizeRecycleInvoiceResult(body: unknown): ChorusRecycleInvoiceResul
   };
 }
 
-function normalizeTreatRejectionResult(body: unknown): ChorusTreatRejectionResult {
+function normalizeCorrectValidatorResult(body: unknown): ChorusCorrectValidatorResult {
   if (!isRecord(body)) {
-    throw new ChorusBackendAutomationError('Réponse backend traitement rejet invalide.');
+    throw new ChorusBackendAutomationError('Réponse backend correction valideur invalide.');
   }
 
   return {
     ok: body.ok === true,
     payload: body.payload,
     response: body.response,
+    apiCalls: isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
+  };
+}
+
+function normalizeInvoiceHistoryResult(body: unknown): ChorusInvoiceHistoryResult {
+  if (!isRecord(body)) {
+    throw new ChorusBackendAutomationError('Réponse backend historique facture invalide.');
+  }
+
+  return {
+    ok: body.ok === true,
+    payload: body.payload,
+    response: isRecord(body.response) ? body.response as ChorusInvoiceHistoryResponse : undefined,
     apiCalls: isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
   };
 }
@@ -289,8 +306,12 @@ export class ChorusBackendAutomationClient {
     return resolveChorusBridgeUrl(this.config, CHORUS_RECYCLE_PATH);
   }
 
-  get treatRejectionUrl(): string {
-    return resolveChorusBridgeUrl(this.config, CHORUS_TREAT_REJECTION_PATH);
+  get correctValidatorUrl(): string {
+    return resolveChorusBridgeUrl(this.config, CHORUS_CORRECT_VALIDATOR_PATH);
+  }
+
+  get invoiceHistoryUrl(): string {
+    return resolveChorusBridgeUrl(this.config, CHORUS_INVOICE_HISTORY_PATH);
   }
 
   async syncAnnuaire(): Promise<ChorusAnnuaireSyncResult> {
@@ -420,8 +441,8 @@ export class ChorusBackendAutomationClient {
     return normalizeRecycleInvoiceResult(body);
   }
 
-  async treatRejection(payload: ChorusTreatRejectionPayload): Promise<ChorusTreatRejectionResult> {
-    const response = await this.fetchImpl(this.treatRejectionUrl, {
+  async correctInvoiceValidator(payload: ChorusCorrectValidatorPayload): Promise<ChorusCorrectValidatorResult> {
+    const response = await this.fetchImpl(this.correctValidatorUrl, {
       method: 'POST',
       headers: authHeaders({
         Accept: 'application/json',
@@ -439,10 +460,36 @@ export class ChorusBackendAutomationClient {
     if (!response.ok || !isRecord(body) || body.ok !== true) {
       const message = isRecord(body) && typeof body.error === 'string'
         ? body.error
-        : `Traitement rejet impossible (${response.status}).`;
+        : `Correction valideur impossible (${response.status}).`;
       throw new ChorusBackendAutomationError(message, apiCalls);
     }
 
-    return normalizeTreatRejectionResult(body);
+    return normalizeCorrectValidatorResult(body);
+  }
+
+  async getInvoiceHistory(payload: ChorusInvoiceHistoryPayload): Promise<ChorusInvoiceHistoryResult> {
+    const response = await this.fetchImpl(this.invoiceHistoryUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({
+        environment: this.config.environment,
+        payload,
+      }),
+    });
+
+    const body = await parseResponseBody(response);
+    const apiCalls = isRecord(body) && isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (!response.ok || !isRecord(body) || body.ok !== true) {
+      const message = isRecord(body) && typeof body.error === 'string'
+        ? body.error
+        : `Consultation historique facture impossible (${response.status}).`;
+      throw new ChorusBackendAutomationError(message, apiCalls);
+    }
+
+    return normalizeInvoiceHistoryResult(body);
   }
 }

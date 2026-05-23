@@ -179,21 +179,19 @@ describe('ChorusBackendAutomationClient', () => {
     expect(result.response).toMatchObject({ statutFacture: 'BROUILLON' });
   });
 
-  it('marks rejected payment requests as treated through the backend bridge', async () => {
+  it('corrects a wrong invoice validator through the backend bridge', async () => {
     const payload = {
-      cpltInfos: 'Rejet traité après contrôle métier',
-      listeDemandePaiement: [
-        {
-          idDemandePaiement: 123456,
-        },
-      ],
-      motifRejet: 'REJET_METIER',
+      idFacture: 8424327,
+      idStructure: 123456,
+      identifiantStructure: '32242033407300',
+      typeIdentifiantStructure: 'SIRET',
     };
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
       ok: true,
       payload,
       response: {
         codeRetour: 0,
+        idFacture: 8424327,
         libelle: 'TRA_MSG_00.000',
       },
       apiCalls: [],
@@ -204,13 +202,89 @@ describe('ChorusBackendAutomationClient', () => {
       submissionBridgeUrl: 'http://127.0.0.1:8008/api/chorus/submit',
     }, fetchMock);
 
-    const result = await client.treatRejection(payload);
+    const result = await client.correctInvoiceValidator(payload);
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/rejection/treat', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/validator/correct', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ environment: 'qualif', payload }),
     }));
-    expect(result.response).toMatchObject({ libelle: 'TRA_MSG_00.000' });
+    expect(result.response).toMatchObject({ idFacture: 8424327, libelle: 'TRA_MSG_00.000' });
+  });
+
+  it('consults invoice history through the backend bridge', async () => {
+    const payload = {
+      idFacture: 8424327,
+      nbResultatsMaximum: 10,
+      paramRechercheHistoActionsUtilisateurs: {
+        nbResultatsParPageListeHistoAction: 10,
+        pageResultatDemandeeListeHistoAction: 1,
+        triColonneListeHistoAction: 'HistoActionDateHeure',
+        triSensListeHistoAction: 'Descendant',
+      },
+      paramRechercheHistoEvenementsComplementaires: {
+        nbResultatsParPageListeHistoEvenement: 10,
+        pageResultatDemandeeListeHistoEvenement: 1,
+        triColonneListeHistoEvenement: 'EvenementLibelle',
+        triSensListeHistoEvenement: 'Descendant',
+      },
+      paramRechercheHistoStatuts: {
+        nbResultatsParPageListeHistoStatut: 10,
+        pageResultatDemandeeListeHistoStatut: 1,
+        triColonneListeHistoStatut: 'HistoStatutDatePassage',
+        triSensListeHistoStatut: 'Descendant',
+      },
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      payload,
+      response: {
+        codeRetour: 0,
+        libelle: 'GCU_MSG_01_000',
+        idFacture: 8424327,
+        numeroFacture: '20260000000000000064',
+        modeDepot: 'SAISIE_API',
+        statutCourantCode: 'REJETEE',
+        historiquesDesStatuts: {
+          histoStatut: [
+            {
+              histoStatutId: 19990676,
+              histoStatutCode: 'REJETEE',
+              histoStatutDatePassage: '2026-04-28 14:51',
+            },
+          ],
+        },
+        historiquesDesActionsUtilisateurs: {
+          histoAction: [
+            {
+              histoActionId: 100085487,
+              histoActionCode: 'ACQUITTEMENT_REJET',
+              histoActionDateHeure: '2026-04-29 16:08',
+            },
+          ],
+        },
+        derniereAction: {
+          derniereActionId: 100085487,
+          derniereActionCode: 'ACQUITTEMENT_REJET',
+        },
+      },
+      apiCalls: [],
+    }));
+
+    const client = new ChorusBackendAutomationClient({
+      ...getDefaultChorusConfig(),
+      submissionBridgeUrl: 'http://127.0.0.1:8008/api/chorus/submit',
+    }, fetchMock);
+
+    const result = await client.getInvoiceHistory(payload);
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/chorus/invoices/history', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ environment: 'qualif', payload }),
+    }));
+    expect(result.response).toMatchObject({
+      idFacture: 8424327,
+      statutCourantCode: 'REJETEE',
+    });
   });
 
   it('raises backend errors with debug api calls attached', async () => {

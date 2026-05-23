@@ -26,6 +26,9 @@ interface AuditEvent {
   paymentRequestId?: number | string;
   paymentRequestCount?: number;
   rejectionReason?: string;
+  validatorStructureId?: number | string;
+  validatorStructureIdentifier?: string;
+  validatorStructureIdentifierType?: string;
   comment?: string;
   status?: string;
   httpStatus?: number;
@@ -68,6 +71,9 @@ function actionLabel(action?: string): string {
   if (action === 'invoice.rejection.treat') {
     return 'Traiter rejet';
   }
+  if (action === 'invoice.validator.correct') {
+    return 'Corriger valideur';
+  }
   return action || '-';
 }
 
@@ -80,6 +86,9 @@ function actionVariant(action?: string): 'default' | 'secondary' | 'destructive'
   }
   if (action === 'invoice.rejection.treat') {
     return 'secondary';
+  }
+  if (action === 'invoice.validator.correct') {
+    return 'outline';
   }
   return 'outline';
 }
@@ -94,6 +103,9 @@ function invoiceDisplay(event: AuditEvent): string {
   if (event.action === 'invoice.rejection.treat') {
     const requestId = event.paymentRequestId ?? event.chorusId;
     return requestId ? `Demande ${requestId}` : '-';
+  }
+  if (event.action === 'invoice.validator.correct' && event.chorusId) {
+    return `Facture ${event.chorusId}`;
   }
   return event.chorusId || '-';
 }
@@ -115,6 +127,14 @@ function eventDetails(event: AuditEvent): string {
   }
   if (event.rejectionReason) {
     return `Motif : ${event.rejectionReason}`;
+  }
+  if (event.validatorStructureIdentifier || event.validatorStructureId) {
+    const identifier = event.validatorStructureIdentifier
+      ? `${event.validatorStructureIdentifierType || 'ID'} ${event.validatorStructureIdentifier}`
+      : undefined;
+    return ['Valideur', event.validatorStructureId ? `structure ${event.validatorStructureId}` : undefined, identifier]
+      .filter(Boolean)
+      .join(' · ');
   }
   if (event.comment) {
     return event.comment;

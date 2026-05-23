@@ -666,11 +666,18 @@ class ChorusClient:
             "Recyclage de la facture",
         )
 
-    def treat_rejection(self, payload: dict[str, Any]) -> Any:
+    def correct_invoice_validator(self, payload: dict[str, Any]) -> Any:
         return self._post_json(
-            "/factures/v1/traiterRejet",
+            "/factures/v1/corriger/valideur/facture",
             payload,
-            "Traitement du rejet",
+            "Correction du valideur facture",
+        )
+
+    def consult_invoice_history(self, payload: dict[str, Any]) -> Any:
+        return self._post_json(
+            "/factures/v1/consulter/historique",
+            payload,
+            "Consultation de l'historique facture",
         )
 
     def search_supplier_invoices(self, payload: dict[str, Any]) -> Any:
