@@ -20,6 +20,7 @@ import {
   isPaidChorusStatus,
 } from '@/lib/chorus/actionableInvoices';
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
+import { DashboardPilotagePanel } from '@/components/chorus/DashboardPilotagePanel';
 import {
   type SyncRunResult,
   useInvoicesQuery,
@@ -455,6 +456,8 @@ export default function Dashboard() {
           </div>
         </CardContent>
       </Card>
+
+      <DashboardPilotagePanel fromDate={filters.fromDate || undefined} toDate={filters.toDate || undefined} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {statCards.map((stat) => (

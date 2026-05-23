@@ -284,10 +284,22 @@ class ChorusSubmissionService:
             "uploadedFiles": [],
         }
 
-    def treat_rejection(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def correct_invoice_validator(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.client.reset_api_calls()
         final_payload = deepcopy(payload)
-        response = self.client.treat_rejection(final_payload)
+        response = self.client.correct_invoice_validator(final_payload)
+        return {
+            "ok": True,
+            "payload": final_payload,
+            "response": response,
+            "apiCalls": list(self.client.api_calls),
+            "uploadedFiles": [],
+        }
+
+    def consult_invoice_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.client.reset_api_calls()
+        final_payload = deepcopy(payload)
+        response = self.client.consult_invoice_history(final_payload)
         return {
             "ok": True,
             "payload": final_payload,

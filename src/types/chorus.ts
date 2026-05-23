@@ -120,6 +120,12 @@ export interface ChorusSubmitInvoiceInput {
   mainFile: File;
   attachments: ChorusSubmitAttachmentInput[];
   debugBypassValidation?: boolean;
+  /**
+   * État courant Chorus de la demande de paiement, si déjà connu.
+   * Le backend bloque la soumission si l'état n'autorise pas l'action
+   * (cf. chorus_python/submission_state.py).
+   */
+  currentState?: string;
 }
 
 export type ChorusSubmitAttachmentInput = File | {
@@ -155,18 +161,99 @@ export interface ChorusRecycleInvoiceResult {
   apiCalls: ChorusApiDebugEntry[];
 }
 
-export interface ChorusTreatRejectionPayload {
-  cpltInfos?: string;
-  listeDemandePaiement: Array<{
-    idDemandePaiement: number;
-  }>;
-  motifRejet: string;
+export interface ChorusCorrectValidatorPayload {
+  idFacture: number;
+  idStructure?: number;
+  identifiantStructure?: string;
+  typeIdentifiantStructure: 'SIRET' | string;
 }
 
-export interface ChorusTreatRejectionResult {
+export interface ChorusCorrectValidatorResult {
   ok: boolean;
   payload?: unknown;
-  response?: unknown;
+  response?: {
+    codeRetour?: number;
+    idFacture?: number;
+    libelle?: string;
+  } | unknown;
+  apiCalls: ChorusApiDebugEntry[];
+}
+
+export interface ChorusInvoiceHistoryPayload {
+  idFacture: number;
+  nbResultatsMaximum: number;
+  paramRechercheHistoActionsUtilisateurs: {
+    nbResultatsParPageListeHistoAction: number;
+    pageResultatDemandeeListeHistoAction: number;
+    triColonneListeHistoAction: 'HistoActionDateHeure' | string;
+    triSensListeHistoAction: 'Descendant' | 'Ascendant' | string;
+  };
+  paramRechercheHistoEvenementsComplementaires: {
+    nbResultatsParPageListeHistoEvenement: number;
+    pageResultatDemandeeListeHistoEvenement: number;
+    triColonneListeHistoEvenement: 'EvenementLibelle' | string;
+    triSensListeHistoEvenement: 'Descendant' | 'Ascendant' | string;
+  };
+  paramRechercheHistoStatuts: {
+    nbResultatsParPageListeHistoStatut: number;
+    pageResultatDemandeeListeHistoStatut: number;
+    triColonneListeHistoStatut: 'HistoStatutDatePassage' | 'HistoStatutCode' | string;
+    triSensListeHistoStatut: 'Descendant' | 'Ascendant' | string;
+  };
+}
+
+export interface ChorusInvoiceHistoryStatus {
+  histoStatutId?: number;
+  histoStatutCode?: string;
+  histoStatutDatePassage?: string;
+  histoStatutCommentaire?: string;
+  histoStatutUtilisateurPrenom?: string;
+  histoStatutUtilisateurNom?: string;
+  histoStatutUtilisateurEmail?: string;
+  histoStatutUtilisateurTelephone?: string;
+}
+
+export interface ChorusInvoiceHistoryAction {
+  histoActionId?: number;
+  histoActionCode?: string;
+  histoActionDateHeure?: string;
+  histoActionUtilisateurPrenom?: string;
+  histoActionUtilisateurNom?: string;
+  histoActionUtilisateurEmail?: string;
+  histoActionUtilisateurTelephone?: string;
+}
+
+export interface ChorusInvoiceHistoryResponse {
+  codeRetour?: number;
+  libelle?: string;
+  idFacture?: number;
+  numeroFacture?: string;
+  modeDepot?: string;
+  statutCourantCode?: string;
+  historiquesDesStatuts?: {
+    histoStatut?: ChorusInvoiceHistoryStatus[];
+    pageCouranteHistoStatut?: number;
+    pagesHistoStatut?: number;
+    nbResultatsParPageHistoStatut?: number;
+    totalHistoStatut?: number;
+  };
+  historiquesDesActionsUtilisateurs?: {
+    histoAction?: ChorusInvoiceHistoryAction[];
+    pageCouranteHistoAction?: number;
+    pagesHistoAction?: number;
+    nbResultatsParPageHistoAction?: number;
+    totalHistoAction?: number;
+  };
+  derniereAction?: {
+    derniereActionId?: number;
+    derniereActionCode?: string;
+  };
+}
+
+export interface ChorusInvoiceHistoryResult {
+  ok: boolean;
+  payload?: unknown;
+  response?: ChorusInvoiceHistoryResponse;
   apiCalls: ChorusApiDebugEntry[];
 }
 

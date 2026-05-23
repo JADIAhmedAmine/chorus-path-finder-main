@@ -101,6 +101,11 @@ from chorus_python.audit import append_audit_event
 from chorus_python.auth import get_current_auth_user, require_auth, require_submit_permission, router as auth_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
+from chorus_python.submission_state import (
+    InvalidPaymentRequestStateError,
+    extract_payment_request_state,
+    validate_payment_request_state,
+)
 
 try:
     from chorus_python.db.api import router as db_router
@@ -120,7 +125,8 @@ HOST = os.environ.get("CHORUS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHORUS_PORT", "8008"))
 SUBMIT_PATH = "/api/chorus/submit"
 RECYCLE_PATH = "/api/chorus/recycle"
-TREAT_REJECTION_PATH = "/api/chorus/rejection/treat"
+CORRECT_VALIDATOR_PATH = "/api/chorus/validator/correct"
+INVOICE_HISTORY_PATH = "/api/chorus/invoices/history"
 EXTRACT_PDF_PATH = "/api/extract-pdf-text"
 OAUTH_TOKEN_PATH = "/api/chorus/oauth-token"
 SYNC_ANNUAIRE_PATH = "/api/chorus/annuaire/sync"
@@ -149,7 +155,7 @@ app.add_middleware(
 AUDITED_ACTIONS = {
     SUBMIT_PATH: "invoice.submit",
     RECYCLE_PATH: "invoice.recycle",
-    TREAT_REJECTION_PATH: "invoice.rejection.treat",
+    CORRECT_VALIDATOR_PATH: "invoice.validator.correct",
 }
 
 
@@ -261,27 +267,6 @@ def _invoice_audit_fields(
     })
 
 
-def _first_payment_request_id(payload: dict[str, Any] | None) -> Any:
-    if not isinstance(payload, dict):
-        return None
-    requests = payload.get("listeDemandePaiement")
-    if not isinstance(requests, list) or not requests:
-        return None
-    first_request = requests[0]
-    if not isinstance(first_request, dict):
-        return None
-    return first_request.get("idDemandePaiement")
-
-
-def _payment_request_count(payload: dict[str, Any] | None) -> int | None:
-    if not isinstance(payload, dict):
-        return None
-    requests = payload.get("listeDemandePaiement")
-    if not isinstance(requests, list):
-        return None
-    return len(requests)
-
-
 def _recycle_audit_fields(
     payload: dict[str, Any] | None,
     result: dict[str, Any] | None = None,
@@ -300,17 +285,15 @@ def _recycle_audit_fields(
     })
 
 
-def _treat_rejection_audit_fields(payload: dict[str, Any] | None) -> dict[str, Any]:
+def _correct_validator_audit_fields(payload: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         return {}
 
-    payment_request_id = _first_payment_request_id(payload)
     return _compact_audit_fields({
-        "chorusId": _audit_value(payment_request_id, max_length=80),
-        "paymentRequestId": _audit_value(payment_request_id, max_length=80),
-        "paymentRequestCount": _payment_request_count(payload),
-        "rejectionReason": _audit_text(payload.get("motifRejet"), max_length=160),
-        "comment": _audit_text(payload.get("cpltInfos"), max_length=240),
+        "chorusId": _audit_value(payload.get("idFacture"), max_length=80),
+        "validatorStructureId": _audit_value(payload.get("idStructure"), max_length=80),
+        "validatorStructureIdentifier": _audit_text(payload.get("identifiantStructure"), max_length=80),
+        "validatorStructureIdentifierType": _audit_text(payload.get("typeIdentifiantStructure"), max_length=24),
     })
 
 
@@ -321,8 +304,8 @@ def _chorus_operation_audit_fields(
 ) -> dict[str, Any]:
     if action == "invoice.recycle":
         return _recycle_audit_fields(payload, result=result)
-    if action == "invoice.rejection.treat":
-        return _treat_rejection_audit_fields(payload)
+    if action == "invoice.validator.correct":
+        return _correct_validator_audit_fields(payload)
     return _invoice_audit_fields(payload, result=result)
 
 
@@ -1056,6 +1039,144 @@ def handle_supplier_invoice_search(body: dict[str, Any] | None = Body(default=No
         )
 
 
+def _build_invoice_history_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    id_facture = _as_positive_int(raw_payload.get("idFacture"))
+    if id_facture is None:
+        raise ValueError("Le champ idFacture est obligatoire et doit être un entier positif.")
+
+    def nested_payload(name: str, defaults: dict[str, Any]) -> dict[str, Any]:
+        value = raw_payload.get(name)
+        if isinstance(value, dict):
+            return {**defaults, **value}
+        return dict(defaults)
+
+    return {
+        "idFacture": id_facture,
+        "nbResultatsMaximum": _as_positive_int(raw_payload.get("nbResultatsMaximum")) or 10,
+        "paramRechercheHistoActionsUtilisateurs": nested_payload(
+            "paramRechercheHistoActionsUtilisateurs",
+            {
+                "nbResultatsParPageListeHistoAction": 10,
+                "pageResultatDemandeeListeHistoAction": 1,
+                "triColonneListeHistoAction": "HistoActionDateHeure",
+                "triSensListeHistoAction": "Descendant",
+            },
+        ),
+        "paramRechercheHistoEvenementsComplementaires": nested_payload(
+            "paramRechercheHistoEvenementsComplementaires",
+            {
+                "nbResultatsParPageListeHistoEvenement": 10,
+                "pageResultatDemandeeListeHistoEvenement": 1,
+                "triColonneListeHistoEvenement": "EvenementLibelle",
+                "triSensListeHistoEvenement": "Descendant",
+            },
+        ),
+        "paramRechercheHistoStatuts": nested_payload(
+            "paramRechercheHistoStatuts",
+            {
+                "nbResultatsParPageListeHistoStatut": 10,
+                "pageResultatDemandeeListeHistoStatut": 1,
+                "triColonneListeHistoStatut": "HistoStatutDatePassage",
+                "triSensListeHistoStatut": "Descendant",
+            },
+        ),
+    }
+
+
+def _build_correct_validator_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    id_facture = _as_positive_int(raw_payload.get("idFacture"))
+    if id_facture is None:
+        raise ValueError("Le champ idFacture est obligatoire et doit être un entier positif.")
+
+    id_structure = _as_positive_int(raw_payload.get("idStructure"))
+    identifiant_structure = _as_non_empty_string(raw_payload.get("identifiantStructure"))
+    if id_structure is None and identifiant_structure is None:
+        raise ValueError("Renseigne idStructure ou identifiantStructure pour corriger le valideur.")
+
+    type_identifiant = _as_non_empty_string(raw_payload.get("typeIdentifiantStructure")) or "SIRET"
+    payload: dict[str, Any] = {
+        "idFacture": id_facture,
+        "typeIdentifiantStructure": type_identifiant,
+    }
+    if id_structure is not None:
+        payload["idStructure"] = id_structure
+    if identifiant_structure is not None:
+        payload["identifiantStructure"] = identifiant_structure
+    return payload
+
+
+@app.post(INVOICE_HISTORY_PATH, dependencies=[Depends(require_auth)])
+def handle_invoice_history(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    raw_payload = body.get("payload")
+    if raw_payload is None:
+        raw_payload = {
+            key: value
+            for key, value in body.items()
+            if key not in {"environment", "chorusEnv", "env"}
+        }
+    if not isinstance(raw_payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload doit être un objet JSON.",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+
+    try:
+        payload = _build_invoice_history_payload(raw_payload)
+    except ValueError as error:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": str(error),
+            },
+        )
+
+    logger.debug(
+        "Consultation historique facture start: idFacture=%s, env=%s",
+        payload.get("idFacture"),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.consult_invoice_history(payload)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Consultation historique facture success: idFacture=%s, duration=%s ms",
+            payload.get("idFacture"),
+            duration_ms,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Consultation historique facture error: idFacture=%s, duration=%s ms, error=%s",
+            payload.get("idFacture"),
+            duration_ms,
+            message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
+
+
 @app.post(SIRET_INFO_PATH, dependencies=[Depends(require_auth)])
 def handle_siret_info(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
@@ -1278,6 +1399,33 @@ def handle_submit(
             error_message=error_message,
         )
 
+    state_provided, raw_current_state = extract_payment_request_state(body)
+    if state_provided:
+        try:
+            validate_payment_request_state(raw_current_state)
+        except InvalidPaymentRequestStateError as state_error:
+            logger.warning(
+                "Soumission bloquée: endpoint=%s, numero=%s, état=%s, motif=%s",
+                SUBMIT_PATH,
+                payload.get("numeroFactureSaisi"),
+                state_error.current_state,
+                state_error.reason,
+            )
+            response_payload = {
+                "ok": False,
+                "error": str(state_error),
+                **state_error.to_error_payload(),
+            }
+            return _audit_submit_response(
+                request,
+                user=auth_user,
+                payload=payload,
+                http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                response_payload=response_payload,
+                started_at=audit_started_at,
+                error_message=str(state_error),
+            )
+
     payload = _add_submitter_comment(payload, auth_user)
     started_at = perf_counter()
     environment_override = _extract_environment_override(body)
@@ -1425,17 +1573,17 @@ def handle_recycle(
         )
 
 
-@app.post(TREAT_REJECTION_PATH)
-def handle_treat_rejection(
+@app.post(CORRECT_VALIDATOR_PATH)
+def handle_correct_validator(
     request: Request,
     body: dict[str, Any] | None = Body(default=None),
     auth_user: dict[str, Any] = Depends(require_submit_permission),
 ) -> JSONResponse:
     body = body or {}
-    _print_received_post_debug(TREAT_REJECTION_PATH, body)
-    payload = body.get("payload")
+    _print_received_post_debug(CORRECT_VALIDATOR_PATH, body)
+    raw_payload = body.get("payload")
 
-    if not isinstance(payload, dict):
+    if not isinstance(raw_payload, dict):
         return _json_response(
             HTTPStatus.BAD_REQUEST,
             {
@@ -1444,27 +1592,40 @@ def handle_treat_rejection(
             },
         )
 
+    try:
+        payload = _build_correct_validator_payload(raw_payload)
+    except ValueError as error:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": str(error),
+            },
+        )
+
     started_at = perf_counter()
     environment_override = _extract_environment_override(body)
     logger.debug(
-        "Traitement rejet start: demandes=%s, motif=%s, env=%s",
-        len(payload.get("listeDemandePaiement") or []) if isinstance(payload.get("listeDemandePaiement"), list) else 0,
-        payload.get("motifRejet"),
+        "Correction valideur start: idFacture=%s, idStructure=%s, identifiantStructure=%s, env=%s",
+        payload.get("idFacture"),
+        payload.get("idStructure"),
+        payload.get("identifiantStructure"),
         environment_override or "default",
     )
 
     try:
         settings = load_chorus_settings(environment_override=environment_override)
         service = ChorusSubmissionService(settings)
-        result = service.treat_rejection(payload)
+        result = service.correct_invoice_validator(payload)
         duration_ms = round((perf_counter() - started_at) * 1000)
         logger.debug(
-            "Traitement rejet success: duration=%s ms",
+            "Correction valideur success: idFacture=%s, duration=%s ms",
+            payload.get("idFacture"),
             duration_ms,
         )
         _audit_chorus_operation(
             request,
-            action="invoice.rejection.treat",
+            action="invoice.validator.correct",
             user=auth_user,
             payload=payload,
             status="success",
@@ -1480,13 +1641,14 @@ def handle_treat_rejection(
             api_calls = list(service.client.api_calls)
         duration_ms = round((perf_counter() - started_at) * 1000)
         logger.debug(
-            "Traitement rejet error: duration=%s ms, error=%s",
+            "Correction valideur error: idFacture=%s, duration=%s ms, error=%s",
+            payload.get("idFacture"),
             duration_ms,
             message,
         )
         _audit_chorus_operation(
             request,
-            action="invoice.rejection.treat",
+            action="invoice.validator.correct",
             user=auth_user,
             payload=payload,
             status="failed",
@@ -1512,7 +1674,8 @@ def main() -> int:
     print(f"  - OAuth token: {OAUTH_TOKEN_PATH}")
     print(f"  - Submit:      {SUBMIT_PATH}")
     print(f"  - Recycle:     {RECYCLE_PATH}")
-    print(f"  - Treat reject:{TREAT_REJECTION_PATH}")
+    print(f"  - Validator:   {CORRECT_VALIDATOR_PATH}")
+    print(f"  - History:     {INVOICE_HISTORY_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")
     print(f"  - Annuaire:    {SYNC_ANNUAIRE_PATH}")
     print(f"  - SIRET info:  {SIRET_INFO_PATH}")

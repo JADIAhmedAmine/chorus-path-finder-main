@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
 from sqlalchemy import desc, func, select
@@ -112,6 +113,37 @@ def list_invoices(
         )
     )
     return Page(total=total, page=page, page_size=page_size, items=items)
+
+
+def list_invoices_for_dashboard(
+    session: Session,
+    *,
+    tenant_id: str,
+    from_date: Optional[date] = None,
+    to_date: Optional[date] = None,
+    max_rows: int = 5000,
+) -> list[Invoice]:
+    """Charge toutes les factures actives du tenant pour le calcul des KPI.
+
+    Filtre par `invoice_date` (facultatif) et garde un plafond `max_rows`
+    pour ne pas exploser la RAM sur de très gros volumes ; au-delà la
+    synthèse devra basculer sur des requêtes d'agrégation côté SQL.
+    """
+    base = (
+        select(Invoice)
+        .join(Supplier, Invoice.supplier_id == Supplier.id)
+        .where(Invoice.tenant_id == tenant_id)
+        .where(Supplier.active.is_(True))
+    )
+    if from_date is not None:
+        base = base.where(Invoice.invoice_date >= from_date)
+    if to_date is not None:
+        base = base.where(Invoice.invoice_date <= to_date)
+    return list(
+        session.scalars(
+            base.order_by(desc(Invoice.invoice_date), desc(Invoice.created_at)).limit(max_rows)
+        )
+    )
 
 
 def get_invoice(session: Session, *, invoice_id: str) -> Optional[Invoice]:

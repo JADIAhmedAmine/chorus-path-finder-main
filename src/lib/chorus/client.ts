@@ -7,6 +7,10 @@ import {
   isChorusApiReturnFailure,
 } from '@/lib/chorus/submissionApiReturn';
 import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
+import {
+  ChorusSubmissionStateError,
+  parseChorusSubmissionStateErrorPayload,
+} from '@/lib/chorus/submissionState';
 import type {
   ChorusApiDebugEntry,
   ChorusConfig,
@@ -503,6 +507,7 @@ export class DirectChorusConnector implements ChorusConnector {
 
     const debugEnabled = import.meta.env.DEV || input.debugBypassValidation === true;
     const apiCalls: ChorusApiDebugEntry[] = [];
+    const trimmedCurrentState = typeof input.currentState === 'string' ? input.currentState.trim() : '';
     const requestBody = {
       environment: this.config.environment,
       payload: stripCurrentUserIdFromSubmissionPayload(input.invoiceData),
@@ -526,6 +531,7 @@ export class DirectChorusConnector implements ChorusConnector {
           };
         }),
       ),
+      currentState: trimmedCurrentState || undefined,
     };
     const requestBodyForDebug = {
       ...requestBody,
@@ -573,6 +579,10 @@ export class DirectChorusConnector implements ChorusConnector {
     const combinedApiCalls = [bridgeCallEntry, ...bridgeApiCalls];
 
     if (!response.ok || record?.ok === false) {
+      const stateErrorPayload = parseChorusSubmissionStateErrorPayload(record);
+      if (stateErrorPayload) {
+        throw new ChorusSubmissionStateError(stateErrorPayload);
+      }
       const message = typeof record?.error === 'string'
         ? record.error
         : `Soumission backend Python échouée (${response.status}): ${stringifyResponseBody(body)}`;
