@@ -257,6 +257,232 @@ export interface ChorusInvoiceHistoryResult {
   apiCalls: ChorusApiDebugEntry[];
 }
 
+export type ChorusBackendErrorCategory =
+  | 'STATUS_NOT_ALLOWED'
+  | 'BUSINESS_REJECTION'
+  | 'VALIDATION'
+  | 'AUTH'
+  | 'RATE_LIMIT'
+  | 'NOT_FOUND'
+  | 'NETWORK'
+  | 'UNKNOWN';
+
+// === Réception : consultation côté valideur (POST /v1/consulter/valideur) ===
+// Le backend renvoie une facture normalisée à plat (cf. chorus_python/reception.py).
+
+export interface ReceptionInvoiceAddress {
+  ligne: string | null;
+  ville: string | null;
+  codePostal: string | null;
+  codePays: string | null;
+  libellePays: string | null;
+}
+
+export interface ReceptionInvoiceParty {
+  id: string | null;
+  siret: string | null;
+  raisonSociale: string | null;
+  codeService: string | null;
+  code: string | null;
+  typeIdentifiant: string | null;
+  serviceExecutantId: string | null;
+  serviceExecutantLibelle: string | null;
+  miseEnPaiement: boolean | null;
+  adresse: ReceptionInvoiceAddress | null;
+}
+
+export interface ReceptionInvoiceDates {
+  dateFacture: string | null;
+  dateDepot: string | null;
+  dateEcheancePaiement: string | null;
+  dateCreationFacture: string | null;
+}
+
+export interface ReceptionInvoiceAmounts {
+  ht: number;
+  tva: number;
+  ttc: number;
+  aPayer: number;
+  devise: string;
+  remiseGlobaleTtc: number;
+  ttcAvantRemiseGlobale: number | null;
+  libelleDevise: string | null;
+}
+
+export interface ReceptionInvoiceReferences {
+  numeroBonCommande: string | null;
+  numeroMarche: string | null;
+  numeroDpMandat: string | null;
+  numeroFactureOrigine: string | null;
+  motifExonerationTva: string | null;
+  modePaiement: string | null;
+  typeFacture: string | null;
+  typeTva: string | null;
+  tailleTotalePiecesJointes: number | null;
+}
+
+export interface ReceptionInvoiceCadre {
+  code: string | null;
+  libelle: string | null;
+}
+
+export interface ReceptionInvoiceAttachment {
+  role: 'PRINCIPALE' | 'COMPLEMENTAIRE';
+  pieceJointeId: string | null;
+  designation: string | null;
+  typeCode: string | null;
+  typeLibelle: string | null;
+  extension: string | null;
+  mimeType: string | null;
+  numeroLigneFacture: string | null;
+  idLiaison: string | null;
+}
+
+export interface ReceptionInvoiceLine {
+  numero: string;
+  reference: string | null;
+  denomination: string | null;
+  quantite: number | null;
+  unite: string | null;
+  puHt: number | null;
+  remiseHt: number | null;
+  tauxTva: string | null;
+  montantTva: number | null;
+  montantHtApresRemise: number | null;
+  montantTtcApresRemise: number | null;
+}
+
+export interface ReceptionInvoiceVatLine {
+  taux: string | null;
+  tauxValeur: number | null;
+  baseHt: number | null;
+  montantTva: number | null;
+}
+
+export interface ReceptionInvoice {
+  identifiantFactureCPP: number | null;
+  numeroFacture: string | null;
+  statutFacture: string | null;
+  modeDepot: string | null;
+  rejetTraite: boolean | null;
+  commentaire: string | null;
+  cadreDeFacturation: ReceptionInvoiceCadre | null;
+  fournisseur: ReceptionInvoiceParty | null;
+  destinataire: ReceptionInvoiceParty | null;
+  dates: ReceptionInvoiceDates;
+  montants: ReceptionInvoiceAmounts;
+  references: ReceptionInvoiceReferences;
+  piecesJointes: ReceptionInvoiceAttachment[];
+  lignesDePoste: ReceptionInvoiceLine[];
+  recapitulatifTva: ReceptionInvoiceVatLine[];
+}
+
+export interface ReceptionConsultSuccess {
+  ok: true;
+  success: true;
+  identifiantFactureCPP: number;
+  facture: ReceptionInvoice;
+  persisted?: boolean;
+  apiCalls?: ChorusApiDebugEntry[];
+}
+
+export interface ReceptionConsultError {
+  ok: false;
+  success: false;
+  identifiantFactureCPP?: number;
+  category: ChorusBackendErrorCategory | string;
+  human_message: string;
+  raw_message: string;
+  recommended_action: string;
+  severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  code_retour?: number;
+  chorus_code?: string;
+  matched_states?: string[];
+  apiCalls?: ChorusApiDebugEntry[];
+}
+
+export type ReceptionConsultResult = ReceptionConsultSuccess | ReceptionConsultError;
+
+export interface ReceptionBulkResultItem {
+  identifiantFactureCPP: number;
+  success: true;
+  facture: ReceptionInvoice;
+  persisted?: boolean;
+}
+
+export interface ReceptionBulkResultError {
+  identifiantFactureCPP: number;
+  success: false;
+  category: ChorusBackendErrorCategory | string;
+  human_message: string;
+  raw_message: string;
+  recommended_action: string;
+  severity?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  code_retour?: number;
+  chorus_code?: string;
+}
+
+export interface ReceptionBulkConsultResult {
+  ok: true;
+  success: true;
+  totalRequested: number;
+  totalSuccess: number;
+  totalFailed: number;
+  items: ReceptionBulkResultItem[];
+  errors: ReceptionBulkResultError[];
+  apiCalls?: ChorusApiDebugEntry[];
+}
+
+// === Traitement d'une facture reçue (POST /v1/traiter/recue) ===
+
+export const RECEPTION_PROCESS_STATUSES = [
+  'A_RECYCLER',
+  'COMPLETEE',
+  'COMPTABILISEE',
+  'MISE_A_DISPOSITION',
+  'MISE_A_DISPOSITION_COMPTABLE',
+  'MISE_EN_PAIEMENT',
+  'PRISE_EN_COMPTE_DESTINATAIRE',
+  'REJETEE',
+  'SERVICE_FAIT',
+  'SUSPENDUE',
+  'TRANSMISE_MOA',
+  'MANDATEE',
+] as const;
+export type ReceptionProcessStatus = typeof RECEPTION_PROCESS_STATUSES[number];
+
+export const RECEPTION_PROCESS_MOTIF_REQUIRED: ReadonlySet<ReceptionProcessStatus> = new Set<ReceptionProcessStatus>([
+  'REJETEE',
+  'SUSPENDUE',
+]);
+
+export interface ReceptionProcessInput {
+  idFacture: number;
+  nouveauStatut: ReceptionProcessStatus;
+  motif?: string;
+  numeroDPMandat?: string;
+}
+
+export interface ReceptionProcessSuccess {
+  ok: true;
+  success: true;
+  payload: {
+    idFacture: number;
+    nouveauStatut: ReceptionProcessStatus;
+    motif?: string;
+    numeroDPMandat?: string;
+    idUtilisateurCourant?: number;
+  };
+  response: {
+    codeRetour?: number;
+    libelle?: string;
+    [key: string]: unknown;
+  };
+  apiCalls?: ChorusApiDebugEntry[];
+}
+
+export type ReceptionProcessResult = ReceptionProcessSuccess | ReceptionConsultError;
+
 export interface ChorusTransverseCodeListItem {
   code: string;
   label?: string;

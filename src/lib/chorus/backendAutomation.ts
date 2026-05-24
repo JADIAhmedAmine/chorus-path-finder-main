@@ -9,12 +9,21 @@ import type {
   ChorusInvoiceHistoryResult,
   ChorusRecycleInvoicePayload,
   ChorusRecycleInvoiceResult,
+  ReceptionBulkConsultResult,
+  ReceptionConsultResult,
+  ReceptionInvoice,
+  ReceptionProcessInput,
+  ReceptionProcessResult,
+  ReceptionProcessSuccess,
 } from '@/types/chorus';
 
 export const CHORUS_OAUTH_TOKEN_PATH = '/api/chorus/oauth-token';
 export const CHORUS_SUBMIT_PATH = '/api/chorus/submit';
 export const CHORUS_RECYCLE_PATH = '/api/chorus/recycle';
 export const CHORUS_CORRECT_VALIDATOR_PATH = '/api/chorus/validator/correct';
+export const RECEPTION_CONSULT_PATH = '/api/reception/consult';
+export const RECEPTION_CONSULT_BULK_PATH = '/api/reception/consult-bulk';
+export const RECEPTION_PROCESS_PATH = '/api/reception/process';
 export const CHORUS_INVOICE_HISTORY_PATH = '/api/chorus/invoices/history';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
 export const CHORUS_SIRET_INFO_PATH = '/api/chorus/siret/info';
@@ -310,6 +319,18 @@ export class ChorusBackendAutomationClient {
     return resolveChorusBridgeUrl(this.config, CHORUS_CORRECT_VALIDATOR_PATH);
   }
 
+  get receptionConsultUrl(): string {
+    return resolveChorusBridgeUrl(this.config, RECEPTION_CONSULT_PATH);
+  }
+
+  get receptionConsultBulkUrl(): string {
+    return resolveChorusBridgeUrl(this.config, RECEPTION_CONSULT_BULK_PATH);
+  }
+
+  get receptionProcessUrl(): string {
+    return resolveChorusBridgeUrl(this.config, RECEPTION_PROCESS_PATH);
+  }
+
   get invoiceHistoryUrl(): string {
     return resolveChorusBridgeUrl(this.config, CHORUS_INVOICE_HISTORY_PATH);
   }
@@ -465,6 +486,165 @@ export class ChorusBackendAutomationClient {
     }
 
     return normalizeCorrectValidatorResult(body);
+  }
+
+  async consultInvoiceForReception(identifiantFactureCPP: number): Promise<ReceptionConsultResult> {
+    const response = await this.fetchImpl(this.receptionConsultUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({
+        environment: this.config.environment,
+        identifiantFactureCPP,
+      }),
+    });
+
+    const body = await parseResponseBody(response);
+    if (!isRecord(body)) {
+      throw new ChorusBackendAutomationError(
+        `Consultation réception impossible (${response.status}).`,
+      );
+    }
+
+    const apiCalls = isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (response.ok && body.ok === true && body.success === true && isRecord(body.facture)) {
+      return {
+        ok: true,
+        success: true,
+        identifiantFactureCPP,
+        facture: body.facture as unknown as ReceptionInvoice,
+        persisted: typeof body.persisted === 'boolean' ? body.persisted : undefined,
+        apiCalls,
+      } as ReceptionConsultResult;
+    }
+
+    return {
+      ok: false,
+      success: false,
+      identifiantFactureCPP,
+      category: typeof body.category === 'string' ? body.category : 'UNKNOWN',
+      human_message: typeof body.human_message === 'string'
+        ? body.human_message
+        : `Consultation réception impossible (${response.status}).`,
+      raw_message: typeof body.raw_message === 'string'
+        ? body.raw_message
+        : typeof body.error === 'string'
+          ? body.error
+          : `HTTP ${response.status}`,
+      recommended_action: typeof body.recommended_action === 'string'
+        ? body.recommended_action
+        : 'Vérifier l’identifiant fourni et réessayer ultérieurement.',
+      severity: typeof body.severity === 'string'
+        ? (body.severity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL')
+        : undefined,
+      code_retour: typeof body.code_retour === 'number' ? body.code_retour : undefined,
+      chorus_code: typeof body.chorus_code === 'string' ? body.chorus_code : undefined,
+      matched_states: Array.isArray(body.matched_states)
+        ? body.matched_states.filter((value): value is string => typeof value === 'string')
+        : undefined,
+      apiCalls,
+    };
+  }
+
+  async consultInvoicesBulkForReception(identifiantsFactureCPP: number[]): Promise<ReceptionBulkConsultResult> {
+    const response = await this.fetchImpl(this.receptionConsultBulkUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify({
+        environment: this.config.environment,
+        identifiantsFactureCPP,
+      }),
+    });
+
+    const body = await parseResponseBody(response);
+
+    if (!response.ok || !isRecord(body) || body.ok !== true) {
+      const message = isRecord(body) && typeof body.human_message === 'string'
+        ? body.human_message
+        : isRecord(body) && typeof body.error === 'string'
+          ? body.error
+          : `Consultation en masse impossible (${response.status}).`;
+      throw new ChorusBackendAutomationError(
+        message,
+        isRecord(body) && isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
+      );
+    }
+
+    return body as unknown as ReceptionBulkConsultResult;
+  }
+
+  async processReceivedInvoice(input: ReceptionProcessInput): Promise<ReceptionProcessResult> {
+    const requestBody: Record<string, unknown> = {
+      environment: this.config.environment,
+      idFacture: input.idFacture,
+      nouveauStatut: input.nouveauStatut,
+    };
+    if (typeof input.motif === 'string' && input.motif.trim()) {
+      requestBody.motif = input.motif.trim();
+    }
+    if (typeof input.numeroDPMandat === 'string' && input.numeroDPMandat.trim()) {
+      requestBody.numeroDPMandat = input.numeroDPMandat.trim();
+    }
+
+    const response = await this.fetchImpl(this.receptionProcessUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify(requestBody),
+    });
+
+    const body = await parseResponseBody(response);
+    if (!isRecord(body)) {
+      throw new ChorusBackendAutomationError(
+        `Traitement facture reçue impossible (${response.status}).`,
+      );
+    }
+    const apiCalls = isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (response.ok && body.ok === true && body.success === true) {
+      return {
+        ok: true,
+        success: true,
+        payload: body.payload as ReceptionProcessSuccess['payload'],
+        response: (isRecord(body.response) ? body.response : {}) as ReceptionProcessSuccess['response'],
+        apiCalls,
+      } satisfies ReceptionProcessSuccess;
+    }
+
+    return {
+      ok: false,
+      success: false,
+      identifiantFactureCPP: input.idFacture,
+      category: typeof body.category === 'string' ? body.category : 'UNKNOWN',
+      human_message: typeof body.human_message === 'string'
+        ? body.human_message
+        : `Traitement facture reçue impossible (${response.status}).`,
+      raw_message: typeof body.raw_message === 'string'
+        ? body.raw_message
+        : typeof body.error === 'string'
+          ? body.error
+          : `HTTP ${response.status}`,
+      recommended_action: typeof body.recommended_action === 'string'
+        ? body.recommended_action
+        : 'Vérifier les données saisies et réessayer.',
+      severity: typeof body.severity === 'string'
+        ? (body.severity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL')
+        : undefined,
+      code_retour: typeof body.code_retour === 'number' ? body.code_retour : undefined,
+      chorus_code: typeof body.chorus_code === 'string' ? body.chorus_code : undefined,
+      matched_states: Array.isArray(body.matched_states)
+        ? body.matched_states.filter((value): value is string => typeof value === 'string')
+        : undefined,
+      apiCalls,
+    };
   }
 
   async getInvoiceHistory(payload: ChorusInvoiceHistoryPayload): Promise<ChorusInvoiceHistoryResult> {

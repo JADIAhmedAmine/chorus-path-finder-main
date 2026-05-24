@@ -14,7 +14,6 @@ import { ChorusBackendAutomationClient, ChorusBackendAutomationError } from '@/l
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { SubmissionStateInsight } from '@/components/chorus/SubmissionStateInsight';
-import { SubmissionStateOverview } from '@/components/chorus/SubmissionStateOverview';
 import {
   dbQueryKeys,
   useInvoiceDetailQuery,
@@ -579,8 +578,6 @@ export default function ChorusInvoiceDetail() {
           <Link to="/invoices">Liste des factures</Link>
         </Button>
       </div>
-
-      <SubmissionStateOverview highlightedState={invoice.statusChorus} />
 
       <SubmissionStateInsight
         state={invoice.statusChorus || invoice.statusInternal}

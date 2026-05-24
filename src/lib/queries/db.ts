@@ -119,6 +119,9 @@ function normalizeInvoice(invoice: Invoice): Invoice {
     totalHt: asNumber(invoice.totalHt),
     totalVat: asNumber(invoice.totalVat),
     totalTtc: asNumber(invoice.totalTtc),
+    amountToPay: invoice.amountToPay === undefined
+      ? undefined
+      : asNumber(invoice.amountToPay),
     extractionConfidence: invoice.extractionConfidence === undefined
       ? undefined
       : asNumber(invoice.extractionConfidence),
