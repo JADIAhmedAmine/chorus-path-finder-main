@@ -7,7 +7,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { hasValidAuthSession } from "@/lib/auth/session";
 import { loadChorusConfig } from "@/lib/chorus/storage";
-import { useSyncInvoicesMutation, useSyncSuppliersMutation } from "@/lib/queries/db";
 import { ReferenceCatalogClient } from "@/lib/references/client";
 import Dashboard from "./pages/Dashboard";
 import InvoiceList from "./pages/InvoiceList";
@@ -18,6 +17,8 @@ import InvoiceCreate from "./pages/InvoiceCreate";
 import References from "./pages/References";
 import SettingsPage from "./pages/SettingsPage";
 import Monitoring from "./pages/Monitoring";
+import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
+import ReceptionProcessing from "./pages/ReceptionProcessing";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -99,47 +100,6 @@ function ReferenceCatalogWarmup() {
   return null;
 }
 
-function parsePositiveInteger(value: string): number | undefined {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : undefined;
-}
-
-function DbStartupFullSync() {
-  const isAuthenticated = hasValidAuthSession();
-  const syncInvoices = useSyncInvoicesMutation();
-  const syncSuppliers = useSyncSuppliersMutation();
-
-  useEffect(() => {
-    if (!import.meta.env.DEV || !isAuthenticated) {
-      return;
-    }
-
-    const config = loadChorusConfig();
-    const supplierId = parsePositiveInteger(config.submissionSupplierId);
-    const syncInput = {
-      environment: config.environment,
-      ...(supplierId !== undefined ? { supplierId } : {}),
-    };
-    const sessionKey = `chorus.dbStartupFullSync.${config.environment}.${supplierId ?? 'default'}`;
-    if (window.sessionStorage.getItem(sessionKey)) {
-      return;
-    }
-
-    window.sessionStorage.setItem(sessionKey, new Date().toISOString());
-    void (async () => {
-      await syncSuppliers.mutateAsync(syncInput).catch((supplierSyncError) => {
-        console.warn('[startup] sync suppliers skipped', supplierSyncError);
-      });
-      await syncInvoices.mutateAsync({ ...syncInput, mode: 'full' }).catch((invoiceSyncError) => {
-        console.warn('[startup] full invoice sync failed', invoiceSyncError);
-        window.sessionStorage.removeItem(sessionKey);
-      });
-    })();
-  }, [isAuthenticated, syncInvoices, syncSuppliers]);
-
-  return null;
-}
-
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return hasValidAuthSession() ? <>{children}</> : <Navigate to="/login" replace />;
 }
@@ -152,12 +112,14 @@ const App = () => (
         <Sonner />
         <BrowserRouter>
           <ReferenceCatalogWarmup />
-          <DbStartupFullSync />
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/reception" element={<RequireAuth><AppLayout><ReceptionProcessing /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/reception/:id" element={<RequireAuth><AppLayout><ReceptionInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/to-process" element={<RequireAuth><AppLayout><InvoicesToProcess /></AppLayout></RequireAuth>} />
+            <Route path="/reception" element={<RequireAuth><Navigate to="/invoices/reception" replace /></RequireAuth>} />
             <Route path="/invoices/new" element={<RequireAuth><AppLayout><InvoiceCreate /></AppLayout></RequireAuth>} />
             <Route path="/invoices/chorus/:id" element={<RequireAuth><AppLayout><ChorusInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />

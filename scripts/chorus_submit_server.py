@@ -100,7 +100,9 @@ from chorus_python.annuaire import build_annuaire_files_from_api_response, relat
 from chorus_python.audit import append_audit_event
 from chorus_python.auth import get_current_auth_user, require_auth, require_submit_permission, router as auth_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
+from chorus_python.errors import normalize_chorus_error
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
+from chorus_python.reception import coerce_identifier_list, normalize_invoice_for_reception
 from chorus_python.submission_state import (
     InvalidPaymentRequestStateError,
     extract_payment_request_state,
@@ -126,7 +128,31 @@ PORT = int(os.environ.get("CHORUS_PORT", "8008"))
 SUBMIT_PATH = "/api/chorus/submit"
 RECYCLE_PATH = "/api/chorus/recycle"
 CORRECT_VALIDATOR_PATH = "/api/chorus/validator/correct"
+RECEPTION_CONSULT_PATH = "/api/reception/consult"
+RECEPTION_CONSULT_BULK_PATH = "/api/reception/consult-bulk"
+RECEPTION_PROCESS_PATH = "/api/reception/process"
 INVOICE_HISTORY_PATH = "/api/chorus/invoices/history"
+RECEPTION_BULK_MAX_IDENTIFIERS = 50
+CHORUS_RECEPTION_CONSULT_PATH = "/factures/v1/consulter/valideur"
+CHORUS_TRAITER_RECUE_PATH = "/factures/v1/traiter/recue"
+
+RECEPTION_PROCESS_ALLOWED_STATUTS: frozenset[str] = frozenset(
+    {
+        "A_RECYCLER",
+        "COMPLETEE",
+        "COMPTABILISEE",
+        "MISE_A_DISPOSITION",
+        "MISE_A_DISPOSITION_COMPTABLE",
+        "MISE_EN_PAIEMENT",
+        "PRISE_EN_COMPTE_DESTINATAIRE",
+        "REJETEE",
+        "SERVICE_FAIT",
+        "SUSPENDUE",
+        "TRANSMISE_MOA",
+        "MANDATEE",
+    }
+)
+RECEPTION_PROCESS_MOTIF_REQUIRED: frozenset[str] = frozenset({"REJETEE", "SUSPENDUE"})
 EXTRACT_PDF_PATH = "/api/extract-pdf-text"
 OAUTH_TOKEN_PATH = "/api/chorus/oauth-token"
 SYNC_ANNUAIRE_PATH = "/api/chorus/annuaire/sync"
@@ -515,6 +541,21 @@ def _as_positive_int(value: Any) -> int | None:
         except ValueError:
             return None
         return parsed if parsed > 0 else None
+    return None
+
+
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError:
+            return None
     return None
 
 
@@ -1105,6 +1146,485 @@ def _build_correct_validator_payload(raw_payload: dict[str, Any]) -> dict[str, A
     return payload
 
 
+def _build_reception_consult_payload(identifier: int, *, code_langue: str = "fr") -> dict[str, Any]:
+    """Construit le payload canonique pour /factures/v1/consulter/valideur.
+
+    Les blocs de pagination/tri sont systématiquement injectés afin que le
+    front n'ait à fournir que `identifiantFactureCPP`.
+    """
+    return {
+        "codeLangue": code_langue,
+        "identifiantFactureCPP": identifier,
+        "rechercheLignePoste": {
+            "nbResultatsParPageLignesPoste": 50,
+            "pageResultatDemandeeLignesPoste": 1,
+            "triColonneListeLignesPoste": "LignePosteNumero",
+            "triSensListeLignesPoste": "Ascendant",
+        },
+        "rechercheLigneTvaRecap": {
+            "nbResultatsParPageListeListeRecapitulatifTVA": 50,
+            "pageResultatDemandeeListeRecapitulatifTVA": 1,
+            "triColonneListeRecapitulatifTVA": "LigneTvaMontantTvaParTaux",
+            "triSensListeRecapitulatifTVA": "Ascendant",
+        },
+        "recherchePj": {
+            "pageResultatDemandeeListePieceJointe": 1,
+            "triColonneListePiecesJointes": "PieceJointeTypeCode",
+            "triSensListePiecesJointes": "Ascendant",
+        },
+    }
+
+
+def _persist_reception_detail_if_available(
+    identifier: int,
+    *,
+    facture: dict[str, Any],
+    normalized_invoice: dict[str, Any],
+) -> bool:
+    if not _DB_ROUTER_AVAILABLE:
+        return False
+    try:
+        from chorus_python.db.config import load_database_settings
+        from chorus_python.db.session import get_session
+        from chorus_python.db.sync import persist_reception_invoice_detail
+
+        tenant_id = load_database_settings().default_tenant_id
+        with get_session() as session:
+            return persist_reception_invoice_detail(
+                session,
+                tenant_id=tenant_id,
+                identifier=identifier,
+                facture=facture,
+                normalized_invoice=normalized_invoice,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "Réception detail persistence skipped: identifiantFactureCPP=%s, error=%s",
+            identifier,
+            error,
+        )
+        return False
+
+
+def _consult_single_invoice_for_reception(
+    identifier: int,
+    *,
+    environment_override: str | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Appelle Chorus pour un identifiant et retourne (result_item, api_calls).
+
+    `result_item` est soit un succès `{success: true, identifiantFactureCPP, facture}`,
+    soit un échec normalisé `{success: false, identifiantFactureCPP, category, ...}`.
+    Aucune exception n'est propagée — l'appelant peut donc itérer en sécurité.
+    """
+    payload = _build_reception_consult_payload(identifier)
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    try:
+        client.reset_api_calls()
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_RECEPTION_CONSULT_PATH,
+            payload,
+            "Consultation facture réception",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        return (
+            {
+                "identifiantFactureCPP": identifier,
+                "success": False,
+                **normalized.to_dict(),
+            },
+            list(client.api_calls),
+        )
+
+    api_calls = list(client.api_calls)
+    if status_code >= 400:
+        raw_message = (
+            chorus_response.get("libelle")
+            if isinstance(chorus_response, dict)
+            else chorus_response
+        )
+        normalized = normalize_chorus_error(
+            f"Consultation facture réception échouée ({status_code}): {raw_message}"
+        )
+        return (
+            {
+                "identifiantFactureCPP": identifier,
+                "success": False,
+                **normalized.to_dict(),
+            },
+            api_calls,
+        )
+
+    code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
+
+    if code_retour is None or code_retour == 0:
+        facture = chorus_response.get("facture") if isinstance(chorus_response, dict) else None
+        normalized_invoice = normalize_invoice_for_reception(facture)
+        if normalized_invoice is None:
+            normalized = normalize_chorus_error(
+                "Réponse Chorus inattendue : aucune facture trouvée dans la réponse.",
+                code_retour=code_retour,
+            )
+            return (
+                {
+                    "identifiantFactureCPP": identifier,
+                    "success": False,
+                    **normalized.to_dict(),
+                },
+                api_calls,
+            )
+        if normalized_invoice.get("identifiantFactureCPP") is None:
+            normalized_invoice["identifiantFactureCPP"] = identifier
+        persisted = _persist_reception_detail_if_available(
+            identifier,
+            facture=facture,
+            normalized_invoice=normalized_invoice,
+        )
+        return (
+            {
+                "identifiantFactureCPP": identifier,
+                "success": True,
+                "facture": normalized_invoice,
+                "persisted": persisted,
+            },
+            api_calls,
+        )
+
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+    normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+    return (
+        {
+            "identifiantFactureCPP": identifier,
+            "success": False,
+            **normalized.to_dict(),
+        },
+        api_calls,
+    )
+
+
+@app.post(RECEPTION_CONSULT_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_consult(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    identifier = _as_positive_int(body.get("identifiantFactureCPP"))
+    if identifier is None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Le champ identifiantFactureCPP est obligatoire et doit être un entier positif.",
+                "raw_message": "identifiantFactureCPP missing or invalid",
+                "recommended_action": "Saisir l'identifiant CPP exact retourné par Chorus Pro (ex. 8424327).",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Réception consult start: identifiantFactureCPP=%s, env=%s",
+        identifier,
+        environment_override or "default",
+    )
+
+    item, api_calls = _consult_single_invoice_for_reception(identifier, environment_override=environment_override)
+    duration_ms = round((perf_counter() - started_at) * 1000)
+
+    if item.get("success"):
+        logger.debug(
+            "Réception consult success: identifiantFactureCPP=%s, duration=%s ms",
+            identifier,
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "success": True,
+                "identifiantFactureCPP": identifier,
+                "facture": item["facture"],
+                "persisted": bool(item.get("persisted")),
+                "apiCalls": api_calls,
+            },
+        )
+
+    logger.warning(
+        "Réception consult refusée: identifiantFactureCPP=%s, category=%s, duration=%s ms",
+        identifier,
+        item.get("category"),
+        duration_ms,
+    )
+    return _json_response(
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+        {
+            "ok": False,
+            "success": False,
+            "identifiantFactureCPP": identifier,
+            **{key: value for key, value in item.items() if key not in {"success", "identifiantFactureCPP"}},
+            "apiCalls": api_calls,
+        },
+    )
+
+
+@app.post(RECEPTION_CONSULT_BULK_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_consult_bulk(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    raw_identifiers = body.get("identifiantsFactureCPP")
+    if not isinstance(raw_identifiers, list):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Le champ identifiantsFactureCPP doit être une liste d'entiers positifs.",
+                "raw_message": "identifiantsFactureCPP must be a list",
+                "recommended_action": "Envoyer { \"identifiantsFactureCPP\": [8424327, 8424328, ...] }.",
+            },
+        )
+
+    identifiers = coerce_identifier_list(raw_identifiers)
+    if not identifiers:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Aucun identifiant exploitable dans la requête.",
+                "raw_message": "no positive integers parsed from identifiantsFactureCPP",
+                "recommended_action": "Vérifier que les identifiants sont des entiers positifs.",
+            },
+        )
+
+    if len(identifiers) > RECEPTION_BULK_MAX_IDENTIFIERS:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": f"Maximum {RECEPTION_BULK_MAX_IDENTIFIERS} identifiants par requête.",
+                "raw_message": f"received {len(identifiers)} identifiers, limit is {RECEPTION_BULK_MAX_IDENTIFIERS}",
+                "recommended_action": f"Découper la liste en lots de {RECEPTION_BULK_MAX_IDENTIFIERS} maximum.",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Réception bulk consult start: count=%s, env=%s",
+        len(identifiers),
+        environment_override or "default",
+    )
+
+    items: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    all_api_calls: list[dict[str, Any]] = []
+    total_success = 0
+    total_failed = 0
+
+    for identifier in identifiers:
+        item, api_calls = _consult_single_invoice_for_reception(
+            identifier,
+            environment_override=environment_override,
+        )
+        all_api_calls.extend(api_calls)
+        if item.get("success"):
+            total_success += 1
+            items.append(item)
+        else:
+            total_failed += 1
+            errors.append(item)
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Réception bulk consult done: requested=%s, success=%s, failed=%s, duration=%s ms",
+        len(identifiers),
+        total_success,
+        total_failed,
+        duration_ms,
+    )
+
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "success": True,
+            "totalRequested": len(identifiers),
+            "totalSuccess": total_success,
+            "totalFailed": total_failed,
+            "items": items,
+            "errors": errors,
+            "apiCalls": all_api_calls,
+        },
+    )
+
+
+def _build_reception_process_payload(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Construit le payload `/v1/traiter/recue` ou retourne une erreur structurée.
+
+    `body` est le corps envoyé par le frontend (camelCase libre). En sortie :
+    - (payload, None) si tout est bon ;
+    - ({}, error_dict) sinon (l'appelant renvoie 400 avec error_dict).
+    """
+    id_facture = _as_positive_int(body.get("idFacture") or body.get("identifiantFactureCPP"))
+    if id_facture is None:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ idFacture est obligatoire et doit être un entier positif.",
+            "raw_message": "idFacture missing or invalid",
+            "recommended_action": "Renseigner l'identifiant Chorus de la facture à traiter (ex. 8429592).",
+        }
+
+    raw_status = _as_non_empty_string(body.get("nouveauStatut"))
+    if not raw_status:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ nouveauStatut est obligatoire.",
+            "raw_message": "nouveauStatut missing",
+            "recommended_action": (
+                "Sélectionner un statut parmi : "
+                + ", ".join(sorted(RECEPTION_PROCESS_ALLOWED_STATUTS))
+            ),
+        }
+    nouveau_statut = raw_status.upper()
+    if nouveau_statut not in RECEPTION_PROCESS_ALLOWED_STATUTS:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": f"Statut '{nouveau_statut}' non autorisé pour cette action.",
+            "raw_message": f"nouveauStatut={nouveau_statut} not in allowed set",
+            "recommended_action": (
+                "Choisir parmi : " + ", ".join(sorted(RECEPTION_PROCESS_ALLOWED_STATUTS))
+            ),
+        }
+
+    motif = _as_non_empty_string(body.get("motif"))
+    if nouveau_statut in RECEPTION_PROCESS_MOTIF_REQUIRED and not motif:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": (
+                "Un motif est obligatoire pour passer la facture en REJETEE ou SUSPENDUE."
+            ),
+            "raw_message": "motif required for REJETEE/SUSPENDUE",
+            "recommended_action": "Renseigner un motif clair et précis dans le champ Motif.",
+        }
+
+    numero_dp_mandat = _as_non_empty_string(body.get("numeroDPMandat") or body.get("numeroDpMandat"))
+    id_utilisateur = _as_positive_int(body.get("idUtilisateurCourant"))
+
+    payload: dict[str, Any] = {
+        "idFacture": id_facture,
+        "nouveauStatut": nouveau_statut,
+    }
+    if motif:
+        payload["motif"] = motif
+    if numero_dp_mandat:
+        payload["numeroDPMandat"] = numero_dp_mandat
+    if id_utilisateur is not None:
+        payload["idUtilisateurCourant"] = id_utilisateur
+
+    return payload, None
+
+
+@app.post(RECEPTION_PROCESS_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_process(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    payload, validation_error = _build_reception_process_payload(body)
+    if validation_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **validation_error},
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Traitement facture reçue start: idFacture=%s, nouveauStatut=%s, env=%s",
+        payload["idFacture"],
+        payload["nouveauStatut"],
+        environment_override or "default",
+    )
+
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    try:
+        client.reset_api_calls()
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_TRAITER_RECUE_PATH,
+            payload,
+            "Traitement facture reçue",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = list(client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Traitement facture reçue error: idFacture=%s, duration=%s ms, error=%s",
+            payload["idFacture"],
+            duration_ms,
+            message,
+        )
+        normalized = normalize_chorus_error(message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "apiCalls": api_calls,
+            },
+        )
+
+    api_calls = list(client.api_calls)
+    code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+
+    if status_code >= 400 or (code_retour is not None and code_retour != 0):
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Traitement facture reçue refusé: idFacture=%s, codeRetour=%s, status=%s, duration=%s ms",
+            payload["idFacture"],
+            code_retour,
+            status_code,
+            duration_ms,
+        )
+        normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+        return _json_response(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Traitement facture reçue success: idFacture=%s, nouveauStatut=%s, duration=%s ms",
+        payload["idFacture"],
+        payload["nouveauStatut"],
+        duration_ms,
+    )
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "success": True,
+            "payload": payload,
+            "response": chorus_response,
+            "apiCalls": api_calls,
+        },
+    )
+
+
 @app.post(INVOICE_HISTORY_PATH, dependencies=[Depends(require_auth)])
 def handle_invoice_history(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
@@ -1675,6 +2195,9 @@ def main() -> int:
     print(f"  - Submit:      {SUBMIT_PATH}")
     print(f"  - Recycle:     {RECYCLE_PATH}")
     print(f"  - Validator:   {CORRECT_VALIDATOR_PATH}")
+    print(f"  - Reception:   {RECEPTION_CONSULT_PATH}")
+    print(f"  - Reception ×: {RECEPTION_CONSULT_BULK_PATH}")
+    print(f"  - Reception →: {RECEPTION_PROCESS_PATH}")
     print(f"  - History:     {INVOICE_HISTORY_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")
     print(f"  - Annuaire:    {SYNC_ANNUAIRE_PATH}")

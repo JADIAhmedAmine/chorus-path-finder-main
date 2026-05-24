@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +66,21 @@ class _FakeStorageSession:
 
     def scalar(self, _statement):
         return self.scalar_value
+
+
+class _FakePersistSession:
+    def __init__(self, invoice):
+        self.invoice = invoice
+        self.flushed = False
+
+    def get(self, _model, key: str):
+        return self.invoice if key == self.invoice.id else None
+
+    def scalar(self, _statement):
+        return None
+
+    def flush(self):
+        self.flushed = True
 
 
 class InvoiceSyncTest(unittest.TestCase):
@@ -168,6 +186,82 @@ class InvoiceSyncTest(unittest.TestCase):
                     sync_module._normalize_chorus_status_internal(status),
                     expected,
                 )
+
+    def test_persist_reception_invoice_detail_stores_raw_and_normalized_detail(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429597",
+            tenant_id="tenant-1",
+            raw_payload={"identifiantFactureCPP": 8429597, "statut": "REJETEE"},
+        )
+        session = _FakePersistSession(invoice)
+        facture = {
+            "identifiantFactureCPP": 8429597,
+            "numeroFacture": "EST-2025-00018",
+            "statutFacture": "MISE_A_DISPOSITION",
+        }
+        normalized = {
+            "identifiantFactureCPP": 8429597,
+            "numeroFacture": "EST-2025-00018",
+            "statutFacture": "MISE_A_DISPOSITION",
+            "modeDepot": "DEPOT_PDF_PORTAIL",
+            "rejetTraite": False,
+            "fournisseur": {
+                "id": "26359578",
+                "siret": "12345678901234",
+                "raisonSociale": "Fournisseur détail",
+                "codeService": None,
+            },
+            "destinataire": {
+                "id": "32242033407300",
+                "siret": "32242033407300",
+                "raisonSociale": "Destinataire détail",
+                "codeService": "SFACT",
+            },
+            "dates": {
+                "dateFacture": "2025-01-15",
+                "dateDepot": "2026-05-23",
+                "dateEcheancePaiement": "2026-06-30",
+            },
+            "montants": {
+                "ht": 1146.0,
+                "tva": 229.2,
+                "ttc": 1375.2,
+                "aPayer": 1375.2,
+                "devise": "EUR",
+            },
+            "references": {
+                "numeroBonCommande": "BC-001",
+                "numeroMarche": "M-001",
+                "typeFacture": "FACTURE",
+            },
+            "piecesJointes": [{"pieceJointeId": "PJ-1"}],
+        }
+
+        persisted = sync_module.persist_reception_invoice_detail(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429597,
+            facture=facture,
+            normalized_invoice=normalized,
+        )
+
+        self.assertTrue(persisted)
+        self.assertTrue(session.flushed)
+        self.assertEqual(invoice.raw_payload["receptionDetail"], facture)
+        self.assertEqual(invoice.raw_payload["receptionNormalized"], normalized)
+        self.assertEqual(invoice.chorus_invoice_number, "8429597")
+        self.assertEqual(invoice.supplier_invoice_number, "EST-2025-00018")
+        self.assertEqual(invoice.status_chorus, "MISE_A_DISPOSITION")
+        self.assertEqual(invoice.status_internal, "ACCEPTED_BY_CHORUS")
+        self.assertEqual(invoice.invoice_date, date(2025, 1, 15))
+        self.assertEqual(invoice.due_date, date(2026, 6, 30))
+        self.assertEqual(invoice.total_ttc, Decimal("1375.2"))
+        self.assertEqual(invoice.amount_to_pay, Decimal("1375.2"))
+        self.assertEqual(invoice.supplier_chorus_name, "Fournisseur détail")
+        self.assertEqual(invoice.recipient_chorus_name, "Destinataire détail")
+        self.assertEqual(invoice.service_chorus_code, "SFACT")
+        self.assertFalse(invoice.rejection_processed)
+        self.assertEqual(invoice.attachment_count, 1)
 
 
 if __name__ == "__main__":

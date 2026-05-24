@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -43,10 +45,11 @@ class ChorusConfigTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            settings = load_chorus_settings(
-                env_files=[env_path],
-                environment_override="prod",
-            )
+            with patch.dict(os.environ, {}, clear=True):
+                settings = load_chorus_settings(
+                    env_files=[env_path],
+                    environment_override="prod",
+                )
 
         self.assertEqual(settings.base_url, "https://api.piste.gouv.fr/cpro")
         self.assertEqual(settings.token_url, "https://oauth.piste.gouv.fr/api/oauth/token")

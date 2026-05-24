@@ -211,6 +211,121 @@ describe('ChorusBackendAutomationClient', () => {
     expect(result.response).toMatchObject({ idFacture: 8424327, libelle: 'TRA_MSG_00.000' });
   });
 
+  it('consults an invoice for reception through the backend bridge', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      success: true,
+      identifiantFactureCPP: 8424327,
+      facture: {
+        identifiantFactureCPP: 8424327,
+        numeroFacture: '20260000000000000064',
+        statutFacture: 'REJETEE',
+        modeDepot: 'SAISIE_API',
+        rejetTraite: false,
+        fournisseur: null,
+        destinataire: null,
+        dates: { dateFacture: null, dateDepot: null, dateEcheancePaiement: null },
+        montants: { ht: 0, tva: 0, ttc: 0, aPayer: 0, devise: 'EUR' },
+        references: {
+          numeroBonCommande: null,
+          numeroMarche: null,
+          numeroDpMandat: null,
+          numeroFactureOrigine: null,
+          motifExonerationTva: null,
+          modePaiement: null,
+          typeFacture: null,
+          typeTva: null,
+        },
+        piecesJointes: [],
+        lignesDePoste: [],
+        recapitulatifTva: [],
+      },
+      apiCalls: [],
+    }));
+
+    const client = new ChorusBackendAutomationClient({
+      ...getDefaultChorusConfig(),
+      submissionBridgeUrl: 'http://127.0.0.1:8008/api/chorus/submit',
+    }, fetchMock);
+
+    const result = await client.consultInvoiceForReception(8424327);
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/reception/consult', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ environment: 'qualif', identifiantFactureCPP: 8424327 }),
+    }));
+    expect(result).toMatchObject({
+      ok: true,
+      success: true,
+      facture: { numeroFacture: '20260000000000000064' },
+    });
+  });
+
+  it('consults invoices in bulk for reception through the backend bridge', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
+      ok: true,
+      success: true,
+      totalRequested: 2,
+      totalSuccess: 1,
+      totalFailed: 1,
+      items: [
+        {
+          identifiantFactureCPP: 8424327,
+          success: true,
+          facture: {
+            identifiantFactureCPP: 8424327,
+            numeroFacture: 'FAC-1',
+            statutFacture: 'REJETEE',
+            modeDepot: 'SAISIE_API',
+            rejetTraite: false,
+            fournisseur: null,
+            destinataire: null,
+            dates: { dateFacture: null, dateDepot: null, dateEcheancePaiement: null },
+            montants: { ht: 0, tva: 0, ttc: 0, aPayer: 0, devise: 'EUR' },
+            references: {
+              numeroBonCommande: null,
+              numeroMarche: null,
+              numeroDpMandat: null,
+              numeroFactureOrigine: null,
+              motifExonerationTva: null,
+              modePaiement: null,
+              typeFacture: null,
+              typeTva: null,
+            },
+            piecesJointes: [],
+            lignesDePoste: [],
+            recapitulatifTva: [],
+          },
+        },
+      ],
+      errors: [
+        {
+          identifiantFactureCPP: 8424328,
+          success: false,
+          category: 'NOT_FOUND',
+          human_message: 'Introuvable',
+          raw_message: '404',
+          recommended_action: 'Vérifier l’identifiant.',
+        },
+      ],
+      apiCalls: [],
+    }));
+
+    const client = new ChorusBackendAutomationClient({
+      ...getDefaultChorusConfig(),
+      submissionBridgeUrl: 'http://127.0.0.1:8008/api/chorus/submit',
+    }, fetchMock);
+
+    const result = await client.consultInvoicesBulkForReception([8424327, 8424328]);
+
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8008/api/reception/consult-bulk', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ environment: 'qualif', identifiantsFactureCPP: [8424327, 8424328] }),
+    }));
+    expect(result.totalSuccess).toBe(1);
+    expect(result.errors).toHaveLength(1);
+  });
+
   it('consults invoice history through the backend bridge', async () => {
     const payload = {
       idFacture: 8424327,

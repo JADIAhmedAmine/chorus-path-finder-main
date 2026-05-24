@@ -1107,6 +1107,141 @@ def _upsert_invoice(
 
 
 # ---------------------------------------------------------------------------
+# Reception detail enrichment
+# ---------------------------------------------------------------------------
+
+
+def _find_invoice_for_reception_detail(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    normalized_invoice: dict[str, Any],
+) -> Optional[Invoice]:
+    identifier_str = str(identifier)
+    invoice = session.get(Invoice, f"chorus-{identifier_str}")
+    if invoice is not None and invoice.tenant_id == tenant_id:
+        return invoice
+
+    invoice = session.scalar(
+        select(Invoice).where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.chorus_invoice_number == identifier_str,
+        )
+    )
+    if invoice is not None:
+        return invoice
+
+    supplier_invoice_number = _as_str(normalized_invoice.get("numeroFacture"))
+    if not supplier_invoice_number:
+        return None
+
+    return session.scalar(
+        select(Invoice).where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.supplier_invoice_number == supplier_invoice_number,
+        )
+    )
+
+
+def _dict_section(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    section = payload.get(key)
+    return section if isinstance(section, dict) else {}
+
+
+def _list_section(payload: dict[str, Any], key: str) -> list[Any]:
+    section = payload.get(key)
+    return section if isinstance(section, list) else []
+
+
+def _set_present(target: Any, attribute: str, value: Any) -> None:
+    if value is not None:
+        setattr(target, attribute, value)
+
+
+def persist_reception_invoice_detail(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    facture: dict[str, Any],
+    normalized_invoice: dict[str, Any],
+) -> bool:
+    """Persist the rich reception detail returned by Chorus on the invoice row.
+
+    The supplier-invoice search endpoint gives a compact list. The reception
+    consult endpoint gives the business detail used by the reception screen, so
+    we store both the raw detail and the normalized frontend shape in JSONB and
+    copy the main fields into indexed invoice columns.
+    """
+    invoice = _find_invoice_for_reception_detail(
+        session,
+        tenant_id=tenant_id,
+        identifier=identifier,
+        normalized_invoice=normalized_invoice,
+    )
+    if invoice is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    identifier_str = str(identifier)
+    dates = _dict_section(normalized_invoice, "dates")
+    amounts = _dict_section(normalized_invoice, "montants")
+    references = _dict_section(normalized_invoice, "references")
+    supplier = _dict_section(normalized_invoice, "fournisseur")
+    recipient = _dict_section(normalized_invoice, "destinataire")
+    attachments = _list_section(normalized_invoice, "piecesJointes")
+
+    existing_raw = invoice.raw_payload if isinstance(invoice.raw_payload, dict) else {}
+    invoice.raw_payload = {
+        **existing_raw,
+        **facture,
+        "receptionDetail": facture,
+        "receptionNormalized": normalized_invoice,
+        "receptionDetailSyncedAt": now.isoformat(),
+    }
+
+    _set_present(invoice, "chorus_invoice_number", identifier_str)
+    _set_present(invoice, "supplier_invoice_number", _as_str(normalized_invoice.get("numeroFacture")))
+    _set_present(invoice, "status_chorus", _as_str(normalized_invoice.get("statutFacture")))
+    if invoice.status_chorus:
+        invoice.status_internal = _normalize_chorus_status_internal(invoice.status_chorus)
+    _set_present(invoice, "deposit_mode", _as_str(normalized_invoice.get("modeDepot")))
+    _set_present(invoice, "invoice_date", _as_date(dates.get("dateFacture")))
+    _set_present(invoice, "due_date", _as_date(dates.get("dateEcheancePaiement")))
+    _set_present(invoice, "submitted_at", _as_datetime(dates.get("dateDepot")))
+
+    _set_present(invoice, "total_ht", _as_decimal(amounts.get("ht")))
+    _set_present(invoice, "total_vat", _as_decimal(amounts.get("tva")))
+    _set_present(invoice, "total_ttc", _as_decimal(amounts.get("ttc")))
+    _set_present(invoice, "amount_to_pay", _as_decimal(amounts.get("aPayer")))
+    _set_present(invoice, "currency_code", _as_str(amounts.get("devise")))
+
+    _set_present(invoice, "purchase_order_number", _as_str(references.get("numeroBonCommande")))
+    market_number = _as_str(references.get("numeroMarche"))
+    if market_number and market_number.lower() == "null":
+        market_number = None
+    _set_present(invoice, "market_number", market_number)
+    _set_present(invoice, "chorus_invoice_type", _as_str(references.get("typeFacture")))
+
+    _set_present(invoice, "supplier_chorus_code", _as_str(supplier.get("id")))
+    _set_present(invoice, "supplier_chorus_name", _as_str(supplier.get("raisonSociale")))
+    _set_present(invoice, "recipient_chorus_id", _as_str(recipient.get("id")))
+    _set_present(invoice, "recipient_chorus_name", _as_str(recipient.get("raisonSociale")))
+    _set_present(invoice, "service_chorus_code", _as_str(recipient.get("codeService")))
+
+    rejection_processed = normalized_invoice.get("rejetTraite")
+    if isinstance(rejection_processed, bool):
+        invoice.rejection_processed = rejection_processed
+    invoice.attachment_count = len(attachments)
+    invoice.last_synced_at = now
+    invoice.last_status_sync_at = now
+
+    session.flush()
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Public API helper
 # ---------------------------------------------------------------------------
 
