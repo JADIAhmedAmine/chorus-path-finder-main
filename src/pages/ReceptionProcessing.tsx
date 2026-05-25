@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
+  Bell,
   CheckCircle2,
   ClipboardList,
   Download,
@@ -23,6 +24,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -53,6 +61,7 @@ import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
 const BULK_HINT_PLACEHOLDER = '8424327\n8424328\n8424329';
 const CONSULT_CHUNK_SIZE = 50;
 const HISTORY_STATUS_RECONCILE_LIMIT = 50;
+const RECEIVED_RESPONSE_STATUSES = new Set(['REJETEE', 'REFUSEE', 'REFUSEE_1', 'REFUSEE_2']);
 
 interface SingleConsultState {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -64,7 +73,9 @@ interface SingleConsultState {
 interface BulkConsultState {
   status: 'idle' | 'loading' | 'done';
   rows?: ReceptionDisplayRow[];
+  suspendedRows?: ReceptionDisplayRow[];
   responseRows?: ReceptionDisplayRow[];
+  notificationRows?: ReceptionDisplayRow[];
   pendingRows?: ReceptionDisplayRow[];
   errors?: ReceptionBulkResultError[];
   totalStored?: number;
@@ -96,6 +107,23 @@ interface ReceptionProcessingInfo {
 }
 
 type ReceptionSqlClassification = 'FACTURE_RECUE' | 'REPONSE_FAVORABLE' | 'A_QUALIFIER';
+type ReceptionRowFilters = {
+  query: string;
+  status: string;
+  dateFrom: string;
+  dateTo: string;
+  minAmount: string;
+  maxAmount: string;
+};
+
+const EMPTY_ROW_FILTERS: ReceptionRowFilters = {
+  query: '',
+  status: 'all',
+  dateFrom: '',
+  dateTo: '',
+  minAmount: '',
+  maxAmount: '',
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -188,7 +216,96 @@ function activeReceptionRows(rows: ReceptionDisplayRow[]): ReceptionDisplayRow[]
 }
 
 function processedReceptionRows(rows: ReceptionDisplayRow[]): ReceptionDisplayRow[] {
-  return rows.filter((row) => row.processed?.processed);
+  return rows.filter(isExplicitlyProcessed);
+}
+
+function isExplicitlyProcessed(row: ReceptionDisplayRow): boolean {
+  return row.processed?.processed === true;
+}
+
+function isSuspendedInvoice(status: string | null): boolean {
+  return status?.trim().toUpperCase() === 'SUSPENDUE';
+}
+
+function isReceivedResponse(status: string | null): boolean {
+  const normalized = status?.trim().toUpperCase();
+  return !!normalized && RECEIVED_RESPONSE_STATUSES.has(normalized);
+}
+
+function isRecycleActionable(status: string | null): boolean {
+  return status?.trim().toUpperCase() === 'A_RECYCLER';
+}
+
+function isActionableReceivedInvoice(status: string | null): boolean {
+  return !isReceivedResponse(status);
+}
+
+function hasReceptionDetail(row: ReceptionDisplayRow): boolean {
+  return row.detailStatus === 'detail' || row.detailStatus === 'response';
+}
+
+function normalizeForSearch(value: unknown): string {
+  return String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function dateTimeForFilter(value: string | null): number | null {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function numberForFilter(value: string): number | null {
+  if (!value.trim()) return null;
+  const parsed = Number(value.replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function receptionRowHaystack(row: ReceptionDisplayRow): string {
+  const facture = row.facture;
+  return normalizeForSearch([
+    row.identifiantFactureCPP,
+    facture.numeroFacture,
+    facture.statutFacture,
+    facture.fournisseur?.raisonSociale,
+    facture.fournisseur?.siret,
+    facture.destinataire?.raisonSociale,
+    facture.destinataire?.siret,
+    facture.commentaire,
+    row.processed?.libelle,
+  ].filter(Boolean).join(' '));
+}
+
+function filterReceptionRows(rows: ReceptionDisplayRow[], filters: ReceptionRowFilters): ReceptionDisplayRow[] {
+  const query = normalizeForSearch(filters.query);
+  const dateFrom = dateTimeForFilter(filters.dateFrom);
+  const dateTo = dateTimeForFilter(filters.dateTo);
+  const minAmount = numberForFilter(filters.minAmount);
+  const maxAmount = numberForFilter(filters.maxAmount);
+
+  return rows.filter((row) => {
+    const facture = row.facture;
+    const status = facture.statutFacture?.trim().toUpperCase() || 'INCONNU';
+    if (filters.status !== 'all' && status !== filters.status) return false;
+    if (query && !receptionRowHaystack(row).includes(query)) return false;
+
+    const rowDate = dateTimeForFilter(facture.dates.dateDepot || facture.dates.dateFacture);
+    if (dateFrom !== null && (rowDate === null || rowDate < dateFrom)) return false;
+    if (dateTo !== null && (rowDate === null || rowDate > dateTo + 86_399_999)) return false;
+
+    const amount = facture.montants.ttc;
+    if (minAmount !== null && amount < minAmount) return false;
+    if (maxAmount !== null && amount > maxAmount) return false;
+    return true;
+  });
+}
+
+function statusOptionsForRows(rows: ReceptionDisplayRow[]): string[] {
+  return [...new Set(rows.map((row) => row.facture.statutFacture?.trim().toUpperCase()).filter(Boolean) as string[])]
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function receptionSqlClassification(raw: Record<string, unknown>): ReceptionSqlClassification {
@@ -508,12 +625,32 @@ function rowsFromDbInvoices(
 
 function splitBusinessRows(rows: ReceptionDisplayRow[]): {
   receivedRows: ReceptionDisplayRow[];
+  suspendedRows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
+  notificationRows: ReceptionDisplayRow[];
   pendingRows: ReceptionDisplayRow[];
 } {
   return {
-    receivedRows: rows.filter((row) => row.detailStatus === 'detail'),
-    responseRows: rows.filter((row) => row.detailStatus === 'response'),
+    receivedRows: rows.filter((row) =>
+      hasReceptionDetail(row)
+      && isActionableReceivedInvoice(row.facture.statutFacture)
+      && !isSuspendedInvoice(row.facture.statutFacture)
+      && (row.detailStatus === 'detail' || isRecycleActionable(row.facture.statutFacture)),
+    ),
+    suspendedRows: rows.filter((row) =>
+      hasReceptionDetail(row)
+      && isSuspendedInvoice(row.facture.statutFacture),
+    ),
+    responseRows: rows.filter((row) =>
+      hasReceptionDetail(row)
+      && isReceivedResponse(row.facture.statutFacture),
+    ),
+    notificationRows: rows.filter((row) =>
+      row.detailStatus === 'response'
+      && !isReceivedResponse(row.facture.statutFacture)
+      && !isRecycleActionable(row.facture.statutFacture)
+      && !isSuspendedInvoice(row.facture.statutFacture),
+    ),
     pendingRows: rows.filter((row) => row.detailStatus === 'database' || row.detailStatus === 'error'),
   };
 }
@@ -715,11 +852,19 @@ export default function ReceptionProcessing() {
     [dbRows],
   );
   const cachedDetailRows = useMemo(
-    () => dbRows.filter((row) => row.detailStatus === 'detail'),
+    () => splitBusinessRows(dbRows).receivedRows,
+    [dbRows],
+  );
+  const cachedSuspendedRows = useMemo(
+    () => splitBusinessRows(dbRows).suspendedRows,
     [dbRows],
   );
   const cachedResponseRows = useMemo(
-    () => dbRows.filter((row) => row.detailStatus === 'response'),
+    () => splitBusinessRows(dbRows).responseRows,
+    [dbRows],
+  );
+  const cachedNotificationRows = useMemo(
+    () => splitBusinessRows(dbRows).notificationRows,
     [dbRows],
   );
   const cachedPendingRows = useMemo(
@@ -731,10 +876,18 @@ export default function ReceptionProcessing() {
     && (bulkState.rows.length > 0 || bulkState.status !== 'loading')
     ? bulkState.rows
     : cachedDetailRows;
+  const suspendedRows = bulkState.suspendedRows !== undefined
+    && (bulkState.suspendedRows.length > 0 || bulkState.status !== 'loading')
+    ? bulkState.suspendedRows
+    : cachedSuspendedRows;
   const responseRows = bulkState.responseRows !== undefined
     && (bulkState.responseRows.length > 0 || bulkState.status !== 'loading')
     ? bulkState.responseRows
     : cachedResponseRows;
+  const notificationRows = bulkState.notificationRows !== undefined
+    && (bulkState.notificationRows.length > 0 || bulkState.status !== 'loading')
+    ? bulkState.notificationRows
+    : cachedNotificationRows;
   const pendingRows = bulkState.pendingRows !== undefined
     && (bulkState.pendingRows.length > 0 || bulkState.status !== 'loading')
     ? bulkState.pendingRows
@@ -766,7 +919,9 @@ export default function ReceptionProcessing() {
     setBulkState({
       status: 'loading',
       rows: cachedDetailRows,
+      suspendedRows: cachedSuspendedRows,
       responseRows: cachedResponseRows,
+      notificationRows: cachedNotificationRows,
       pendingRows: cachedPendingRows,
       totalStored: dbRows.length,
       detailSuccess: cachedDetailRows.length,
@@ -818,7 +973,13 @@ export default function ReceptionProcessing() {
         rowsAfterHistoryStatusUpdate,
         errors,
       );
-      const { receivedRows, responseRows: separatedResponseRows, pendingRows: separatedPendingRows } = splitBusinessRows(classifiedRows);
+      const {
+        receivedRows,
+        suspendedRows: separatedSuspendedRows,
+        responseRows: separatedResponseRows,
+        notificationRows: separatedNotificationRows,
+        pendingRows: separatedPendingRows,
+      } = splitBusinessRows(classifiedRows);
       const historyNote = historySync.checked > 0
         ? ` Historique contrôlé pour ${historySync.checked} ligne(s), ${historySync.persisted} statut(s) réconcilié(s).`
         : '';
@@ -832,14 +993,16 @@ export default function ReceptionProcessing() {
       setBulkState({
         status: 'done',
         rows: receivedRows,
+        suspendedRows: separatedSuspendedRows,
         responseRows: separatedResponseRows,
+        notificationRows: separatedNotificationRows,
         pendingRows: separatedPendingRows,
         errors,
         totalStored: refreshedRows.length,
         detailSuccess: receivedRows.length,
         detailFailed: separatedPendingRows.filter((row) => row.detailStatus === 'error').length,
         syncRuns,
-        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. Détails déjà en cache conservés. ${receivedRows.length} facture(s) reçue(s), ${separatedResponseRows.length} réponse(s) favorable(s), ${separatedPendingRows.length} à qualifier.${historyNote}${historyLimitNote}${historyFailureNote}`,
+        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. ${receivedRows.length} facture(s) à traiter, ${separatedSuspendedRows.length} suspendue(s), ${separatedResponseRows.length} rejet/refus orienté(s) vers la page dédiée, ${separatedNotificationRows.length} notification(s), ${separatedPendingRows.length} à qualifier.${historyNote}${historyLimitNote}${historyFailureNote}`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -940,6 +1103,7 @@ export default function ReceptionProcessing() {
     setBulkState({
       status: 'loading',
       rows: bulkRows,
+      suspendedRows,
       responseRows,
       pendingRows,
       totalStored: dbRows.length,
@@ -994,17 +1158,25 @@ export default function ReceptionProcessing() {
           .filter((row): row is ReceptionDisplayRow => row !== undefined),
         errors,
       );
-      const { responseRows: separatedResponseRows, pendingRows: separatedPendingRows } = splitBusinessRows(classifiedRows);
+      const {
+        receivedRows,
+        suspendedRows: separatedSuspendedRows,
+        responseRows: separatedResponseRows,
+        notificationRows: separatedNotificationRows,
+        pendingRows: separatedPendingRows,
+      } = splitBusinessRows(classifiedRows);
       setBulkState({
         status: 'done',
-        rows: displayRows,
+        rows: receivedRows,
+        suspendedRows: separatedSuspendedRows,
         responseRows: separatedResponseRows,
+        notificationRows: separatedNotificationRows,
         pendingRows: separatedPendingRows,
         errors,
         totalStored: baseRows.length,
-        detailSuccess: displayRows.length,
+        detailSuccess: receivedRows.length + separatedSuspendedRows.length,
         detailFailed: separatedPendingRows.filter((row) => row.detailStatus === 'error').length,
-        note: `Cache PostgreSQL prioritaire. ${displayRows.length} facture(s) reçue(s), ${separatedResponseRows.length} réponse(s) favorable(s), ${separatedPendingRows.length} à qualifier.`,
+        note: `Cache PostgreSQL prioritaire. ${receivedRows.length} facture(s) à traiter, ${separatedSuspendedRows.length} suspendue(s), ${separatedResponseRows.length} rejet/refus orienté(s) vers la page dédiée, ${separatedNotificationRows.length} notification(s), ${separatedPendingRows.length} à qualifier.`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -1054,7 +1226,9 @@ export default function ReceptionProcessing() {
         onConsult={() => void handleBulkConsult()}
         state={bulkState}
         rows={bulkRows}
+        suspendedRows={suspendedRows}
         responseRows={responseRows}
+        notificationRows={notificationRows}
         pendingRows={pendingRows}
         busy={busy}
         onPreviewInvoice={openDrawerForInvoice}
@@ -1084,6 +1258,7 @@ export default function ReceptionProcessing() {
 export function ProcessedReceptionInvoices() {
   const [drawerInvoice, setDrawerInvoice] = useState<ReceptionInvoice | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [filters, setFilters] = useState<ReceptionRowFilters>(EMPTY_ROW_FILTERS);
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
   const customersQuery = usePublicCustomersQuery();
@@ -1101,6 +1276,10 @@ export function ProcessedReceptionInvoices() {
       rowsFromDbInvoices(invoicesQuery.data?.items ?? [], suppliersById, customersById),
     ),
     [customersById, invoicesQuery.data?.items, suppliersById],
+  );
+  const filteredProcessedRows = useMemo(
+    () => filterReceptionRows(processedRows, filters),
+    [filters, processedRows],
   );
   const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
 
@@ -1150,18 +1329,264 @@ export function ProcessedReceptionInvoices() {
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center text-base">
             <CheckCircle2 className="mr-2 h-4 w-4" />
-            Historique des traitements ({processedRows.length})
+            Historique des traitements ({filteredProcessedRows.length}/{processedRows.length})
           </CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          <ReceptionRowsFilterPanel
+            filters={filters}
+            onFiltersChange={setFilters}
+            rows={processedRows}
+            searchPlaceholder="N° facture, ID CPP, fournisseur, destinataire..."
+          />
           {loading ? (
             <SkeletonTable rows={5} columns={8} />
+          ) : filteredProcessedRows.length > 0 ? (
+            <ProcessedInvoicesTable rows={filteredProcessedRows} onPreviewInvoice={openDrawerForInvoice} />
           ) : processedRows.length > 0 ? (
-            <ProcessedInvoicesTable rows={processedRows} onPreviewInvoice={openDrawerForInvoice} />
+            <EmptyState
+              title="Aucune facture traitée ne correspond aux filtres"
+              description="Modifie la recherche, le statut, les dates ou les montants pour élargir le résultat."
+            />
           ) : (
             <EmptyState
               title="Aucune facture traitée"
               description="Les factures disparaîtront de la file de réception dès que Chorus aura accepté l’action de traitement."
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <InvoiceDetailDrawer
+        invoice={drawerInvoice}
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open);
+          if (!open) setDrawerInvoice(null);
+        }}
+      />
+    </div>
+  );
+}
+
+export function ReceptionResponsesPage() {
+  const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
+  const suppliersQuery = useSuppliersQuery();
+  const customersQuery = usePublicCustomersQuery();
+  const [drawerInvoice, setDrawerInvoice] = useState<ReceptionInvoice | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [filters, setFilters] = useState<ReceptionRowFilters>(EMPTY_ROW_FILTERS);
+
+  const suppliersById = useMemo(
+    () => new Map((suppliersQuery.data ?? []).map((supplier) => [supplier.id, supplier])),
+    [suppliersQuery.data],
+  );
+  const customersById = useMemo(
+    () => new Map((customersQuery.data ?? []).map((customer) => [customer.id, customer])),
+    [customersQuery.data],
+  );
+  const rows = useMemo(
+    () => splitBusinessRows(activeReceptionRows(rowsFromDbInvoices(
+      invoicesQuery.data?.items ?? [],
+      suppliersById,
+      customersById,
+    ))).responseRows,
+    [customersById, invoicesQuery.data?.items, suppliersById],
+  );
+  const filteredRows = useMemo(
+    () => filterReceptionRows(rows, filters),
+    [filters, rows],
+  );
+  const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+
+  function openDrawerForInvoice(invoice: ReceptionInvoice) {
+    setDrawerInvoice(invoice);
+    setDrawerOpen(true);
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <XCircle className="h-6 w-6 text-destructive" />
+            <h1 className="text-2xl font-semibold">Rejets / refus</h1>
+          </div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Page dédiée aux retours Chorus non actionnables depuis la file de réception : rejets, refus et retours à analyser.
+            Ici on comprend le motif, on récupère les documents, puis on prépare la correction.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => {
+            void invoicesQuery.refetch();
+            void suppliersQuery.refetch();
+            void customersQuery.refetch();
+          }}
+          disabled={loading}
+        >
+          {loading
+            ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            : <RefreshCw className="mr-2 h-4 w-4" />}
+          Actualiser
+        </Button>
+      </header>
+
+      <Alert>
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Lecture et analyse uniquement</AlertTitle>
+        <AlertDescription>
+          Les rejets/refus restent consultables avec leurs documents, mais ils ne sont pas présentés comme des factures à traiter.
+          Ouvrez le détail pour analyser le commentaire, le statut et les pièces jointes.
+        </AlertDescription>
+      </Alert>
+
+      <RejectInsightsPanel rows={filteredRows} />
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center text-base">
+            <XCircle className="mr-2 h-4 w-4 text-destructive" />
+            Retours rejet / refus ({filteredRows.length}/{rows.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ReceptionRowsFilterPanel
+            filters={filters}
+            onFiltersChange={setFilters}
+            rows={rows}
+            searchPlaceholder="N° facture, ID CPP, motif, fournisseur..."
+          />
+          {loading ? (
+            <SkeletonTable rows={5} columns={9} />
+          ) : filteredRows.length > 0 ? (
+            <ReceivedResponsesTable rows={filteredRows} onPreviewInvoice={openDrawerForInvoice} />
+          ) : rows.length > 0 ? (
+            <EmptyState
+              title="Aucun rejet/refus ne correspond aux filtres"
+              description="Modifie le statut, la période, le montant ou le texte recherché."
+            />
+          ) : (
+            <EmptyState
+              title="Aucune réponse rejet/refus"
+              description="Les réponses de rejet apparaîtront ici après synchronisation et consultation des détails Chorus."
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <InvoiceDetailDrawer
+        invoice={drawerInvoice}
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open);
+          if (!open) setDrawerInvoice(null);
+        }}
+      />
+    </div>
+  );
+}
+
+export function ReceptionNotificationsPage() {
+  const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
+  const suppliersQuery = useSuppliersQuery();
+  const customersQuery = usePublicCustomersQuery();
+  const [drawerInvoice, setDrawerInvoice] = useState<ReceptionInvoice | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [filters, setFilters] = useState<ReceptionRowFilters>(EMPTY_ROW_FILTERS);
+
+  const suppliersById = useMemo(
+    () => new Map((suppliersQuery.data ?? []).map((supplier) => [supplier.id, supplier])),
+    [suppliersQuery.data],
+  );
+  const customersById = useMemo(
+    () => new Map((customersQuery.data ?? []).map((customer) => [customer.id, customer])),
+    [customersQuery.data],
+  );
+  const rows = useMemo(
+    () => splitBusinessRows(activeReceptionRows(rowsFromDbInvoices(
+      invoicesQuery.data?.items ?? [],
+      suppliersById,
+      customersById,
+    ))).notificationRows,
+    [customersById, invoicesQuery.data?.items, suppliersById],
+  );
+  const filteredRows = useMemo(
+    () => filterReceptionRows(rows, filters),
+    [filters, rows],
+  );
+  const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+
+  function openDrawerForInvoice(invoice: ReceptionInvoice) {
+    setDrawerInvoice(invoice);
+    setDrawerOpen(true);
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <header className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <Bell className="h-6 w-6 text-sky-700" />
+            <h1 className="text-2xl font-semibold">Notifications</h1>
+          </div>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Retours Chorus informatifs ou non classés en rejet/refus. Ils restent consultables, mais ne sont pas affichés dans la file à traiter.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          onClick={() => {
+            void invoicesQuery.refetch();
+            void suppliersQuery.refetch();
+            void customersQuery.refetch();
+          }}
+          disabled={loading}
+        >
+          {loading
+            ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            : <RefreshCw className="mr-2 h-4 w-4" />}
+          Actualiser
+        </Button>
+      </header>
+
+      <Alert>
+        <Bell className="h-4 w-4" />
+        <AlertTitle>Notifications Chorus</AlertTitle>
+        <AlertDescription>
+          Cette page isole les retours qui ne sont ni des rejets/refus, ni des factures à traiter directement.
+          Utilisez le détail pour vérifier le statut, les documents et le contexte.
+        </AlertDescription>
+      </Alert>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center text-base">
+            <Bell className="mr-2 h-4 w-4 text-sky-700" />
+            Notifications ({filteredRows.length}/{rows.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ReceptionRowsFilterPanel
+            filters={filters}
+            onFiltersChange={setFilters}
+            rows={rows}
+            searchPlaceholder="N° facture, ID CPP, statut, fournisseur..."
+          />
+          {loading ? (
+            <SkeletonTable rows={5} columns={9} />
+          ) : filteredRows.length > 0 ? (
+            <ReceivedResponsesTable rows={filteredRows} onPreviewInvoice={openDrawerForInvoice} />
+          ) : rows.length > 0 ? (
+            <EmptyState
+              title="Aucune notification ne correspond aux filtres"
+              description="Modifie le statut, la période, le montant ou le texte recherché."
+            />
+          ) : (
+            <EmptyState
+              title="Aucune notification"
+              description="Les retours informatifs Chorus apparaîtront ici après synchronisation."
             />
           )}
         </CardContent>
@@ -1248,13 +1673,118 @@ function SingleConsultCard({
   );
 }
 
+function ReceptionRowsFilterPanel({
+  filters,
+  onFiltersChange,
+  rows,
+  searchPlaceholder,
+}: {
+  filters: ReceptionRowFilters;
+  onFiltersChange: (filters: ReceptionRowFilters) => void;
+  rows: ReceptionDisplayRow[];
+  searchPlaceholder: string;
+}) {
+  const statusOptions = useMemo(() => statusOptionsForRows(rows), [rows]);
+  const hasFilters = filters.query.trim()
+    || filters.status !== 'all'
+    || filters.dateFrom
+    || filters.dateTo
+    || filters.minAmount.trim()
+    || filters.maxAmount.trim();
+
+  const updateFilter = (key: keyof ReceptionRowFilters, value: string) => {
+    onFiltersChange({ ...filters, [key]: value });
+  };
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <div className="grid gap-3 lg:grid-cols-[minmax(220px,1.5fr)_minmax(150px,0.8fr)_repeat(4,minmax(130px,0.65fr))_auto]">
+        <div className="space-y-1.5">
+          <Label htmlFor="reception-filter-search">Recherche</Label>
+          <Input
+            id="reception-filter-search"
+            value={filters.query}
+            onChange={(event) => updateFilter('query', event.target.value)}
+            placeholder={searchPlaceholder}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Statut</Label>
+          <Select value={filters.status} onValueChange={(value) => updateFilter('status', value)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Tous" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Tous les statuts</SelectItem>
+              {statusOptions.map((status) => (
+                <SelectItem key={status} value={status}>{status}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="reception-filter-date-from">Dépôt depuis</Label>
+          <Input
+            id="reception-filter-date-from"
+            type="date"
+            value={filters.dateFrom}
+            onChange={(event) => updateFilter('dateFrom', event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="reception-filter-date-to">Dépôt jusqu'à</Label>
+          <Input
+            id="reception-filter-date-to"
+            type="date"
+            value={filters.dateTo}
+            onChange={(event) => updateFilter('dateTo', event.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="reception-filter-min-amount">TTC min</Label>
+          <Input
+            id="reception-filter-min-amount"
+            inputMode="decimal"
+            value={filters.minAmount}
+            onChange={(event) => updateFilter('minAmount', event.target.value)}
+            placeholder="0"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="reception-filter-max-amount">TTC max</Label>
+          <Input
+            id="reception-filter-max-amount"
+            inputMode="decimal"
+            value={filters.maxAmount}
+            onChange={(event) => updateFilter('maxAmount', event.target.value)}
+            placeholder="Tous"
+          />
+        </div>
+        <div className="flex items-end">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={!hasFilters}
+            onClick={() => onFiltersChange(EMPTY_ROW_FILTERS)}
+          >
+            Réinitialiser
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function BulkConsultCard({
   bulkInput,
   onBulkInputChange,
   onConsult,
   state,
   rows,
+  suspendedRows,
   responseRows,
+  notificationRows,
   pendingRows,
   busy,
   onPreviewInvoice,
@@ -1264,13 +1794,15 @@ function BulkConsultCard({
   onConsult: () => void;
   state: BulkConsultState;
   rows: ReceptionDisplayRow[];
+  suspendedRows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
+  notificationRows: ReceptionDisplayRow[];
   pendingRows: ReceptionDisplayRow[];
   busy: boolean;
   onPreviewInvoice: (invoice: ReceptionInvoice) => void;
 }) {
   const isLoading = state.status === 'loading';
-  const hasAnyRows = rows.length > 0 || responseRows.length > 0 || pendingRows.length > 0;
+  const hasAnyRows = rows.length > 0 || suspendedRows.length > 0 || pendingRows.length > 0;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -1302,25 +1834,57 @@ function BulkConsultCard({
           />
         )}
 
+        {responseRows.length > 0 && (
+          <Alert className="animate-fade-in-up">
+            <XCircle className="h-4 w-4" />
+            <AlertTitle>{responseRows.length} rejet/refus déplacé(s) hors de la file à traiter</AlertTitle>
+            <AlertDescription className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Ces retours ne sont pas des factures actionnables. Ils sont disponibles uniquement dans la page dédiée.
+              </span>
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/invoices/reception/responses">Ouvrir Rejets / refus</Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {notificationRows.length > 0 && (
+          <Alert className="animate-fade-in-up">
+            <Bell className="h-4 w-4" />
+            <AlertTitle>{notificationRows.length} notification(s) Chorus isolée(s)</AlertTitle>
+            <AlertDescription className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                Ces retours ne sont pas des factures à traiter. Ils sont disponibles dans la page Notifications.
+              </span>
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/invoices/reception/notifications">Ouvrir Notifications</Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {hasAnyRows ? (
           <>
             <BulkSummaryStrip
               received={rows.length}
-              responses={responseRows.length}
+              suspended={suspendedRows.length}
               pending={pendingRows.length}
-              totalStored={state.totalStored ?? rows.length + responseRows.length + pendingRows.length}
+              totalStored={state.totalStored ?? rows.length + suspendedRows.length + pendingRows.length}
               detailFailed={state.detailFailed ?? pendingRows.filter((row) => row.detailStatus === 'error').length}
             />
             {rows.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-sm font-medium">Factures reçues</h3>
+                <h3 className="text-sm font-medium">Factures reçues à traiter</h3>
+                <p className="text-xs text-muted-foreground">Factures reçues à examiner ou traiter depuis Chorus Pilot.</p>
                 <BulkResultsTable rows={rows} onPreviewInvoice={onPreviewInvoice} />
               </div>
             )}
-            {responseRows.length > 0 && (
+            {suspendedRows.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-sm font-medium">Réponses favorables reçues</h3>
-                <FavorableResponsesTable rows={responseRows} />
+                <h3 className="text-sm font-medium">Factures suspendues</h3>
+                <p className="text-xs text-muted-foreground">Factures nécessitant un complément : commentaire ou pièce jointe complémentaire.</p>
+                <BulkResultsTable rows={suspendedRows} onPreviewInvoice={onPreviewInvoice} />
               </div>
             )}
             {pendingRows.length > 0 && (
@@ -1373,20 +1937,20 @@ function BulkConsultCard({
 
 function BulkSummaryStrip({
   received,
-  responses,
+  suspended,
   pending,
   totalStored,
   detailFailed,
 }: {
   received: number;
-  responses: number;
+  suspended: number;
   pending: number;
   totalStored: number;
   detailFailed: number;
 }) {
   const tiles = [
-    { label: 'Factures reçues', value: received, tone: 'text-foreground' },
-    { label: 'Réponses favorables', value: responses, tone: 'text-sky-700' },
+    { label: 'À traiter', value: received, tone: 'text-foreground' },
+    { label: 'Suspendues', value: suspended, tone: suspended > 0 ? 'text-amber-700' : 'text-muted-foreground' },
     { label: 'À qualifier', value: pending, tone: pending > 0 ? 'text-amber-600' : 'text-muted-foreground' },
     { label: 'En base', value: totalStored, tone: 'text-muted-foreground' },
     { label: 'À vérifier', value: detailFailed, tone: detailFailed > 0 ? 'text-amber-600' : 'text-muted-foreground' },
@@ -1403,6 +1967,46 @@ function BulkSummaryStrip({
           <p className={`text-2xl font-semibold tabular-nums ${tile.tone}`}>{tile.value}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+function RejectInsightsPanel({ rows }: { rows: ReceptionDisplayRow[] }) {
+  const rejectedRows = rows.filter((row) => isReceivedResponse(row.facture.statutFacture));
+  if (rejectedRows.length === 0) {
+    return (
+      <Alert>
+        <AlertDescription>
+          Les statistiques de rejet seront disponibles après accumulation d’un historique suffisant.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const byStatus = new Map<string, number>();
+  const withComment = rejectedRows.filter((row) => !!row.facture.commentaire?.trim()).length;
+  for (const row of rejectedRows) {
+    const status = row.facture.statutFacture || 'INCONNU';
+    byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
+  }
+  const topStatus = [...byStatus.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 3);
+
+  return (
+    <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm md:grid-cols-3">
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Réponses rejet/refus</p>
+        <p className="mt-1 text-2xl font-semibold tabular-nums">{rejectedRows.length}</p>
+      </div>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Top statuts</p>
+        <p className="mt-1 text-sm">{topStatus.map(([status, count]) => `${status} (${count})`).join(', ')}</p>
+      </div>
+      <div>
+        <p className="text-xs uppercase tracking-wide text-muted-foreground">Motif/commentaire</p>
+        <p className="mt-1 text-sm">{withComment} avec commentaire, {rejectedRows.length - withComment} sans commentaire</p>
+      </div>
     </div>
   );
 }
@@ -1605,6 +2209,7 @@ function FavorableResponsesTable({ rows }: { rows: ReceptionDisplayRow[] }) {
             <th className="p-3 font-medium text-right">Montant TTC</th>
             <th className="p-3 font-medium">Dépôt</th>
             <th className="p-3 font-medium">Type</th>
+            <th className="p-3 font-medium">Motif / commentaire</th>
             <th className="p-3 font-medium text-right">Action</th>
           </tr>
         </thead>
@@ -1632,16 +2237,92 @@ function FavorableResponsesTable({ rows }: { rows: ReceptionDisplayRow[] }) {
                 <td className="p-3 text-right">{formatCurrency(f.montants.ttc)}</td>
                 <td className="p-3">{f.dates.dateDepot ? formatDate(f.dates.dateDepot) : '—'}</td>
                 <td className="p-3">{f.references.typeFacture ?? f.modeDepot ?? 'Réponse'}</td>
+                <td className="p-3">
+                  <div className="max-w-[260px] truncate text-muted-foreground" title={f.commentaire ?? ''}>
+                    {f.commentaire ?? 'À analyser dans le détail'}
+                  </div>
+                </td>
                 <td className="p-3 text-right">
-                  {row.invoiceId ? (
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
+                      <Eye className="mr-1 h-3.5 w-3.5" /> Comprendre
+                    </Link>
+                  </Button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ReceivedResponsesTable({
+  rows,
+  onPreviewInvoice,
+}: {
+  rows: ReceptionDisplayRow[];
+  onPreviewInvoice: (invoice: ReceptionInvoice) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full min-w-[980px] text-sm">
+        <thead>
+          <tr className="border-b bg-muted/30 text-left">
+            <th className="p-3 font-medium">N° facture</th>
+            <th className="p-3 font-medium">ID CPP</th>
+            <th className="p-3 font-medium">Statut Chorus</th>
+            <th className="p-3 font-medium">Fournisseur</th>
+            <th className="p-3 font-medium">Destinataire</th>
+            <th className="p-3 font-medium">Dépôt</th>
+            <th className="p-3 font-medium text-right">TTC</th>
+            <th className="p-3 font-medium">Motif / commentaire</th>
+            <th className="p-3 font-medium text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const f = row.facture;
+            const animationDelay = `${Math.min(index, 12) * 40}ms`;
+            return (
+              <tr
+                key={row.identifiantFactureCPP}
+                className="border-b last:border-0 animate-fade-in-up"
+                style={{ animationDelay }}
+              >
+                <td className="p-3">{f.numeroFacture ?? '—'}</td>
+                <td className="p-3 font-mono text-xs">{row.identifiantFactureCPP}</td>
+                <td className="p-3"><StatusPill value={f.statutFacture} /></td>
+                <td className="p-3">
+                  <div className="max-w-[210px] truncate" title={f.fournisseur?.raisonSociale ?? ''}>
+                    {f.fournisseur?.raisonSociale ?? '—'}
+                  </div>
+                </td>
+                <td className="p-3">
+                  <div className="max-w-[230px] truncate" title={f.destinataire?.raisonSociale ?? ''}>
+                    {f.destinataire?.raisonSociale ?? '—'}
+                  </div>
+                </td>
+                <td className="p-3">{f.dates.dateDepot ? formatDate(f.dates.dateDepot) : '—'}</td>
+                <td className="p-3 text-right">{formatCurrency(f.montants.ttc)}</td>
+                <td className="p-3">
+                  <div className="max-w-[300px] truncate text-muted-foreground" title={f.commentaire ?? ''}>
+                    {f.commentaire ?? 'Motif à analyser dans le détail'}
+                  </div>
+                </td>
+                <td className="p-3">
+                  <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+                    <Button variant="ghost" size="sm" onClick={() => onPreviewInvoice(f)}>
+                      <Eye className="mr-1 h-3.5 w-3.5" /> Aperçu
+                    </Button>
                     <Button variant="ghost" size="sm" asChild>
-                      <Link to={`/invoices/chorus/${encodeURIComponent(row.invoiceId)}`}>
-                        <Eye className="mr-1 h-3.5 w-3.5" /> Détail
+                      <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
+                        Comprendre
                       </Link>
                     </Button>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  )}
+                  </div>
                 </td>
               </tr>
             );

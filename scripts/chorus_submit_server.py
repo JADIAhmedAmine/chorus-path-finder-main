@@ -132,14 +132,17 @@ CORRECT_VALIDATOR_PATH = "/api/chorus/validator/correct"
 RECEPTION_CONSULT_PATH = "/api/reception/consult"
 RECEPTION_CONSULT_BULK_PATH = "/api/reception/consult-bulk"
 RECEPTION_PROCESS_PATH = "/api/reception/process"
+RECEPTION_COMPLETE_PATH = "/api/reception/complete"
 RECEPTION_DOWNLOAD_PATH = "/api/reception/download"
+INVOICE_DOWNLOAD_PATH = "/api/chorus/invoices/download"
 INVOICE_HISTORY_PATH = "/api/chorus/invoices/history"
 RECEPTION_BULK_MAX_IDENTIFIERS = 50
 CHORUS_RECEPTION_CONSULT_PATH = "/factures/v1/consulter/valideur"
 CHORUS_TRAITER_RECUE_PATH = "/factures/v1/traiter/recue"
+CHORUS_COMPLETER_FACTURE_PATH = "/factures/v1/completer"
 CHORUS_TELECHARGER_GROUPE_PATH = "/factures/v1/telecharger/groupe"
 
-RECEPTION_DOWNLOAD_FORMATS: frozenset[str] = frozenset({"PDF", "PIVOT", "XML", "ZIP"})
+RECEPTION_DOWNLOAD_FORMATS: frozenset[str] = frozenset({"PDF", "PIVOT", "XML", "ZIP", "ZIP_WITH_ATTACHMENTS"})
 RECEPTION_DOWNLOAD_CHORUS_FORMAT_BY_REQUEST: dict[str, str] = {
     "PDF": "PDF",
     "PIVOT": "PIVOT",
@@ -147,6 +150,7 @@ RECEPTION_DOWNLOAD_CHORUS_FORMAT_BY_REQUEST: dict[str, str] = {
     "XML": "PIVOT",
     # Chorus n'accepte pas ZIP comme format ; le ZIP est obtenu via PDF + PJ.
     "ZIP": "PDF",
+    "ZIP_WITH_ATTACHMENTS": "PDF",
 }
 RECEPTION_DOWNLOAD_MIME_BY_FORMAT: dict[str, tuple[str, str]] = {
     "PDF": ("application/pdf", "pdf"),
@@ -1667,6 +1671,162 @@ def _build_reception_process_payload(body: dict[str, Any]) -> tuple[dict[str, An
     return payload, None
 
 
+def _build_reception_complete_payload(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Construit le payload `/v1/completer` pour une facture suspendue."""
+    identifier = _as_positive_int(body.get("identifiantFactureCPP") or body.get("idFacture"))
+    if identifier is None:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ identifiantFactureCPP est obligatoire et doit être un entier positif.",
+            "raw_message": "identifiantFactureCPP missing or invalid",
+            "recommended_action": "Ouvrir une facture suspendue valide puis réessayer.",
+        }
+
+    commentaire = _as_non_empty_string(body.get("commentaire"))
+    raw_attachments = body.get("pieceJointeComplementaire")
+    attachments: list[dict[str, Any]] = []
+    if raw_attachments is not None:
+        if not isinstance(raw_attachments, list):
+            return {}, {
+                "category": "VALIDATION",
+                "human_message": "Le champ pieceJointeComplementaire doit être une liste.",
+                "raw_message": "pieceJointeComplementaire is not a list",
+                "recommended_action": "Sélectionner une ou plusieurs pièces jointes complémentaires connues.",
+            }
+        for index, item in enumerate(raw_attachments):
+            if not isinstance(item, dict):
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"La pièce jointe complémentaire #{index + 1} est invalide.",
+                    "raw_message": f"pieceJointeComplementaire[{index}] is not an object",
+                    "recommended_action": "Vérifier les pièces jointes sélectionnées.",
+                }
+            attachment_id = _as_positive_int(item.get("pieceJointeComplementaireId"))
+            designation = _as_non_empty_string(item.get("pieceJointeComplementaireDesignation"))
+            attachment_type = _as_non_empty_string(item.get("pieceJointeComplementaireType"))
+            line_number = _as_int(item.get("pieceJointeComplementaireNumeroLigneFacture"))
+            if attachment_id is None:
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"L'identifiant de la pièce jointe complémentaire #{index + 1} est obligatoire.",
+                    "raw_message": f"pieceJointeComplementaire[{index}].pieceJointeComplementaireId missing",
+                    "recommended_action": "Choisir une pièce jointe déjà connue par Chorus.",
+                }
+            if not designation:
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"La désignation de la pièce jointe complémentaire #{index + 1} est obligatoire.",
+                    "raw_message": f"pieceJointeComplementaire[{index}].pieceJointeComplementaireDesignation missing",
+                    "recommended_action": "Renseigner une désignation claire.",
+                }
+            if not attachment_type:
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"Le type de la pièce jointe complémentaire #{index + 1} est obligatoire.",
+                    "raw_message": f"pieceJointeComplementaire[{index}].pieceJointeComplementaireType missing",
+                    "recommended_action": "Renseigner le type de pièce jointe attendu par Chorus.",
+                }
+            attachment: dict[str, Any] = {
+                "pieceJointeComplementaireId": attachment_id,
+                "pieceJointeComplementaireDesignation": designation,
+                "pieceJointeComplementaireType": attachment_type,
+            }
+            if line_number is not None:
+                attachment["pieceJointeComplementaireNumeroLigneFacture"] = line_number
+            attachments.append(attachment)
+
+    if not commentaire and not attachments:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Ajouter au moins un commentaire ou une pièce jointe complémentaire.",
+            "raw_message": "commentaire and pieceJointeComplementaire both empty",
+            "recommended_action": "Saisir un commentaire ou sélectionner une pièce jointe déjà connue.",
+        }
+
+    payload: dict[str, Any] = {"identifiantFactureCPP": identifier}
+    if commentaire:
+        payload["commentaire"] = commentaire
+    id_utilisateur = _as_positive_int(body.get("idUtilisateurCourant"))
+    if id_utilisateur is not None:
+        payload["idUtilisateurCourant"] = id_utilisateur
+    if attachments:
+        payload["pieceJointeComplementaire"] = attachments
+    return payload, None
+
+
+def _build_reception_complete_uploaded_attachment(
+    item: dict[str, Any],
+    *,
+    upload_id: int,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    designation = _as_non_empty_string(item.get("designation") or item.get("name"))
+    attachment_type = _as_non_empty_string(item.get("type")) or "AUTRE"
+    line_number = _as_int(item.get("lineNumber"))
+    if not designation:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "La désignation de la pièce jointe uploadée est obligatoire.",
+            "raw_message": "attachmentFiles[].designation missing",
+            "recommended_action": "Renseigner une désignation ou choisir un fichier nommé correctement.",
+        }
+    attachment: dict[str, Any] = {
+        "pieceJointeComplementaireId": upload_id,
+        "pieceJointeComplementaireDesignation": designation,
+        "pieceJointeComplementaireType": attachment_type,
+    }
+    if line_number is not None:
+        attachment["pieceJointeComplementaireNumeroLigneFacture"] = line_number
+    return attachment, None
+
+
+def _upload_reception_complete_attachments(
+    client: ChorusClient,
+    raw_files: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    if raw_files in (None, ""):
+        return [], None
+    if not isinstance(raw_files, list):
+        return [], {
+            "category": "VALIDATION",
+            "human_message": "Le champ attachmentFiles doit être une liste.",
+            "raw_message": "attachmentFiles is not a list",
+            "recommended_action": "Joindre un ou plusieurs fichiers complémentaires valides.",
+        }
+
+    attachments: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_files):
+        if not isinstance(item, dict):
+            return [], {
+                "category": "VALIDATION",
+                "human_message": f"Le fichier complémentaire #{index + 1} est invalide.",
+                "raw_message": f"attachmentFiles[{index}] is not an object",
+                "recommended_action": "Vérifier les fichiers joints.",
+            }
+        file_name = _as_non_empty_string(item.get("name"))
+        file_base64 = _as_non_empty_string(item.get("base64"))
+        if not file_name or not file_base64:
+            return [], {
+                "category": "VALIDATION",
+                "human_message": f"Le fichier complémentaire #{index + 1} est incomplet.",
+                "raw_message": f"attachmentFiles[{index}].name/base64 missing",
+                "recommended_action": "Sélectionner à nouveau le fichier complémentaire.",
+            }
+        upload_result = client.upload_attachment_content(
+            file_name=file_name,
+            file_base64=file_base64,
+            mime_type=_as_non_empty_string(item.get("mimeType")) or "application/octet-stream",
+        )
+        attachment, error = _build_reception_complete_uploaded_attachment(
+            item,
+            upload_id=upload_result.piece_jointe_id,
+        )
+        if error is not None:
+            return [], error
+        attachments.append(attachment)
+
+    return attachments, None
+
+
 @app.post(RECEPTION_PROCESS_PATH, dependencies=[Depends(require_auth)])
 def handle_reception_process(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
@@ -1768,6 +1928,141 @@ def handle_reception_process(body: dict[str, Any] | None = Body(default=None)) -
     )
 
 
+@app.post(RECEPTION_COMPLETE_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_complete(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    client.reset_api_calls()
+
+    try:
+        uploaded_attachments, upload_error = _upload_reception_complete_attachments(
+            client,
+            body.get("attachmentFiles"),
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "apiCalls": list(client.api_calls),
+            },
+        )
+    if upload_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **upload_error},
+        )
+    if uploaded_attachments:
+        existing_attachments = body.get("pieceJointeComplementaire")
+        if isinstance(existing_attachments, list):
+            body = {
+                **body,
+                "pieceJointeComplementaire": [*existing_attachments, *uploaded_attachments],
+            }
+        else:
+            body = {
+                **body,
+                "pieceJointeComplementaire": uploaded_attachments,
+            }
+
+    payload, validation_error = _build_reception_complete_payload(body)
+    if validation_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **validation_error},
+        )
+
+    identifier = payload["identifiantFactureCPP"]
+    logger.debug(
+        "Complément facture suspendue start: identifiantFactureCPP=%s, hasComment=%s, pjCount=%s, env=%s",
+        identifier,
+        "commentaire" in payload,
+        len(payload.get("pieceJointeComplementaire", [])),
+        environment_override or "default",
+    )
+
+    try:
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_COMPLETER_FACTURE_PATH,
+            payload,
+            "Complément facture suspendue",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Complément facture suspendue error: identifiantFactureCPP=%s, duration=%s ms, error=%s",
+            identifier,
+            duration_ms,
+            message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "apiCalls": list(client.api_calls),
+            },
+        )
+
+    api_calls = list(client.api_calls)
+    code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+    if status_code >= 400 or (code_retour is not None and code_retour != 0):
+        normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Complément facture suspendue refusé: identifiantFactureCPP=%s, codeRetour=%s, status=%s, duration=%s ms",
+            identifier,
+            code_retour,
+            status_code,
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Complément facture suspendue success: identifiantFactureCPP=%s, duration=%s ms",
+        identifier,
+        duration_ms,
+    )
+    response_record = chorus_response if isinstance(chorus_response, dict) else {}
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "success": True,
+            "identifiantFactureCPP": _as_int(response_record.get("identifiantFactureCPP")) or identifier,
+            "numeroFacture": _as_non_empty_string(response_record.get("numeroFacture")),
+            "dateTraitement": _as_non_empty_string(response_record.get("dateTraitement")),
+            "libelle": _as_non_empty_string(response_record.get("libelle")),
+            "payload": payload,
+            "raw": response_record,
+            "apiCalls": api_calls,
+        },
+    )
+
+
 def _build_telecharger_groupe_payload(
     body: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
@@ -1778,6 +2073,12 @@ def _build_telecharger_groupe_payload(
     """
     raw_list = body.get("listeFacture")
     liste_facture: list[dict[str, int]] = []
+    raw_invoice_ids = body.get("invoiceIds")
+    if isinstance(raw_invoice_ids, list):
+        for item in raw_invoice_ids:
+            parsed = _as_positive_int(item)
+            if parsed is not None:
+                liste_facture.append({"idFacture": parsed})
     if isinstance(raw_list, list):
         for item in raw_list:
             if isinstance(item, dict):
@@ -1793,7 +2094,7 @@ def _build_telecharger_groupe_payload(
             "category": "VALIDATION",
             "human_message": "Le champ idFacture (ou listeFacture) est obligatoire.",
             "raw_message": "no idFacture provided",
-            "recommended_action": "Fournir { \"idFacture\": <entier> } ou { \"listeFacture\": [{idFacture: ...}] }.",
+            "recommended_action": "Fournir invoiceIds, idFacture ou listeFacture.",
         }
 
     raw_format = _as_non_empty_string(body.get("format")) or "PDF"
@@ -1807,8 +2108,12 @@ def _build_telecharger_groupe_payload(
         }
     format_value = RECEPTION_DOWNLOAD_CHORUS_FORMAT_BY_REQUEST[requested_format]
 
-    with_attachments_raw = body.get("avecPiecesJointesComplementaires")
-    default_with_attachments = requested_format == "ZIP"
+    with_attachments_raw = (
+        body.get("avecPiecesJointesComplementaires")
+        if "avecPiecesJointesComplementaires" in body
+        else body.get("withComplementaryAttachments")
+    )
+    default_with_attachments = requested_format in {"ZIP", "ZIP_WITH_ATTACHMENTS"}
     if isinstance(with_attachments_raw, bool):
         avec_pj = "Oui" if with_attachments_raw else "Non"
     elif isinstance(with_attachments_raw, str):
@@ -1833,6 +2138,7 @@ def _build_telecharger_groupe_payload(
     return payload, None
 
 
+@app.post(INVOICE_DOWNLOAD_PATH, dependencies=[Depends(require_auth)])
 @app.post(RECEPTION_DOWNLOAD_PATH, dependencies=[Depends(require_auth)])
 def handle_reception_download(body: dict[str, Any] | None = Body(default=None)) -> Response:
     body = body or {}
@@ -1975,7 +2281,11 @@ def handle_reception_download(body: dict[str, Any] | None = Body(default=None)) 
     mime, suffix = RECEPTION_DOWNLOAD_MIME_BY_FORMAT.get(
         requested_format, ("application/octet-stream", "bin")
     )
-    filename = f"chorus-facture-{id_facture_first}.{suffix}"
+    filename = (
+        f"chorus-factures.{suffix}"
+        if len(payload["listeFacture"]) > 1
+        else f"chorus-facture-{id_facture_first}.{suffix}"
+    )
     duration_ms = round((perf_counter() - started_at) * 1000)
     logger.debug(
         "Téléchargement groupe success: idFacture=%s, format=%s, bytes=%s, duration=%s ms",
@@ -1992,6 +2302,7 @@ def handle_reception_download(body: dict[str, Any] | None = Body(default=None)) 
             "Content-Disposition": f'attachment; filename="{filename}"',
             "X-Chorus-Code-Retour": str(code_retour) if code_retour is not None else "0",
             "X-Chorus-Libelle": libelle or "",
+            "X-Chorus-Format": str(payload["format"]),
         },
     )
 
@@ -2579,6 +2890,7 @@ def main() -> int:
     print(f"  - Reception:   {RECEPTION_CONSULT_PATH}")
     print(f"  - Reception ×: {RECEPTION_CONSULT_BULK_PATH}")
     print(f"  - Reception →: {RECEPTION_PROCESS_PATH}")
+    print(f"  - Reception +: {RECEPTION_COMPLETE_PATH}")
     print(f"  - Reception ↓: {RECEPTION_DOWNLOAD_PATH}")
     print(f"  - History:     {INVOICE_HISTORY_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")

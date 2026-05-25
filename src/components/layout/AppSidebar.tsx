@@ -2,7 +2,7 @@ import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
   ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox, CheckCircle2,
-  Zap, Scale,
+  Zap, Scale, MessageSquareWarning, Bell,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -26,6 +26,8 @@ const mainItems: SidebarNavItem[] = [
 const invoiceItems: SidebarNavItem[] = [
   { title: 'Toutes les factures', url: '/invoices', icon: FileText },
   { title: 'Factures reçues', url: '/invoices/reception', icon: Inbox },
+  { title: 'Rejets / refus', url: '/invoices/reception/responses', icon: MessageSquareWarning },
+  { title: 'Notifications', url: '/invoices/reception/notifications', icon: Bell },
   { title: 'Factures traitées', url: '/invoices/reception/processed', icon: CheckCircle2 },
   { title: 'Factures à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle facture', url: '/invoices/new', icon: Upload },
@@ -65,7 +67,11 @@ export function AppSidebar() {
           && !location.pathname.startsWith('/invoices/reception/')
         );
     }
-    if (path === '/invoices/reception/processed') {
+    if (
+      path === '/invoices/reception/processed'
+      || path === '/invoices/reception/responses'
+      || path === '/invoices/reception/notifications'
+    ) {
       return location.pathname === path;
     }
     if (path === '/invoices/reception') {
@@ -73,6 +79,8 @@ export function AppSidebar() {
         || (
           location.pathname.startsWith('/invoices/reception/')
           && location.pathname !== '/invoices/reception/processed'
+          && location.pathname !== '/invoices/reception/responses'
+          && location.pathname !== '/invoices/reception/notifications'
         );
     }
     if (invoiceItems.some((item) => item.url === path)) {

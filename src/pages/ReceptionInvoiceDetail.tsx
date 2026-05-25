@@ -4,6 +4,7 @@ import { ArrowLeft, FileJson, History, Loader2, Receipt, RefreshCw } from 'lucid
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { CompleteSuspendedInvoiceCard } from '@/components/chorus/CompleteSuspendedInvoiceCard';
 import { ProcessReceivedInvoiceCard } from '@/components/chorus/ProcessReceivedInvoiceCard';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -187,6 +188,11 @@ function formatHistoryActor(first?: string, last?: string, email?: string): stri
   return [first, last, email].filter((value) => value && value.trim()).join(' ') || '—';
 }
 
+function isReceivedResponseStatus(status: string | null): boolean {
+  const normalized = status?.trim().toUpperCase();
+  return !!normalized && new Set(['REJETEE', 'REFUSEE', 'REFUSEE_1', 'REFUSEE_2', 'A_RECYCLER']).has(normalized);
+}
+
 export default function ReceptionInvoiceDetail() {
   const { id } = useParams();
   const identifier = asPositiveInteger(id);
@@ -319,10 +325,19 @@ export default function ReceptionInvoiceDetail() {
         </AlertDescription>
       </Alert>
 
-      <ProcessReceivedInvoiceCard
+      {!isReceivedResponseStatus(displayedInvoice.statutFacture) && (
+        <ProcessReceivedInvoiceCard
+          identifiantFactureCPP={identifier}
+          currentStatus={displayedInvoice.statutFacture}
+          onProcessed={refreshStoredInvoice}
+        />
+      )}
+
+      <CompleteSuspendedInvoiceCard
         identifiantFactureCPP={identifier}
-        currentStatus={displayedInvoice.statutFacture}
-        onProcessed={refreshStoredInvoice}
+        statutFacture={displayedInvoice.statutFacture}
+        attachments={displayedInvoice.piecesJointes}
+        onCompleted={refreshStoredInvoice}
       />
 
       <ReceptionHistoryCard identifiantFactureCPP={identifier} onHistorySynced={refreshStoredInvoice} />

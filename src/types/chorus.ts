@@ -485,6 +485,41 @@ export interface ReceptionProcessSuccess {
 
 export type ReceptionProcessResult = ReceptionProcessSuccess | ReceptionConsultError;
 
+// === Complément d'une facture suspendue (POST /v1/completer) ===
+
+export interface ReceptionCompleteAttachmentInput {
+  pieceJointeComplementaireDesignation: string;
+  pieceJointeComplementaireId: number;
+  pieceJointeComplementaireNumeroLigneFacture?: number;
+  pieceJointeComplementaireType: string;
+}
+
+export interface ReceptionCompleteInput {
+  identifiantFactureCPP: number;
+  commentaire?: string;
+  idUtilisateurCourant?: number;
+  pieceJointeComplementaire?: ReceptionCompleteAttachmentInput[];
+  attachmentFiles?: Array<{
+    file: File;
+    designation?: string;
+    type?: string;
+    lineNumber?: number;
+  }>;
+}
+
+export interface ReceptionCompleteSuccess {
+  ok: true;
+  success: true;
+  identifiantFactureCPP: number;
+  numeroFacture?: string | null;
+  dateTraitement?: string | null;
+  libelle?: string | null;
+  raw?: Record<string, unknown>;
+  apiCalls?: ChorusApiDebugEntry[];
+}
+
+export type ReceptionCompleteResult = ReceptionCompleteSuccess | ReceptionConsultError;
+
 // === Téléchargement groupé (POST /v1/telecharger/groupe) ===
 
 export type ReceptionDownloadFormat = 'PDF' | 'XML' | 'ZIP';
