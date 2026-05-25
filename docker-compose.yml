@@ -18,6 +18,7 @@ services:
   chorus-api:
     build:
       context: .
+      dockerfile: Dockerfile.backend
     env_file:
       - .env.local
     environment:
@@ -31,6 +32,28 @@ services:
       - "8008:8008"
     volumes:
       - ./.env.local:/app/.env.local:ro
+      - ./config:/app/config
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_CHORUS_MODE: ${VITE_CHORUS_MODE:-direct}
+        VITE_CHORUS_ENABLED: ${VITE_CHORUS_ENABLED:-true}
+        VITE_SHOW_DEV_TOOLS: ${VITE_SHOW_DEV_TOOLS:-false}
+        VITE_CHORUS_ENV: ${VITE_CHORUS_ENV:-qualif}
+        VITE_DATA_API_BASE_URL: ${VITE_DATA_API_BASE_URL:-/api/db}
+        VITE_REFERENCE_API_BASE_URL: ${VITE_REFERENCE_API_BASE_URL:-/api/db}
+        VITE_CHORUS_SUBMISSION_BRIDGE_URL: ${VITE_CHORUS_SUBMISSION_BRIDGE_URL:-/api/chorus/submit}
+    depends_on:
+      chorus-api:
+        condition: service_healthy
+    ports:
+      - "${APP_HTTP_PORT:-8081}:80"
+    volumes:
+      - chorus_annuaire_data:/usr/share/nginx/html/annuaire:ro
 
 volumes:
   chorus_pg_data:
+  chorus_annuaire_data:

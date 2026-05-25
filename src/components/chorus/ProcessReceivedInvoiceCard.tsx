@@ -210,7 +210,7 @@ export function ProcessReceivedInvoiceCard({
               {formState.libelle
                 ? `Chorus a renvoyé : ${formState.libelle}.`
                 : 'Le statut a été mis à jour côté Chorus.'}
-              {' '}Rafraîchir la facture pour voir le nouvel état.
+              {' '}La facture est rangée dans les factures traitées.
             </AlertDescription>
           </Alert>
         )}

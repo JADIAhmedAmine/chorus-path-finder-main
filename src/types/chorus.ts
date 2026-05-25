@@ -254,6 +254,7 @@ export interface ChorusInvoiceHistoryResult {
   ok: boolean;
   payload?: unknown;
   response?: ChorusInvoiceHistoryResponse;
+  historyStatusPersisted?: boolean;
   apiCalls: ChorusApiDebugEntry[];
 }
 
@@ -466,6 +467,7 @@ export interface ReceptionProcessInput {
 export interface ReceptionProcessSuccess {
   ok: true;
   success: true;
+  processedPersisted?: boolean;
   payload: {
     idFacture: number;
     nouveauStatut: ReceptionProcessStatus;
@@ -482,6 +484,28 @@ export interface ReceptionProcessSuccess {
 }
 
 export type ReceptionProcessResult = ReceptionProcessSuccess | ReceptionConsultError;
+
+// === Téléchargement groupé (POST /v1/telecharger/groupe) ===
+
+export type ReceptionDownloadFormat = 'PDF' | 'XML' | 'ZIP';
+
+export interface ReceptionDownloadInput {
+  idFacture: number;
+  format: ReceptionDownloadFormat;
+  /** Inclure les pièces jointes complémentaires (par défaut true côté backend). */
+  avecPiecesJointesComplementaires?: boolean;
+}
+
+export interface ReceptionDownloadSuccess {
+  ok: true;
+  blob: Blob;
+  filename: string;
+  mimeType: string;
+  codeRetour: number | null;
+  libelle: string | null;
+}
+
+export type ReceptionDownloadResult = ReceptionDownloadSuccess | ReceptionConsultError;
 
 export interface ChorusTransverseCodeListItem {
   code: string;
