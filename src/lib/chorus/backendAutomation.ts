@@ -12,6 +12,9 @@ import type {
   ReceptionBulkConsultResult,
   ReceptionConsultResult,
   ReceptionInvoice,
+  ReceptionCompleteInput,
+  ReceptionCompleteResult,
+  ReceptionCompleteSuccess,
   ReceptionDownloadInput,
   ReceptionDownloadResult,
   ReceptionProcessInput,
@@ -26,6 +29,7 @@ export const CHORUS_CORRECT_VALIDATOR_PATH = '/api/chorus/validator/correct';
 export const RECEPTION_CONSULT_PATH = '/api/reception/consult';
 export const RECEPTION_CONSULT_BULK_PATH = '/api/reception/consult-bulk';
 export const RECEPTION_PROCESS_PATH = '/api/reception/process';
+export const RECEPTION_COMPLETE_PATH = '/api/reception/complete';
 export const RECEPTION_DOWNLOAD_PATH = '/api/reception/download';
 export const CHORUS_INVOICE_HISTORY_PATH = '/api/chorus/invoices/history';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
@@ -293,6 +297,17 @@ function normalizeInvoiceHistoryResult(body: unknown): ChorusInvoiceHistoryResul
   };
 }
 
+async function readFileAsBase64(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let index = 0; index < bytes.length; index += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+  }
+  return globalThis.btoa(binary);
+}
+
 export class ChorusBackendAutomationClient {
   constructor(
     private readonly config: ChorusConfig,
@@ -333,6 +348,10 @@ export class ChorusBackendAutomationClient {
 
   get receptionProcessUrl(): string {
     return resolveChorusBridgeUrl(this.config, RECEPTION_PROCESS_PATH);
+  }
+
+  get receptionCompleteUrl(): string {
+    return resolveChorusBridgeUrl(this.config, RECEPTION_COMPLETE_PATH);
   }
 
   get receptionDownloadUrl(): string {
@@ -644,6 +663,93 @@ export class ChorusBackendAutomationClient {
       recommended_action: typeof body.recommended_action === 'string'
         ? body.recommended_action
         : 'Vérifier les données saisies et réessayer.',
+      severity: typeof body.severity === 'string'
+        ? (body.severity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL')
+        : undefined,
+      code_retour: typeof body.code_retour === 'number' ? body.code_retour : undefined,
+      chorus_code: typeof body.chorus_code === 'string' ? body.chorus_code : undefined,
+      matched_states: Array.isArray(body.matched_states)
+        ? body.matched_states.filter((value): value is string => typeof value === 'string')
+        : undefined,
+      apiCalls,
+    };
+  }
+
+  async completeSuspendedInvoice(input: ReceptionCompleteInput): Promise<ReceptionCompleteResult> {
+    const requestBody: Record<string, unknown> = {
+      environment: this.config.environment,
+      identifiantFactureCPP: input.identifiantFactureCPP,
+    };
+    if (typeof input.commentaire === 'string' && input.commentaire.trim()) {
+      requestBody.commentaire = input.commentaire.trim();
+    }
+    if (typeof input.idUtilisateurCourant === 'number' && Number.isFinite(input.idUtilisateurCourant)) {
+      requestBody.idUtilisateurCourant = input.idUtilisateurCourant;
+    }
+    if (Array.isArray(input.pieceJointeComplementaire) && input.pieceJointeComplementaire.length > 0) {
+      requestBody.pieceJointeComplementaire = input.pieceJointeComplementaire;
+    }
+    if (Array.isArray(input.attachmentFiles) && input.attachmentFiles.length > 0) {
+      requestBody.attachmentFiles = await Promise.all(
+        input.attachmentFiles.map(async (attachment) => ({
+          name: attachment.file.name,
+          mimeType: attachment.file.type || 'application/octet-stream',
+          base64: await readFileAsBase64(attachment.file),
+          designation: attachment.designation,
+          type: attachment.type,
+          lineNumber: attachment.lineNumber,
+        })),
+      );
+    }
+
+    const response = await this.fetchImpl(this.receptionCompleteUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify(requestBody),
+    });
+
+    const body = await parseResponseBody(response);
+    if (!isRecord(body)) {
+      throw new ChorusBackendAutomationError(
+        `Complément facture suspendue impossible (${response.status}).`,
+      );
+    }
+    const apiCalls = isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [];
+
+    if (response.ok && body.ok === true && body.success === true) {
+      return {
+        ok: true,
+        success: true,
+        identifiantFactureCPP: typeof body.identifiantFactureCPP === 'number'
+          ? body.identifiantFactureCPP
+          : input.identifiantFactureCPP,
+        numeroFacture: typeof body.numeroFacture === 'string' ? body.numeroFacture : null,
+        dateTraitement: typeof body.dateTraitement === 'string' ? body.dateTraitement : null,
+        libelle: typeof body.libelle === 'string' ? body.libelle : null,
+        raw: isRecord(body.raw) ? body.raw : undefined,
+        apiCalls,
+      } satisfies ReceptionCompleteSuccess;
+    }
+
+    return {
+      ok: false,
+      success: false,
+      identifiantFactureCPP: input.identifiantFactureCPP,
+      category: typeof body.category === 'string' ? body.category : 'UNKNOWN',
+      human_message: typeof body.human_message === 'string'
+        ? body.human_message
+        : `Complément facture suspendue impossible (${response.status}).`,
+      raw_message: typeof body.raw_message === 'string'
+        ? body.raw_message
+        : typeof body.error === 'string'
+          ? body.error
+          : `HTTP ${response.status}`,
+      recommended_action: typeof body.recommended_action === 'string'
+        ? body.recommended_action
+        : 'Vérifier que la facture est bien au statut SUSPENDUE.',
       severity: typeof body.severity === 'string'
         ? (body.severity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL')
         : undefined,

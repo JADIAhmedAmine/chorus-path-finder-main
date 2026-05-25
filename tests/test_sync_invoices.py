@@ -381,7 +381,7 @@ class InvoiceSyncTest(unittest.TestCase):
             "SERVICE_FAIT",
         )
 
-    def test_persist_reception_invoice_detail_auto_marks_suspended_as_processed(self) -> None:
+    def test_persist_reception_invoice_detail_does_not_auto_mark_suspended_processed(self) -> None:
         invoice = SimpleNamespace(
             id="chorus-8429592",
             tenant_id="tenant-1",
@@ -417,14 +417,9 @@ class InvoiceSyncTest(unittest.TestCase):
 
         self.assertTrue(persisted)
         self.assertEqual(invoice.status_chorus, "SUSPENDUE")
-        self.assertEqual(invoice.raw_payload["receptionProcessing"]["processed"], True)
-        self.assertEqual(invoice.raw_payload["receptionProcessing"]["status"], "SUSPENDUE")
-        self.assertEqual(
-            invoice.raw_payload["receptionProcessing"]["source"],
-            "reception_consult_auto",
-        )
+        self.assertNotIn("receptionProcessing", invoice.raw_payload)
 
-    def test_persist_reception_invoice_history_status_marks_invoice_processed(self) -> None:
+    def test_persist_reception_invoice_history_status_updates_status_without_processing_marker(self) -> None:
         invoice = SimpleNamespace(
             id="chorus-8429592",
             tenant_id="tenant-1",
@@ -469,8 +464,7 @@ class InvoiceSyncTest(unittest.TestCase):
         self.assertTrue(session.flushed)
         self.assertEqual(invoice.status_chorus, "SUSPENDUE")
         self.assertEqual(invoice.raw_payload["receptionHistory"]["status"], "SUSPENDUE")
-        self.assertEqual(invoice.raw_payload["receptionProcessing"]["processed"], True)
-        self.assertEqual(invoice.raw_payload["receptionProcessing"]["source"], "history_status")
+        self.assertNotIn("receptionProcessing", invoice.raw_payload)
         self.assertEqual(
             invoice.raw_payload["receptionNormalized"]["statutFacture"],
             "SUSPENDUE",
@@ -512,7 +506,7 @@ class InvoiceSyncTest(unittest.TestCase):
 
         self.assertTrue(persisted)
         self.assertEqual(invoice.status_chorus, "SERVICE_FAIT")
-        self.assertEqual(invoice.raw_payload["receptionProcessing"]["status"], "SERVICE_FAIT")
+        self.assertNotIn("receptionProcessing", invoice.raw_payload)
 
 
 if __name__ == "__main__":

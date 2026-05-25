@@ -35,21 +35,6 @@ RECEPTION_CLASS_A_QUALIFIER = "A_QUALIFIER"
 RECEPTION_CLASSIFICATION_KEY = "receptionClassification"
 RECEPTION_PROCESSING_KEY = "receptionProcessing"
 RECEPTION_HISTORY_KEY = "receptionHistory"
-RECEPTION_PROCESSED_STATUSES = frozenset(
-    {
-        "A_RECYCLER",
-        "COMPLETEE",
-        "COMPTABILISEE",
-        "MANDATEE",
-        "MISE_A_DISPOSITION_COMPTABLE",
-        "MISE_EN_PAIEMENT",
-        "PRISE_EN_COMPTE_DESTINATAIRE",
-        "REJETEE",
-        "SERVICE_FAIT",
-        "SUSPENDUE",
-        "TRANSMISE_MOA",
-    }
-)
 RECEPTION_RAW_PRESERVED_KEYS = {
     "receptionDetail",
     "receptionNormalized",
@@ -157,10 +142,6 @@ def _reception_classification(
     if reason:
         payload["reason"] = reason[:1000]
     return payload
-
-
-def _is_reception_processed_status(status: Optional[str]) -> bool:
-    return bool(status and status.upper() in RECEPTION_PROCESSED_STATUSES)
 
 
 def _history_status_sort_key(item: dict[str, Any]) -> tuple[float, int]:
@@ -1345,23 +1326,12 @@ def persist_reception_invoice_detail(
 
     existing_raw = invoice.raw_payload if isinstance(invoice.raw_payload, dict) else {}
     normalized_status = _as_str(normalized_invoice.get("statutFacture"))
-    processing_marker = (
-        _reception_processing_marker(
-            status=normalized_status,
-            now=now,
-            source="reception_consult_auto",
-            existing=existing_raw.get(RECEPTION_PROCESSING_KEY),
-        )
-        if _is_reception_processed_status(normalized_status)
-        else None
-    )
     invoice.raw_payload = {
         **existing_raw,
         **facture,
         "receptionDetail": facture,
         "receptionNormalized": normalized_invoice,
         "receptionDetailSyncedAt": now.isoformat(),
-        **({RECEPTION_PROCESSING_KEY: processing_marker} if processing_marker is not None else {}),
         RECEPTION_CLASSIFICATION_KEY: _reception_classification(
             RECEPTION_CLASS_FACTURE_RECUE,
             now,
@@ -1574,17 +1544,6 @@ def persist_reception_invoice_history_status(
         if isinstance(existing_normalized, dict)
         else existing_normalized
     )
-    processing_marker = (
-        _reception_processing_marker(
-            status=normalized_status,
-            now=now,
-            source="history_status",
-            existing=existing_raw.get(RECEPTION_PROCESSING_KEY),
-            response=history_response,
-        )
-        if _is_reception_processed_status(normalized_status)
-        else None
-    )
 
     previous_status = _as_str(getattr(invoice, "status_chorus", None))
     invoice.raw_payload = {
@@ -1601,7 +1560,6 @@ def persist_reception_invoice_history_status(
             if isinstance(next_normalized, dict)
             else {}
         ),
-        **({RECEPTION_PROCESSING_KEY: processing_marker} if processing_marker is not None else {}),
     }
     invoice.status_chorus = normalized_status
     invoice.status_internal = _normalize_chorus_status_internal(normalized_status)
