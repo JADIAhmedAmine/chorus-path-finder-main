@@ -53,19 +53,6 @@ import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
 const BULK_HINT_PLACEHOLDER = '8424327\n8424328\n8424329';
 const CONSULT_CHUNK_SIZE = 50;
 const HISTORY_STATUS_RECONCILE_LIMIT = 50;
-const RECEPTION_PROCESSED_STATUSES = new Set([
-  'A_RECYCLER',
-  'COMPLETEE',
-  'COMPTABILISEE',
-  'MANDATEE',
-  'MISE_A_DISPOSITION_COMPTABLE',
-  'MISE_EN_PAIEMENT',
-  'PRISE_EN_COMPTE_DESTINATAIRE',
-  'REJETEE',
-  'SERVICE_FAIT',
-  'SUSPENDUE',
-  'TRANSMISE_MOA',
-]);
 
 interface SingleConsultState {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -170,16 +157,6 @@ function receptionProcessingInfo(raw: Record<string, unknown>): ReceptionProcess
   };
 }
 
-function receptionProcessingInfoFromStatus(status: string | null): ReceptionProcessingInfo | null {
-  const normalized = status?.trim().toUpperCase();
-  if (!normalized || !RECEPTION_PROCESSED_STATUSES.has(normalized)) return null;
-  return {
-    processed: true,
-    status: normalized,
-    processedAt: null,
-    libelle: null,
-  };
-}
 
 function buildReceptionHistoryPayload(idFacture: number): ChorusInvoiceHistoryPayload {
   return {
@@ -518,7 +495,7 @@ function rowsFromDbInvoices(
         invoiceId: invoice.id,
         facture,
         detailStatus: detailStatusFromSqlClassification(classification),
-        processed: receptionProcessingInfo(raw) ?? receptionProcessingInfoFromStatus(facture.statutFacture),
+        processed: receptionProcessingInfo(raw),
       };
     })
     .filter((row): row is ReceptionDisplayRow => row !== null)
@@ -615,7 +592,7 @@ async function enrichRowsWithReceptionDetails(
           ...base,
           facture,
           detailStatus: 'detail' as const,
-          processed: base.processed ?? receptionProcessingInfoFromStatus(facture.statutFacture),
+          processed: base.processed ?? null,
         };
       }
       const error = errorById.get(identifier);

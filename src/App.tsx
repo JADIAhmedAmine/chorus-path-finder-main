@@ -17,6 +17,8 @@ import InvoiceCreate from "./pages/InvoiceCreate";
 import References from "./pages/References";
 import SettingsPage from "./pages/SettingsPage";
 import Monitoring from "./pages/Monitoring";
+import ChorusPilotPage from "./pages/ChorusPilotPage";
+import CGUPage from "./pages/CGUPage";
 import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
 import ReceptionProcessing, { ProcessedReceptionInvoices } from "./pages/ReceptionProcessing";
 import Login from "./pages/Login";
@@ -115,6 +117,7 @@ const App = () => (
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
+            <Route path="/chorus-pilot" element={<RequireAuth><AppLayout><ChorusPilotPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception" element={<RequireAuth><AppLayout><ReceptionProcessing /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception/processed" element={<RequireAuth><AppLayout><ProcessedReceptionInvoices /></AppLayout></RequireAuth>} />
@@ -128,6 +131,7 @@ const App = () => (
             <Route path="/references/services" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
             <Route path="/monitoring" element={<RequireAuth><AppLayout><Monitoring /></AppLayout></RequireAuth>} />
             <Route path="/settings" element={<RequireAuth><AppLayout><SettingsPage /></AppLayout></RequireAuth>} />
+            <Route path="/cgu" element={<RequireAuth><AppLayout><CGUPage /></AppLayout></RequireAuth>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </BrowserRouter>
