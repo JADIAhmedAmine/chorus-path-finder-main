@@ -2,6 +2,7 @@ import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
   ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox, CheckCircle2,
+  Zap, Scale,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -18,6 +19,7 @@ interface SidebarNavItem {
 }
 
 const mainItems: SidebarNavItem[] = [
+  { title: 'Chorus Pilot', url: '/chorus-pilot', icon: Zap },
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
 ];
 
@@ -29,12 +31,14 @@ const invoiceItems: SidebarNavItem[] = [
   { title: 'Nouvelle facture', url: '/invoices/new', icon: Upload },
 ];
 
+const cguItem: SidebarNavItem = { title: 'CGU', url: '/cgu', icon: Scale };
 const refItems: SidebarNavItem[] = [
   { title: 'Clients publics', url: '/references/customers', icon: Building2 },
   { title: 'Services destinataires', url: '/references/services', icon: ClipboardList },
 ];
 
 const baseAdminItems: SidebarNavItem[] = [
+  { title: 'CGU', url: '/cgu', icon: Scale },
   { title: 'Paramètres', url: '/settings', icon: Settings },
   { title: 'Connexion / Profil', url: '/login', icon: UserCircle2 },
 ];
