@@ -12,6 +12,8 @@ import type {
   ReceptionBulkConsultResult,
   ReceptionConsultResult,
   ReceptionInvoice,
+  ReceptionDownloadInput,
+  ReceptionDownloadResult,
   ReceptionProcessInput,
   ReceptionProcessResult,
   ReceptionProcessSuccess,
@@ -24,6 +26,7 @@ export const CHORUS_CORRECT_VALIDATOR_PATH = '/api/chorus/validator/correct';
 export const RECEPTION_CONSULT_PATH = '/api/reception/consult';
 export const RECEPTION_CONSULT_BULK_PATH = '/api/reception/consult-bulk';
 export const RECEPTION_PROCESS_PATH = '/api/reception/process';
+export const RECEPTION_DOWNLOAD_PATH = '/api/reception/download';
 export const CHORUS_INVOICE_HISTORY_PATH = '/api/chorus/invoices/history';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
 export const CHORUS_SIRET_INFO_PATH = '/api/chorus/siret/info';
@@ -285,6 +288,7 @@ function normalizeInvoiceHistoryResult(body: unknown): ChorusInvoiceHistoryResul
     ok: body.ok === true,
     payload: body.payload,
     response: isRecord(body.response) ? body.response as ChorusInvoiceHistoryResponse : undefined,
+    historyStatusPersisted: body.historyStatusPersisted === true,
     apiCalls: isApiDebugEntryArray(body.apiCalls) ? body.apiCalls : [],
   };
 }
@@ -329,6 +333,10 @@ export class ChorusBackendAutomationClient {
 
   get receptionProcessUrl(): string {
     return resolveChorusBridgeUrl(this.config, RECEPTION_PROCESS_PATH);
+  }
+
+  get receptionDownloadUrl(): string {
+    return resolveChorusBridgeUrl(this.config, RECEPTION_DOWNLOAD_PATH);
   }
 
   get invoiceHistoryUrl(): string {
@@ -613,6 +621,7 @@ export class ChorusBackendAutomationClient {
       return {
         ok: true,
         success: true,
+        processedPersisted: typeof body.processedPersisted === 'boolean' ? body.processedPersisted : undefined,
         payload: body.payload as ReceptionProcessSuccess['payload'],
         response: (isRecord(body.response) ? body.response : {}) as ReceptionProcessSuccess['response'],
         apiCalls,
@@ -644,6 +653,77 @@ export class ChorusBackendAutomationClient {
         ? body.matched_states.filter((value): value is string => typeof value === 'string')
         : undefined,
       apiCalls,
+    };
+  }
+
+  async downloadReceivedInvoice(input: ReceptionDownloadInput): Promise<ReceptionDownloadResult> {
+    const requestBody: Record<string, unknown> = {
+      environment: this.config.environment,
+      idFacture: input.idFacture,
+      format: input.format,
+    };
+    if (typeof input.avecPiecesJointesComplementaires === 'boolean') {
+      requestBody.avecPiecesJointesComplementaires = input.avecPiecesJointesComplementaires;
+    }
+
+    const response = await this.fetchImpl(this.receptionDownloadUrl, {
+      method: 'POST',
+      headers: authHeaders({
+        Accept: '*/*',
+        'Content-Type': 'application/json',
+      }),
+      body: JSON.stringify(requestBody),
+    });
+
+    const contentType = response.headers.get('content-type') ?? '';
+    const isJsonResponse = contentType.includes('application/json');
+
+    if (!response.ok || isJsonResponse) {
+      // Erreur structurée renvoyée par le backend (JSON).
+      const body = await response.json().catch(() => null);
+      const record = isRecord(body) ? body : {};
+      return {
+        ok: false,
+        success: false,
+        identifiantFactureCPP: input.idFacture,
+        category: typeof record.category === 'string' ? record.category : 'UNKNOWN',
+        human_message: typeof record.human_message === 'string'
+          ? record.human_message
+          : `Téléchargement impossible (${response.status}).`,
+        raw_message: typeof record.raw_message === 'string'
+          ? record.raw_message
+          : typeof record.error === 'string'
+            ? record.error
+            : `HTTP ${response.status}`,
+        recommended_action: typeof record.recommended_action === 'string'
+          ? record.recommended_action
+          : 'Vérifier l’identifiant et réessayer ultérieurement.',
+        severity: typeof record.severity === 'string'
+          ? (record.severity as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL')
+          : undefined,
+        code_retour: typeof record.code_retour === 'number' ? record.code_retour : undefined,
+        chorus_code: typeof record.chorus_code === 'string' ? record.chorus_code : undefined,
+      };
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get('content-disposition') ?? '';
+    const match = /filename="?([^";]+)"?/.exec(disposition);
+    const fallbackSuffix = input.format.toLowerCase();
+    const filename = match?.[1]?.trim() || `chorus-facture-${input.idFacture}.${fallbackSuffix}`;
+    const codeRetourHeader = response.headers.get('x-chorus-code-retour');
+    const codeRetour = codeRetourHeader && /^-?\d+$/.test(codeRetourHeader)
+      ? Number(codeRetourHeader)
+      : null;
+    const libelle = response.headers.get('x-chorus-libelle') || null;
+
+    return {
+      ok: true,
+      blob,
+      filename,
+      mimeType: blob.type || contentType,
+      codeRetour,
+      libelle,
     };
   }
 

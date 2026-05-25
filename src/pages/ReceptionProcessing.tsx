@@ -2,9 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
+  CheckCircle2,
   ClipboardList,
+  Download,
   Eye,
+  FileArchive,
   FileSearch,
+  FileText,
   Inbox,
   Loader2,
   Paperclip,
@@ -30,7 +34,7 @@ import {
   useSyncSuppliersMutation,
   type SyncRunResult,
 } from '@/lib/queries/db';
-import { formatCurrency, formatDate } from '@/lib/status-utils';
+import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
 import { ChorusStatusBadge } from '@/components/chorus/ChorusStatusBadge';
 import { InvoiceDetailDrawer } from '@/components/chorus/InvoiceDetailDrawer';
 import { BulkProgress } from '@/components/common/BulkProgress';
@@ -39,6 +43,8 @@ import { SkeletonKpiGrid, SkeletonTable } from '@/components/common/LoadingSkele
 import type {
   ReceptionBulkResultError,
   ReceptionConsultError,
+  ReceptionDownloadFormat,
+  ChorusInvoiceHistoryPayload,
   ReceptionInvoice,
   ReceptionInvoiceAttachment,
 } from '@/types/chorus';
@@ -46,6 +52,20 @@ import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
 
 const BULK_HINT_PLACEHOLDER = '8424327\n8424328\n8424329';
 const CONSULT_CHUNK_SIZE = 50;
+const HISTORY_STATUS_RECONCILE_LIMIT = 50;
+const RECEPTION_PROCESSED_STATUSES = new Set([
+  'A_RECYCLER',
+  'COMPLETEE',
+  'COMPTABILISEE',
+  'MANDATEE',
+  'MISE_A_DISPOSITION_COMPTABLE',
+  'MISE_EN_PAIEMENT',
+  'PRISE_EN_COMPTE_DESTINATAIRE',
+  'REJETEE',
+  'SERVICE_FAIT',
+  'SUSPENDUE',
+  'TRANSMISE_MOA',
+]);
 
 interface SingleConsultState {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -58,6 +78,7 @@ interface BulkConsultState {
   status: 'idle' | 'loading' | 'done';
   rows?: ReceptionDisplayRow[];
   responseRows?: ReceptionDisplayRow[];
+  pendingRows?: ReceptionDisplayRow[];
   errors?: ReceptionBulkResultError[];
   totalStored?: number;
   detailSuccess?: number;
@@ -75,9 +96,19 @@ interface ReceptionDisplayRow {
   identifiantFactureCPP: number;
   invoiceId?: string;
   facture: ReceptionInvoice;
-  detailStatus: 'detail' | 'database' | 'error';
+  detailStatus: 'detail' | 'response' | 'database' | 'error';
+  processed?: ReceptionProcessingInfo | null;
   error?: ReceptionBulkResultError;
 }
+
+interface ReceptionProcessingInfo {
+  processed: boolean;
+  status: string | null;
+  processedAt: string | null;
+  libelle: string | null;
+}
+
+type ReceptionSqlClassification = 'FACTURE_RECUE' | 'REPONSE_FAVORABLE' | 'A_QUALIFIER';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -126,6 +157,79 @@ function parseConfiguredSupplierId(value: string): number | undefined {
 
 function rawPayload(invoice: Invoice): Record<string, unknown> {
   return isRecord(invoice.rawPayload) ? invoice.rawPayload : {};
+}
+
+function receptionProcessingInfo(raw: Record<string, unknown>): ReceptionProcessingInfo | null {
+  const processing = raw.receptionProcessing;
+  if (!isRecord(processing) || processing.processed !== true) return null;
+  return {
+    processed: true,
+    status: asDisplayString(processing.status),
+    processedAt: asDisplayString(processing.processedAt),
+    libelle: asDisplayString(processing.libelle),
+  };
+}
+
+function receptionProcessingInfoFromStatus(status: string | null): ReceptionProcessingInfo | null {
+  const normalized = status?.trim().toUpperCase();
+  if (!normalized || !RECEPTION_PROCESSED_STATUSES.has(normalized)) return null;
+  return {
+    processed: true,
+    status: normalized,
+    processedAt: null,
+    libelle: null,
+  };
+}
+
+function buildReceptionHistoryPayload(idFacture: number): ChorusInvoiceHistoryPayload {
+  return {
+    idFacture,
+    nbResultatsMaximum: 10,
+    paramRechercheHistoActionsUtilisateurs: {
+      nbResultatsParPageListeHistoAction: 10,
+      pageResultatDemandeeListeHistoAction: 1,
+      triColonneListeHistoAction: 'HistoActionDateHeure',
+      triSensListeHistoAction: 'Descendant',
+    },
+    paramRechercheHistoEvenementsComplementaires: {
+      nbResultatsParPageListeHistoEvenement: 10,
+      pageResultatDemandeeListeHistoEvenement: 1,
+      triColonneListeHistoEvenement: 'EvenementLibelle',
+      triSensListeHistoEvenement: 'Descendant',
+    },
+    paramRechercheHistoStatuts: {
+      nbResultatsParPageListeHistoStatut: 10,
+      pageResultatDemandeeListeHistoStatut: 1,
+      triColonneListeHistoStatut: 'HistoStatutDatePassage',
+      triSensListeHistoStatut: 'Descendant',
+    },
+  };
+}
+
+function activeReceptionRows(rows: ReceptionDisplayRow[]): ReceptionDisplayRow[] {
+  return rows.filter((row) => !row.processed?.processed);
+}
+
+function processedReceptionRows(rows: ReceptionDisplayRow[]): ReceptionDisplayRow[] {
+  return rows.filter((row) => row.processed?.processed);
+}
+
+function receptionSqlClassification(raw: Record<string, unknown>): ReceptionSqlClassification {
+  if (isRecord(raw.receptionNormalized)) return 'FACTURE_RECUE';
+  const classification = raw.receptionClassification;
+  const kind = isRecord(classification) ? asDisplayString(classification.kind) : null;
+  if (kind === 'FACTURE_RECUE' || kind === 'REPONSE_FAVORABLE' || kind === 'A_QUALIFIER') {
+    return kind;
+  }
+  return 'A_QUALIFIER';
+}
+
+function detailStatusFromSqlClassification(
+  classification: ReceptionSqlClassification,
+): ReceptionDisplayRow['detailStatus'] {
+  if (classification === 'FACTURE_RECUE') return 'detail';
+  if (classification === 'REPONSE_FAVORABLE') return 'response';
+  return 'database';
 }
 
 function resolveInvoiceIdentifier(invoice: Invoice): number | null {
@@ -308,7 +412,7 @@ function mergeReceptionInvoice(detail: ReceptionInvoice, fallback: ReceptionInvo
   return {
     ...fallback,
     ...detail,
-    identifiantFactureCPP: detail.identifiantFactureCPP ?? fallback.identifiantFactureCPP,
+    identifiantFactureCPP: asPositiveInteger(detail.identifiantFactureCPP) ?? fallback.identifiantFactureCPP,
     numeroFacture: preferString(detail.numeroFacture, fallback.numeroFacture),
     statutFacture: preferString(detail.statutFacture, fallback.statutFacture),
     modeDepot: preferString(detail.modeDepot, fallback.modeDepot),
@@ -407,12 +511,14 @@ function rowsFromDbInvoices(
         customersById.get(invoice.publicCustomerId),
       );
       if (!facture?.identifiantFactureCPP) return null;
-      const hasStoredDetail = isRecord(rawPayload(invoice).receptionNormalized);
+      const raw = rawPayload(invoice);
+      const classification = receptionSqlClassification(raw);
       return {
         identifiantFactureCPP: facture.identifiantFactureCPP,
         invoiceId: invoice.id,
         facture,
-        detailStatus: hasStoredDetail ? 'detail' as const : 'database' as const,
+        detailStatus: detailStatusFromSqlClassification(classification),
+        processed: receptionProcessingInfo(raw) ?? receptionProcessingInfoFromStatus(facture.statutFacture),
       };
     })
     .filter((row): row is ReceptionDisplayRow => row !== null)
@@ -426,10 +532,12 @@ function rowsFromDbInvoices(
 function splitBusinessRows(rows: ReceptionDisplayRow[]): {
   receivedRows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
+  pendingRows: ReceptionDisplayRow[];
 } {
   return {
     receivedRows: rows.filter((row) => row.detailStatus === 'detail'),
-    responseRows: rows.filter((row) => row.detailStatus !== 'detail'),
+    responseRows: rows.filter((row) => row.detailStatus === 'response'),
+    pendingRows: rows.filter((row) => row.detailStatus === 'database' || row.detailStatus === 'error'),
   };
 }
 
@@ -442,6 +550,12 @@ function applyReceptionErrors(
   return rows.map((row) => {
     const error = errorById.get(row.identifiantFactureCPP);
     if (!error || row.detailStatus === 'detail') return row;
+    if (row.detailStatus === 'response') {
+      return {
+        ...row,
+        error,
+      };
+    }
     return {
       ...row,
       detailStatus: 'error' as const,
@@ -453,7 +567,10 @@ function applyReceptionErrors(
 async function enrichRowsWithReceptionDetails(
   client: ChorusBackendAutomationClient,
   baseRows: ReceptionDisplayRow[],
-  options: { onProgress?: (processed: number, total: number) => void } = {},
+  options: {
+    forceRefresh?: boolean;
+    onProgress?: (processed: number, total: number) => void;
+  } = {},
 ): Promise<{
   rows: ReceptionDisplayRow[];
   detailSuccess: number;
@@ -464,7 +581,7 @@ async function enrichRowsWithReceptionDetails(
   const errorById = new Map<number, ReceptionBulkResultError>();
   const identifiers = baseRows.map((row) => row.identifiantFactureCPP);
   const identifiersToConsult = baseRows
-    .filter((row) => row.detailStatus !== 'detail')
+    .filter((row) => options.forceRefresh || row.detailStatus !== 'detail')
     .map((row) => row.identifiantFactureCPP);
   const total = identifiersToConsult.length;
   let processed = 0;
@@ -493,10 +610,12 @@ async function enrichRowsWithReceptionDetails(
       };
       const detail = detailById.get(identifier);
       if (detail) {
+        const facture = mergeReceptionInvoice(detail, base.facture);
         return {
           ...base,
-          facture: mergeReceptionInvoice(detail, base.facture),
+          facture,
           detailStatus: 'detail' as const,
+          processed: base.processed ?? receptionProcessingInfoFromStatus(facture.statutFacture),
         };
       }
       const error = errorById.get(identifier);
@@ -511,6 +630,44 @@ async function enrichRowsWithReceptionDetails(
     }),
     detailSuccess: detailById.size,
     detailFailed: errorById.size,
+  };
+}
+
+async function reconcileRowsWithHistoryStatus(
+  client: ChorusBackendAutomationClient,
+  rows: ReceptionDisplayRow[],
+): Promise<{
+  checked: number;
+  persisted: number;
+  failed: number;
+  limited: boolean;
+}> {
+  const activeRows = activeReceptionRows(rows);
+  const candidates = activeRows.slice(0, HISTORY_STATUS_RECONCILE_LIMIT);
+  let checked = 0;
+  let persisted = 0;
+  let failed = 0;
+
+  for (const row of candidates) {
+    try {
+      const result = await client.getInvoiceHistory(
+        buildReceptionHistoryPayload(row.identifiantFactureCPP),
+      );
+      checked += 1;
+      if (result.historyStatusPersisted) {
+        persisted += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      console.warn('[reception] history status sync skipped', row.identifiantFactureCPP, error);
+    }
+  }
+
+  return {
+    checked,
+    persisted,
+    failed,
+    limited: activeRows.length > candidates.length,
   };
 }
 
@@ -568,9 +725,13 @@ export default function ReceptionProcessing() {
     () => new Map((customersQuery.data ?? []).map((customer) => [customer.id, customer])),
     [customersQuery.data],
   );
-  const dbRows = useMemo(
+  const allDbRows = useMemo(
     () => rowsFromDbInvoices(invoicesQuery.data?.items ?? [], suppliersById, customersById),
     [customersById, invoicesQuery.data?.items, suppliersById],
+  );
+  const dbRows = useMemo(
+    () => activeReceptionRows(allDbRows),
+    [allDbRows],
   );
   const rowsById = useMemo(
     () => new Map(dbRows.map((row) => [row.identifiantFactureCPP, row])),
@@ -581,7 +742,11 @@ export default function ReceptionProcessing() {
     [dbRows],
   );
   const cachedResponseRows = useMemo(
-    () => dbRows.filter((row) => row.detailStatus !== 'detail'),
+    () => dbRows.filter((row) => row.detailStatus === 'response'),
+    [dbRows],
+  );
+  const cachedPendingRows = useMemo(
+    () => dbRows.filter((row) => row.detailStatus === 'database' || row.detailStatus === 'error'),
     [dbRows],
   );
 
@@ -593,6 +758,10 @@ export default function ReceptionProcessing() {
     && (bulkState.responseRows.length > 0 || bulkState.status !== 'loading')
     ? bulkState.responseRows
     : cachedResponseRows;
+  const pendingRows = bulkState.pendingRows !== undefined
+    && (bulkState.pendingRows.length > 0 || bulkState.status !== 'loading')
+    ? bulkState.pendingRows
+    : cachedPendingRows;
   const busy = bulkState.status === 'loading' || syncInvoices.isPending || syncSuppliers.isPending;
 
   useEffect(() => {
@@ -609,11 +778,11 @@ export default function ReceptionProcessing() {
       suppliersQuery.refetch(),
       customersQuery.refetch(),
     ]);
-    return rowsFromDbInvoices(
+    return activeReceptionRows(rowsFromDbInvoices(
       invoicesPayload.data?.items ?? invoicesQuery.data?.items ?? [],
       new Map((suppliersPayload.data ?? suppliersQuery.data ?? []).map((supplier) => [supplier.id, supplier])),
       new Map((customersPayload.data ?? customersQuery.data ?? []).map((customer) => [customer.id, customer])),
-    );
+    ));
   }
 
   async function handleRefresh() {
@@ -621,6 +790,7 @@ export default function ReceptionProcessing() {
       status: 'loading',
       rows: cachedDetailRows,
       responseRows: cachedResponseRows,
+      pendingRows: cachedPendingRows,
       totalStored: dbRows.length,
       detailSuccess: cachedDetailRows.length,
       detailFailed: 0,
@@ -654,31 +824,45 @@ export default function ReceptionProcessing() {
         return;
       }
 
-      const enriched = await enrichRowsWithReceptionDetails(client, refreshedRows);
+      const enriched = await enrichRowsWithReceptionDetails(client, refreshedRows, { forceRefresh: true });
       const rowsAfterDetailCacheUpdate = await refetchRowsFromSqlCache();
-      const cachedRowsAfterDetail = rowsAfterDetailCacheUpdate.filter((row) => row.detailStatus === 'detail');
-      const displayRows = cachedRowsAfterDetail.length > 0
-        ? cachedRowsAfterDetail
-        : enriched.rows.filter((row) => row.detailStatus === 'detail');
+      const rowsBeforeHistorySync = rowsAfterDetailCacheUpdate.length > 0
+        ? rowsAfterDetailCacheUpdate
+        : activeReceptionRows(enriched.rows);
+      const historySync = await reconcileRowsWithHistoryStatus(client, rowsBeforeHistorySync);
+      const rowsAfterHistoryStatusUpdate = historySync.persisted > 0
+        ? await refetchRowsFromSqlCache()
+        : rowsBeforeHistorySync;
+      const displayRows = rowsAfterHistoryStatusUpdate.filter((row) => row.detailStatus === 'detail');
       const errors = enriched.rows
         .map((row) => row.error)
         .filter((error): error is ReceptionBulkResultError => !!error);
       const classifiedRows = applyReceptionErrors(
-        rowsAfterDetailCacheUpdate.length > 0 ? rowsAfterDetailCacheUpdate : enriched.rows,
+        rowsAfterHistoryStatusUpdate,
         errors,
       );
-      const { receivedRows, responseRows: separatedResponseRows } = splitBusinessRows(classifiedRows);
+      const { receivedRows, responseRows: separatedResponseRows, pendingRows: separatedPendingRows } = splitBusinessRows(classifiedRows);
+      const historyNote = historySync.checked > 0
+        ? ` Historique contrôlé pour ${historySync.checked} ligne(s), ${historySync.persisted} statut(s) réconcilié(s).`
+        : '';
+      const historyLimitNote = historySync.limited
+        ? ` Limite de ${HISTORY_STATUS_RECONCILE_LIMIT} historiques par actualisation atteinte.`
+        : '';
+      const historyFailureNote = historySync.failed > 0
+        ? ` ${historySync.failed} historique(s) indisponible(s).`
+        : '';
       setBulkInput(displayRows.map((row) => row.identifiantFactureCPP).join('\n'));
       setBulkState({
         status: 'done',
-        rows: receivedRows.length > 0 ? receivedRows : displayRows,
+        rows: receivedRows,
         responseRows: separatedResponseRows,
+        pendingRows: separatedPendingRows,
         errors,
         totalStored: refreshedRows.length,
-        detailSuccess: receivedRows.length || displayRows.length,
-        detailFailed: errors.length,
+        detailSuccess: receivedRows.length,
+        detailFailed: separatedPendingRows.filter((row) => row.detailStatus === 'error').length,
         syncRuns,
-        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. Détails déjà en cache conservés. ${receivedRows.length || displayRows.length} facture(s) reçue(s), ${separatedResponseRows.length} réponse(s) favorable(s) séparée(s).`,
+        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. Détails déjà en cache conservés. ${receivedRows.length} facture(s) reçue(s), ${separatedResponseRows.length} réponse(s) favorable(s), ${separatedPendingRows.length} à qualifier.${historyNote}${historyLimitNote}${historyFailureNote}`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -780,6 +964,7 @@ export default function ReceptionProcessing() {
       status: 'loading',
       rows: bulkRows,
       responseRows,
+      pendingRows,
       totalStored: dbRows.length,
       detailSuccess: bulkRows.length,
       detailFailed: 0,
@@ -832,16 +1017,17 @@ export default function ReceptionProcessing() {
           .filter((row): row is ReceptionDisplayRow => row !== undefined),
         errors,
       );
-      const { responseRows: separatedResponseRows } = splitBusinessRows(classifiedRows);
+      const { responseRows: separatedResponseRows, pendingRows: separatedPendingRows } = splitBusinessRows(classifiedRows);
       setBulkState({
         status: 'done',
         rows: displayRows,
         responseRows: separatedResponseRows,
+        pendingRows: separatedPendingRows,
         errors,
         totalStored: baseRows.length,
         detailSuccess: displayRows.length,
-        detailFailed: errors.length,
-        note: `Cache PostgreSQL prioritaire. ${displayRows.length} facture(s) reçue(s), ${separatedResponseRows.length} réponse(s) favorable(s) séparée(s).`,
+        detailFailed: separatedPendingRows.filter((row) => row.detailStatus === 'error').length,
+        note: `Cache PostgreSQL prioritaire. ${displayRows.length} facture(s) reçue(s), ${separatedResponseRows.length} réponse(s) favorable(s), ${separatedPendingRows.length} à qualifier.`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -860,17 +1046,25 @@ export default function ReceptionProcessing() {
             <Inbox className="h-5 w-5 text-primary" />
             <h1 className="text-2xl font-semibold">Factures</h1>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void handleRefresh()}
-            disabled={busy}
-          >
-            {busy
-              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              : <RefreshCw className="mr-2 h-4 w-4" />}
-            Actualiser
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/invoices/reception/processed">
+                <CheckCircle2 className="mr-2 h-4 w-4" />
+                Factures traitées
+              </Link>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleRefresh()}
+              disabled={busy}
+            >
+              {busy
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <RefreshCw className="mr-2 h-4 w-4" />}
+              Actualiser
+            </Button>
+          </div>
         </div>
         <p className="text-sm text-muted-foreground">
           La page lit le cache PostgreSQL. Le bouton Actualiser lance la mise à jour Chorus.
@@ -884,6 +1078,7 @@ export default function ReceptionProcessing() {
         state={bulkState}
         rows={bulkRows}
         responseRows={responseRows}
+        pendingRows={pendingRows}
         busy={busy}
         onPreviewInvoice={openDrawerForInvoice}
       />
@@ -904,6 +1099,104 @@ export default function ReceptionProcessing() {
         onIdentifierChange={setSingleIdentifier}
         onConsult={() => void handleSingleConsult()}
         state={singleState}
+      />
+    </div>
+  );
+}
+
+export function ProcessedReceptionInvoices() {
+  const [drawerInvoice, setDrawerInvoice] = useState<ReceptionInvoice | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
+  const suppliersQuery = useSuppliersQuery();
+  const customersQuery = usePublicCustomersQuery();
+
+  const suppliersById = useMemo(
+    () => new Map((suppliersQuery.data ?? []).map((supplier) => [supplier.id, supplier])),
+    [suppliersQuery.data],
+  );
+  const customersById = useMemo(
+    () => new Map((customersQuery.data ?? []).map((customer) => [customer.id, customer])),
+    [customersQuery.data],
+  );
+  const processedRows = useMemo(
+    () => processedReceptionRows(
+      rowsFromDbInvoices(invoicesQuery.data?.items ?? [], suppliersById, customersById),
+    ),
+    [customersById, invoicesQuery.data?.items, suppliersById],
+  );
+  const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+
+  function openDrawerForInvoice(invoice: ReceptionInvoice) {
+    setDrawerInvoice(invoice);
+    setDrawerOpen(true);
+  }
+
+  return (
+    <div className="space-y-6 animate-fade-in">
+      <header className="space-y-1">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-success" />
+            <h1 className="text-2xl font-semibold">Factures traitées</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/invoices/reception">
+                <Inbox className="mr-2 h-4 w-4" />
+                Factures reçues
+              </Link>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                void invoicesQuery.refetch();
+                void suppliersQuery.refetch();
+                void customersQuery.refetch();
+              }}
+              disabled={loading}
+            >
+              {loading
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <RefreshCw className="mr-2 h-4 w-4" />}
+              Actualiser
+            </Button>
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Les factures acceptées par l’action de traitement côté valideur sont rangées ici.
+        </p>
+      </header>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center text-base">
+            <CheckCircle2 className="mr-2 h-4 w-4" />
+            Historique des traitements ({processedRows.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <SkeletonTable rows={5} columns={8} />
+          ) : processedRows.length > 0 ? (
+            <ProcessedInvoicesTable rows={processedRows} onPreviewInvoice={openDrawerForInvoice} />
+          ) : (
+            <EmptyState
+              title="Aucune facture traitée"
+              description="Les factures disparaîtront de la file de réception dès que Chorus aura accepté l’action de traitement."
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <InvoiceDetailDrawer
+        invoice={drawerInvoice}
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawerOpen(open);
+          if (!open) setDrawerInvoice(null);
+        }}
       />
     </div>
   );
@@ -985,6 +1278,7 @@ function BulkConsultCard({
   state,
   rows,
   responseRows,
+  pendingRows,
   busy,
   onPreviewInvoice,
 }: {
@@ -994,11 +1288,12 @@ function BulkConsultCard({
   state: BulkConsultState;
   rows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
+  pendingRows: ReceptionDisplayRow[];
   busy: boolean;
   onPreviewInvoice: (invoice: ReceptionInvoice) => void;
 }) {
   const isLoading = state.status === 'loading';
-  const hasAnyRows = rows.length > 0 || responseRows.length > 0;
+  const hasAnyRows = rows.length > 0 || responseRows.length > 0 || pendingRows.length > 0;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -1035,8 +1330,9 @@ function BulkConsultCard({
             <BulkSummaryStrip
               received={rows.length}
               responses={responseRows.length}
-              totalStored={state.totalStored ?? rows.length + responseRows.length}
-              detailFailed={state.detailFailed ?? responseRows.filter((row) => row.detailStatus === 'error').length}
+              pending={pendingRows.length}
+              totalStored={state.totalStored ?? rows.length + responseRows.length + pendingRows.length}
+              detailFailed={state.detailFailed ?? pendingRows.filter((row) => row.detailStatus === 'error').length}
             />
             {rows.length > 0 && (
               <div className="space-y-2">
@@ -1048,6 +1344,12 @@ function BulkConsultCard({
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">Réponses favorables reçues</h3>
                 <FavorableResponsesTable rows={responseRows} />
+              </div>
+            )}
+            {pendingRows.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">À qualifier en base</h3>
+                <FavorableResponsesTable rows={pendingRows} />
               </div>
             )}
           </>
@@ -1095,22 +1397,25 @@ function BulkConsultCard({
 function BulkSummaryStrip({
   received,
   responses,
+  pending,
   totalStored,
   detailFailed,
 }: {
   received: number;
   responses: number;
+  pending: number;
   totalStored: number;
   detailFailed: number;
 }) {
   const tiles = [
     { label: 'Factures reçues', value: received, tone: 'text-foreground' },
     { label: 'Réponses favorables', value: responses, tone: 'text-sky-700' },
+    { label: 'À qualifier', value: pending, tone: pending > 0 ? 'text-amber-600' : 'text-muted-foreground' },
     { label: 'En base', value: totalStored, tone: 'text-muted-foreground' },
     { label: 'À vérifier', value: detailFailed, tone: detailFailed > 0 ? 'text-amber-600' : 'text-muted-foreground' },
   ];
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 stagger-children">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 stagger-children">
       {tiles.map((tile, index) => (
         <div
           key={tile.label}
@@ -1204,6 +1509,94 @@ function BulkResultsTable({
                       ? <span className="text-xs text-success">Traité</span>
                       : <span className="text-xs text-destructive">Non traité</span>}
                 </td>
+                <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
+                  <Button variant="ghost" size="sm" asChild>
+                    <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
+                      <Eye className="mr-1 h-3.5 w-3.5" /> Détail
+                    </Link>
+                  </Button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ProcessedInvoicesTable({
+  rows,
+  onPreviewInvoice,
+}: {
+  rows: ReceptionDisplayRow[];
+  onPreviewInvoice: (invoice: ReceptionInvoice) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full min-w-[900px] text-sm">
+        <thead>
+          <tr className="border-b bg-muted/30 text-left">
+            <th className="p-3 font-medium">ID CPP</th>
+            <th className="p-3 font-medium">N° facture</th>
+            <th className="p-3 font-medium">Statut traité</th>
+            <th className="p-3 font-medium">Traitement</th>
+            <th className="p-3 font-medium">Fournisseur</th>
+            <th className="p-3 font-medium">Destinataire</th>
+            <th className="p-3 font-medium text-right">Montant TTC</th>
+            <th className="p-3 font-medium">Dépôt</th>
+            <th className="p-3 font-medium text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const f = row.facture;
+            const processedAt = row.processed?.processedAt;
+            const animationDelay = `${Math.min(index, 12) * 40}ms`;
+            return (
+              <tr
+                key={row.identifiantFactureCPP}
+                onClick={() => onPreviewInvoice(f)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onPreviewInvoice(f);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                aria-label={`Aperçu facture traitée ${row.identifiantFactureCPP}`}
+                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none animate-fade-in-up"
+                style={{ animationDelay }}
+              >
+                <td className="p-3 font-mono text-xs">
+                  <div>{row.identifiantFactureCPP}</div>
+                  <span className="mt-1 inline-flex rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                    traitée
+                  </span>
+                </td>
+                <td className="p-3">{f.numeroFacture ?? '—'}</td>
+                <td className="p-3"><StatusPill value={row.processed?.status ?? f.statutFacture} /></td>
+                <td className="p-3">
+                  <div>{processedAt ? formatDateTime(processedAt) : '—'}</div>
+                  {row.processed?.libelle && (
+                    <div className="max-w-[260px] truncate text-xs text-muted-foreground" title={row.processed.libelle}>
+                      {row.processed.libelle}
+                    </div>
+                  )}
+                </td>
+                <td className="p-3">
+                  <div className="max-w-[220px] truncate" title={f.fournisseur?.raisonSociale ?? ''}>
+                    {f.fournisseur?.raisonSociale ?? '—'}
+                  </div>
+                </td>
+                <td className="p-3">
+                  <div className="max-w-[240px] truncate" title={f.destinataire?.raisonSociale ?? ''}>
+                    {f.destinataire?.raisonSociale ?? '—'}
+                  </div>
+                </td>
+                <td className="p-3 text-right">{formatCurrency(f.montants.ttc)}</td>
+                <td className="p-3">{f.dates.dateDepot ? formatDate(f.dates.dateDepot) : '—'}</td>
                 <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
                   <Button variant="ghost" size="sm" asChild>
                     <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
@@ -1316,11 +1709,22 @@ function DetailStatusBadge({ status }: { status: ReceptionDisplayRow['detailStat
   if (status === 'error') {
     return <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">à vérifier</span>;
   }
+  if (status === 'database') {
+    return <span className="mt-1 inline-flex rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">à qualifier</span>;
+  }
   return <span className="mt-1 inline-flex rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">réponse</span>;
 }
 
-export function InvoiceDetailPanel({ invoice }: { invoice: ReceptionInvoice }) {
+export function InvoiceDetailPanel({
+  invoice,
+  identifiantFactureCPP,
+}: {
+  invoice: ReceptionInvoice;
+  identifiantFactureCPP?: number | null;
+}) {
   const overdue = isOverdue(invoice.dates.dateEcheancePaiement, invoice.statutFacture);
+  const invoiceIdentifier = asPositiveInteger(identifiantFactureCPP)
+    ?? asPositiveInteger(invoice.identifiantFactureCPP);
   return (
     <div className="space-y-4">
       {invoice.statutFacture === 'REJETEE' && invoice.rejetTraite === false && (
@@ -1376,7 +1780,10 @@ export function InvoiceDetailPanel({ invoice }: { invoice: ReceptionInvoice }) {
         <ReferencesCard references={invoice.references} />
       </div>
 
-      <AttachmentsCard attachments={invoice.piecesJointes} />
+      <AttachmentsCard
+        attachments={invoice.piecesJointes}
+        identifiantFactureCPP={invoiceIdentifier}
+      />
       <LinesCard lines={invoice.lignesDePoste} />
       <VatRecapCard items={invoice.recapitulatifTva} />
     </div>
@@ -1552,13 +1959,25 @@ function ReferencesCard({ references }: { references: ReceptionInvoice['referenc
   );
 }
 
-function AttachmentsCard({ attachments }: { attachments: ReceptionInvoiceAttachment[] }) {
+function AttachmentsCard({
+  attachments,
+  identifiantFactureCPP,
+}: {
+  attachments: ReceptionInvoiceAttachment[];
+  identifiantFactureCPP?: unknown;
+}) {
+  const invoiceIdentifier = asPositiveInteger(identifiantFactureCPP);
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center text-base">
-          <Paperclip className="mr-2 h-4 w-4" />
-          Pièces jointes <span className="ml-2 text-xs text-muted-foreground">({attachments.length})</span>
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+          <span className="flex items-center">
+            <Paperclip className="mr-2 h-4 w-4" />
+            Pièces jointes <span className="ml-2 text-xs text-muted-foreground">({attachments.length})</span>
+          </span>
+          {invoiceIdentifier !== null && (
+            <DownloadToolbar identifiantFactureCPP={invoiceIdentifier} />
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -1592,6 +2011,101 @@ function AttachmentsCard({ attachments }: { attachments: ReceptionInvoiceAttachm
       </CardContent>
     </Card>
   );
+}
+
+function DownloadToolbar({ identifiantFactureCPP }: { identifiantFactureCPP: number }) {
+  const [loading, setLoading] = useState<ReceptionDownloadFormat | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleDownload(format: ReceptionDownloadFormat) {
+    const previewWindow = format === 'PDF' ? window.open('about:blank', '_blank') : null;
+    if (previewWindow) {
+      previewWindow.opener = null;
+    }
+    setLoading(format);
+    setError(null);
+    try {
+      const config = resolveChorusRuntimeConfig(loadChorusConfig());
+      const result = await new ChorusBackendAutomationClient(config).downloadReceivedInvoice({
+        idFacture: identifiantFactureCPP,
+        format,
+        avecPiecesJointesComplementaires: format === 'ZIP' ? true : undefined,
+      });
+      if (!result.ok) {
+        previewWindow?.close();
+        setError(result.human_message || 'Téléchargement impossible.');
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(result.blob);
+      if (format === 'PDF') {
+        if (previewWindow) {
+          previewWindow.location.href = objectUrl;
+        } else {
+          // Si le navigateur bloque l'ouverture, on retombe sur le téléchargement.
+          triggerBrowserDownload(objectUrl, result.filename);
+        }
+      } else {
+        triggerBrowserDownload(objectUrl, result.filename);
+      }
+      // Le navigateur garde une référence le temps du download/preview ; on
+      // libère plus tard sans bloquer le clic.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+    } catch (downloadError) {
+      previewWindow?.close();
+      const message = downloadError instanceof Error
+        ? downloadError.message
+        : 'Téléchargement impossible (erreur réseau).';
+      setError(message);
+    } finally {
+      setLoading(null);
+    }
+  }
+
+  const buttons: Array<{
+    format: ReceptionDownloadFormat;
+    label: string;
+    Icon: typeof Download;
+  }> = [
+    { format: 'PDF', label: 'Voir PDF', Icon: FileText },
+    { format: 'XML', label: 'XML', Icon: Download },
+    { format: 'ZIP', label: 'ZIP + PJ', Icon: FileArchive },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {buttons.map(({ format, label, Icon }) => (
+        <Button
+          key={format}
+          variant="outline"
+          size="sm"
+          onClick={() => void handleDownload(format)}
+          disabled={loading !== null}
+          aria-label={`Télécharger la facture au format ${format}`}
+        >
+          {loading === format
+            ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            : <Icon className="mr-1.5 h-3.5 w-3.5" />}
+          {label}
+        </Button>
+      ))}
+      {error && (
+        <span className="basis-full pt-1 text-xs text-destructive" role="alert">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function triggerBrowserDownload(objectUrl: string, filename: string) {
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 function LinesCard({ lines }: { lines: ReceptionInvoice['lignesDePoste'] }) {

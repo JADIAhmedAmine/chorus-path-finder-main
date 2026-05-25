@@ -1,7 +1,7 @@
 import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
-  ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox,
+  ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox, CheckCircle2,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -24,6 +24,7 @@ const mainItems: SidebarNavItem[] = [
 const invoiceItems: SidebarNavItem[] = [
   { title: 'Toutes les factures', url: '/invoices', icon: FileText },
   { title: 'Factures reçues', url: '/invoices/reception', icon: Inbox },
+  { title: 'Factures traitées', url: '/invoices/reception/processed', icon: CheckCircle2 },
   { title: 'Factures à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle facture', url: '/invoices/new', icon: Upload },
 ];
@@ -60,8 +61,15 @@ export function AppSidebar() {
           && !location.pathname.startsWith('/invoices/reception/')
         );
     }
+    if (path === '/invoices/reception/processed') {
+      return location.pathname === path;
+    }
     if (path === '/invoices/reception') {
-      return location.pathname === path || location.pathname.startsWith('/invoices/reception/');
+      return location.pathname === path
+        || (
+          location.pathname.startsWith('/invoices/reception/')
+          && location.pathname !== '/invoices/reception/processed'
+        );
     }
     if (invoiceItems.some((item) => item.url === path)) {
       return location.pathname === path;

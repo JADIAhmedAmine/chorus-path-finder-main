@@ -18,7 +18,7 @@ import References from "./pages/References";
 import SettingsPage from "./pages/SettingsPage";
 import Monitoring from "./pages/Monitoring";
 import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
-import ReceptionProcessing from "./pages/ReceptionProcessing";
+import ReceptionProcessing, { ProcessedReceptionInvoices } from "./pages/ReceptionProcessing";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -117,6 +117,7 @@ const App = () => (
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception" element={<RequireAuth><AppLayout><ReceptionProcessing /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/reception/processed" element={<RequireAuth><AppLayout><ProcessedReceptionInvoices /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception/:id" element={<RequireAuth><AppLayout><ReceptionInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/to-process" element={<RequireAuth><AppLayout><InvoicesToProcess /></AppLayout></RequireAuth>} />
             <Route path="/reception" element={<RequireAuth><Navigate to="/invoices/reception" replace /></RequireAuth>} />

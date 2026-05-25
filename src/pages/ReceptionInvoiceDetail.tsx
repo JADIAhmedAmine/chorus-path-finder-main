@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { ArrowLeft, FileJson, Loader2, Receipt, RefreshCw } from 'lucide-react';
+import { ArrowLeft, FileJson, History, Loader2, Receipt, RefreshCw } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,14 @@ import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { useInvoicesQuery } from '@/lib/queries/db';
 import type { Invoice } from '@/types';
-import type { ReceptionConsultError, ReceptionInvoice } from '@/types/chorus';
+import type {
+  ChorusInvoiceHistoryAction,
+  ChorusInvoiceHistoryPayload,
+  ChorusInvoiceHistoryResponse,
+  ChorusInvoiceHistoryStatus,
+  ReceptionConsultError,
+  ReceptionInvoice,
+} from '@/types/chorus';
 import { InvoiceDetailPanel } from './ReceptionProcessing';
 
 type DetailLoadState =
@@ -123,6 +130,63 @@ function errorMessageFromConsult(result: ReceptionConsultError): string {
   return result.human_message || result.raw_message || 'Détail réception Chorus indisponible.';
 }
 
+function buildInvoiceHistoryPayload(idFacture: number): ChorusInvoiceHistoryPayload {
+  return {
+    idFacture,
+    nbResultatsMaximum: 10,
+    paramRechercheHistoActionsUtilisateurs: {
+      nbResultatsParPageListeHistoAction: 10,
+      pageResultatDemandeeListeHistoAction: 1,
+      triColonneListeHistoAction: 'HistoActionDateHeure',
+      triSensListeHistoAction: 'Descendant',
+    },
+    paramRechercheHistoEvenementsComplementaires: {
+      nbResultatsParPageListeHistoEvenement: 10,
+      pageResultatDemandeeListeHistoEvenement: 1,
+      triColonneListeHistoEvenement: 'EvenementLibelle',
+      triSensListeHistoEvenement: 'Descendant',
+    },
+    paramRechercheHistoStatuts: {
+      nbResultatsParPageListeHistoStatut: 10,
+      pageResultatDemandeeListeHistoStatut: 1,
+      triColonneListeHistoStatut: 'HistoStatutDatePassage',
+      triSensListeHistoStatut: 'Descendant',
+    },
+  };
+}
+
+function parseChorusHistoryTimestamp(value?: string): number {
+  if (!value) return 0;
+  const trimmed = value.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(trimmed);
+  if (match) {
+    const [, year, month, day, hour = '0', minute = '0', second = '0'] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second)).getTime();
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortHistoryStatuses(items: ChorusInvoiceHistoryStatus[]): ChorusInvoiceHistoryStatus[] {
+  return [...items].sort((left, right) =>
+    parseChorusHistoryTimestamp(right.histoStatutDatePassage)
+      - parseChorusHistoryTimestamp(left.histoStatutDatePassage)
+      || (right.histoStatutId ?? 0) - (left.histoStatutId ?? 0),
+  );
+}
+
+function sortHistoryActions(items: ChorusInvoiceHistoryAction[]): ChorusInvoiceHistoryAction[] {
+  return [...items].sort((left, right) =>
+    parseChorusHistoryTimestamp(right.histoActionDateHeure)
+      - parseChorusHistoryTimestamp(left.histoActionDateHeure)
+      || (right.histoActionId ?? 0) - (left.histoActionId ?? 0),
+  );
+}
+
+function formatHistoryActor(first?: string, last?: string, email?: string): string {
+  return [first, last, email].filter((value) => value && value.trim()).join(' ') || '—';
+}
+
 export default function ReceptionInvoiceDetail() {
   const { id } = useParams();
   const identifier = asPositiveInteger(id);
@@ -140,6 +204,9 @@ export default function ReceptionInvoiceDetail() {
   const displayedInvoice = cachedInvoice ?? (loadState.status === 'success' ? loadState.invoice : null);
   const dbRawPayload = dbInvoice?.rawPayload;
   const apiRawDetail = isRecord(dbRawPayload) ? dbRawPayload.receptionDetail : null;
+  const refreshStoredInvoice = useCallback(() => {
+    void invoicesQuery.refetch();
+  }, [invoicesQuery.refetch]);
 
   useEffect(() => {
     if (!identifier || invoicesQuery.isLoading || cachedInvoice || loadState.status !== 'idle') return;
@@ -153,7 +220,7 @@ export default function ReceptionInvoiceDetail() {
         if (cancelled) return;
         if (result.ok && result.success) {
           setLoadState({ status: 'success', invoice: result.facture });
-          void invoicesQuery.refetch();
+          refreshStoredInvoice();
           return;
         }
         setLoadState({ status: 'error', error: errorMessageFromConsult(result) });
@@ -169,7 +236,7 @@ export default function ReceptionInvoiceDetail() {
     return () => {
       cancelled = true;
     };
-  }, [cachedInvoice, identifier, invoicesQuery, loadState.status]);
+  }, [cachedInvoice, identifier, invoicesQuery.isLoading, loadState.status, refreshStoredInvoice]);
 
   if (!identifier) {
     return (
@@ -255,12 +322,12 @@ export default function ReceptionInvoiceDetail() {
       <ProcessReceivedInvoiceCard
         identifiantFactureCPP={identifier}
         currentStatus={displayedInvoice.statutFacture}
-        onProcessed={() => {
-          void invoicesQuery.refetch();
-        }}
+        onProcessed={refreshStoredInvoice}
       />
 
-      <InvoiceDetailPanel invoice={displayedInvoice} />
+      <ReceptionHistoryCard identifiantFactureCPP={identifier} onHistorySynced={refreshStoredInvoice} />
+
+      <InvoiceDetailPanel invoice={displayedInvoice} identifiantFactureCPP={identifier} />
 
       {isRecord(apiRawDetail) && (
         <Card>
@@ -272,6 +339,168 @@ export default function ReceptionInvoiceDetail() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function ReceptionHistoryCard({
+  identifiantFactureCPP,
+  onHistorySynced,
+}: {
+  identifiantFactureCPP: number;
+  onHistorySynced?: () => void;
+}) {
+  const [historyResponse, setHistoryResponse] = useState<ChorusInvoiceHistoryResponse | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const config = resolveChorusRuntimeConfig(loadChorusConfig());
+      const result = await new ChorusBackendAutomationClient(config).getInvoiceHistory(
+        buildInvoiceHistoryPayload(identifiantFactureCPP),
+      );
+      setHistoryResponse(result.response ?? null);
+      if (result.historyStatusPersisted) {
+        onHistorySynced?.();
+      }
+    } catch (error) {
+      setHistoryError(error instanceof Error ? error.message : 'Historique Chorus indisponible.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [identifiantFactureCPP, onHistorySynced]);
+
+  useEffect(() => {
+    void loadHistory();
+  }, [loadHistory]);
+
+  const historyStatuses = Array.isArray(historyResponse?.historiquesDesStatuts?.histoStatut)
+    ? sortHistoryStatuses(historyResponse.historiquesDesStatuts.histoStatut)
+    : [];
+  const historyActions = Array.isArray(historyResponse?.historiquesDesActionsUtilisateurs?.histoAction)
+    ? sortHistoryActions(historyResponse.historiquesDesActionsUtilisateurs.histoAction)
+    : [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+          <span className="flex items-center">
+            <History className="mr-2 h-4 w-4" />
+            Historique Chorus
+          </span>
+          <Button variant="outline" size="sm" onClick={() => void loadHistory()} disabled={historyLoading}>
+            {historyLoading
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <RefreshCw className="mr-2 h-4 w-4" />}
+            Actualiser
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {historyError && (
+          <Alert variant="destructive">
+            <AlertDescription>{historyError}</AlertDescription>
+          </Alert>
+        )}
+        {historyResponse && (
+          <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-4">
+            <HistoryInfo label="Statut courant" value={historyResponse.statutCourantCode || '—'} />
+            <HistoryInfo label="Dernière action" value={historyResponse.derniereAction?.derniereActionCode || '—'} />
+            <HistoryInfo label="N° facture" value={historyResponse.numeroFacture || '—'} />
+            <HistoryInfo
+              label="Retour API"
+              value={`${historyResponse.codeRetour ?? ''} ${historyResponse.libelle ?? ''}`.trim() || '—'}
+            />
+          </div>
+        )}
+        {historyLoading && !historyResponse ? (
+          <p className="text-sm text-muted-foreground">Chargement de l’historique...</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">Passages de statut</h3>
+              <HistoryStatusTable items={historyStatuses} />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">Actions utilisateur</h3>
+              <HistoryActionTable items={historyActions} />
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function HistoryInfo({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-muted/20 p-3">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 break-words font-medium">{value}</p>
+    </div>
+  );
+}
+
+function HistoryStatusTable({ items }: { items: ChorusInvoiceHistoryStatus[] }) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">Aucun statut retourné.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full min-w-[640px] text-sm">
+        <thead>
+          <tr className="border-b bg-muted/30 text-left">
+            <th className="p-3 font-medium">Date</th>
+            <th className="p-3 font-medium">Statut</th>
+            <th className="p-3 font-medium">Utilisateur</th>
+            <th className="p-3 font-medium">Commentaire</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((status, index) => (
+            <tr key={`${status.histoStatutId ?? index}-${status.histoStatutCode ?? 'statut'}`} className="border-b last:border-0">
+              <td className="whitespace-nowrap p-3">{status.histoStatutDatePassage || '—'}</td>
+              <td className="p-3 font-medium">{status.histoStatutCode || '—'}</td>
+              <td className="p-3">{formatHistoryActor(status.histoStatutUtilisateurPrenom, status.histoStatutUtilisateurNom, status.histoStatutUtilisateurEmail)}</td>
+              <td className="max-w-[280px] whitespace-normal break-words p-3 text-muted-foreground">{status.histoStatutCommentaire || '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function HistoryActionTable({ items }: { items: ChorusInvoiceHistoryAction[] }) {
+  if (items.length === 0) {
+    return <p className="text-sm text-muted-foreground">Aucune action utilisateur retournée.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full min-w-[540px] text-sm">
+        <thead>
+          <tr className="border-b bg-muted/30 text-left">
+            <th className="p-3 font-medium">Date</th>
+            <th className="p-3 font-medium">Action</th>
+            <th className="p-3 font-medium">Utilisateur</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((action, index) => (
+            <tr key={`${action.histoActionId ?? index}-${action.histoActionCode ?? 'action'}`} className="border-b last:border-0">
+              <td className="whitespace-nowrap p-3">{action.histoActionDateHeure || '—'}</td>
+              <td className="p-3 font-medium">{action.histoActionCode || '—'}</td>
+              <td className="p-3">{formatHistoryActor(action.histoActionUtilisateurPrenom, action.histoActionUtilisateurNom, action.histoActionUtilisateurEmail)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
