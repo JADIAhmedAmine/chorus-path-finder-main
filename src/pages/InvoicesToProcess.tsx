@@ -26,7 +26,7 @@ import { formatCurrency, formatDateTime, getChorusRawStatusConfig } from '@/lib/
 import type { Invoice } from '@/types';
 
 const ALL_VALUE = '__all__';
-type TreatmentFilter = 'all' | 'rejected' | 'pending';
+type TreatmentFilter = 'all' | 'pending';
 type ReasonFilter = 'all' | 'with-reason' | 'without-reason';
 
 function parseConfiguredSupplierId(value: string): number | undefined {
@@ -40,9 +40,6 @@ function matchesTreatmentFilter(invoice: Invoice, filter: TreatmentFilter): bool
   }
 
   const status = getInvoiceChorusStatus(invoice).toUpperCase();
-  if (filter === 'rejected') {
-    return isRejectedChorusStatus(status);
-  }
   return status.includes('SUSPEND')
     || status.includes('RECYCL')
     || status.includes('A_VALIDER');
@@ -130,7 +127,10 @@ export default function InvoicesToProcess() {
   );
 
   const actionableInvoices = useMemo(
-    () => invoices.filter(isActionableInvoice),
+    () => invoices.filter((invoice) =>
+      isActionableInvoice(invoice)
+      && !isRejectedChorusStatus(getInvoiceChorusStatus(invoice)),
+    ),
     [invoices],
   );
 
@@ -229,10 +229,6 @@ export default function InvoicesToProcess() {
     supplierFilter,
   ]);
 
-  const rejectedCount = useMemo(
-    () => actionableInvoices.filter((invoice) => isRejectedChorusStatus(getInvoiceChorusStatus(invoice))).length,
-    [actionableInvoices],
-  );
   const actionableTotalTtc = useMemo(
     () => actionableInvoices.reduce((sum, invoice) => sum + invoice.totalTtc, 0),
     [actionableInvoices],
@@ -301,8 +297,7 @@ export default function InvoicesToProcess() {
   ].filter(Boolean).length;
 
   const statCards = [
-    { label: 'À traiter', value: actionableInvoices.length, icon: AlertTriangle, color: 'text-destructive/60' },
-    { label: 'Rejets / refus', value: rejectedCount, icon: AlertTriangle, color: 'text-destructive/60' },
+    { label: 'À corriger', value: actionableInvoices.length, icon: AlertTriangle, color: 'text-destructive/60' },
     { label: 'En attente', value: pendingCount, icon: Clock3, color: 'text-warning/70' },
     { label: 'Montant TTC', value: formatCurrency(actionableTotalTtc), icon: Euro, color: 'text-info/70' },
   ];
@@ -311,9 +306,9 @@ export default function InvoicesToProcess() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Factures à traiter</h1>
+          <h1 className="text-2xl font-semibold">Émissions à corriger</h1>
           <p className="text-sm text-muted-foreground">
-            {loading ? 'Chargement depuis le cache local...' : `${filteredInvoices.length} facture(s) à traiter`}
+            {loading ? 'Chargement depuis le cache local...' : `${filteredInvoices.length} émission(s) à corriger`}
           </p>
         </div>
         <Button variant="outline" onClick={handleRefresh} disabled={syncing || loading}>
@@ -331,7 +326,7 @@ export default function InvoicesToProcess() {
       {syncing && <SyncRunProgress />}
       {lastSyncRuns.length > 0 && <SyncRunSummary runs={lastSyncRuns} />}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {statCards.map((stat) => (
           <Card key={stat.label}>
             <CardContent className="flex items-center justify-between p-4">
@@ -360,8 +355,7 @@ export default function InvoicesToProcess() {
             <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as TreatmentFilter)}>
               <SelectTrigger className="w-full lg:w-[220px]"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Toutes à traiter</SelectItem>
-                <SelectItem value="rejected">Rejets / refus</SelectItem>
+                <SelectItem value="all">Toutes à corriger</SelectItem>
                 <SelectItem value="pending">En attente</SelectItem>
               </SelectContent>
             </Select>
@@ -502,7 +496,7 @@ export default function InvoicesToProcess() {
                 {filteredInvoices.length === 0 && (
                   <tr>
                     <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                      {loading ? 'Chargement des factures...' : 'Aucune facture à traiter'}
+                      {loading ? 'Chargement des émissions...' : 'Aucune émission à corriger'}
                     </td>
                   </tr>
                 )}

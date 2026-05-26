@@ -20,7 +20,8 @@ import Monitoring from "./pages/Monitoring";
 import ChorusPilotPage from "./pages/ChorusPilotPage";
 import CGUPage from "./pages/CGUPage";
 import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
-import ReceptionProcessing, { ProcessedReceptionInvoices, ReceptionNotificationsPage, ReceptionResponsesPage } from "./pages/ReceptionProcessing";
+import ReceptionProcessing, { ProcessedReceptionInvoices, ReceptionNotificationsPage } from "./pages/ReceptionProcessing";
+import EmissionRejectionsPage from "./pages/EmissionRejections";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -119,8 +120,9 @@ const App = () => (
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/chorus-pilot" element={<RequireAuth><AppLayout><ChorusPilotPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/rejections" element={<RequireAuth><AppLayout><EmissionRejectionsPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception" element={<RequireAuth><AppLayout><ReceptionProcessing /></AppLayout></RequireAuth>} />
-            <Route path="/invoices/reception/responses" element={<RequireAuth><AppLayout><ReceptionResponsesPage /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/reception/responses" element={<RequireAuth><Navigate to="/invoices/rejections" replace /></RequireAuth>} />
             <Route path="/invoices/reception/notifications" element={<RequireAuth><AppLayout><ReceptionNotificationsPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception/processed" element={<RequireAuth><AppLayout><ProcessedReceptionInvoices /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception/:id" element={<RequireAuth><AppLayout><ReceptionInvoiceDetail /></AppLayout></RequireAuth>} />

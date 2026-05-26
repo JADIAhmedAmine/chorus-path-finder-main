@@ -2,7 +2,9 @@ import type { Invoice } from '@/types';
 
 export function isRejectedChorusStatus(status: string): boolean {
   const normalized = status.toUpperCase();
-  return normalized.includes('REJET') || normalized.includes('REFUS');
+  return normalized.includes('REJET')
+    || normalized.includes('REFUS')
+    || normalized.includes('REJECT');
 }
 
 export function isPaidChorusStatus(status: string): boolean {

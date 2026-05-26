@@ -1760,7 +1760,7 @@ def _build_reception_complete_uploaded_attachment(
     upload_id: int,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     designation = _as_non_empty_string(item.get("designation") or item.get("name"))
-    attachment_type = _as_non_empty_string(item.get("type")) or "AUTRE"
+    attachment_type = _as_non_empty_string(item.get("type")) or "DIVERS"
     line_number = _as_int(item.get("lineNumber"))
     if not designation:
         return {}, {
@@ -2019,7 +2019,7 @@ def handle_reception_complete(body: dict[str, Any] | None = Body(default=None)) 
     code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
     libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
     if status_code >= 400 or (code_retour is not None and code_retour != 0):
-        normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+        normalized = normalize_chorus_error(libelle if libelle is not None else chorus_response, code_retour=code_retour)
         duration_ms = round((perf_counter() - started_at) * 1000)
         logger.warning(
             "Complément facture suspendue refusé: identifiantFactureCPP=%s, codeRetour=%s, status=%s, duration=%s ms",

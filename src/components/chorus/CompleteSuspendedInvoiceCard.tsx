@@ -49,14 +49,19 @@ export function CompleteSuspendedInvoiceCard({
   const isSuspended = statutFacture === 'SUSPENDUE';
   const [commentaire, setCommentaire] = useState('');
   const [selectedAttachmentId, setSelectedAttachmentId] = useState('');
-  const [attachmentType, setAttachmentType] = useState('AUTRE');
+  const [attachmentType, setAttachmentType] = useState('DIVERS');
   const [lineNumber, setLineNumber] = useState('');
   const [newFile, setNewFile] = useState<File | null>(null);
   const [newFileDesignation, setNewFileDesignation] = useState('');
   const [state, setState] = useState<SubmitState>({ status: 'idle' });
 
   const complementaryAttachments = useMemo(
-    () => attachments.filter((attachment) => attachment.role === 'COMPLEMENTAIRE' && attachment.pieceJointeId),
+    () => attachments.filter((attachment) =>
+      attachment.role === 'COMPLEMENTAIRE'
+      && attachment.pieceJointeId
+      && attachment.typeCode !== 'DUPLICATA_FACTUR-X'
+      && attachment.typeLibelle !== 'DUPLICATA_FACTUR-X',
+    ),
     [attachments],
   );
   const selectedAttachment = complementaryAttachments.find(
@@ -75,7 +80,7 @@ export function CompleteSuspendedInvoiceCard({
         pieceJointeComplementaireId: Number(selectedAttachment.pieceJointeId),
         pieceJointeComplementaireDesignation:
           selectedAttachment.designation || `Pièce jointe ${selectedAttachment.pieceJointeId}`,
-        pieceJointeComplementaireType: attachmentType.trim() || selectedAttachment.typeCode || 'AUTRE',
+        pieceJointeComplementaireType: attachmentType.trim() || selectedAttachment.typeCode || 'DIVERS',
         ...(asPositiveNumber(lineNumber) !== undefined
           ? { pieceJointeComplementaireNumeroLigneFacture: asPositiveNumber(lineNumber) }
           : {}),
@@ -93,7 +98,7 @@ export function CompleteSuspendedInvoiceCard({
           ? [{
               file: newFile,
               designation: newFileDesignation.trim() || newFile.name,
-              type: attachmentType.trim() || 'AUTRE',
+              type: attachmentType.trim() || 'DIVERS',
               ...(asPositiveNumber(lineNumber) !== undefined
                 ? { lineNumber: asPositiveNumber(lineNumber) }
                 : {}),
@@ -252,7 +257,15 @@ export function CompleteSuspendedInvoiceCard({
           <Alert variant="destructive">
             <XCircle className="h-4 w-4" />
             <AlertTitle>{state.result.human_message}</AlertTitle>
-            <AlertDescription>{state.result.recommended_action}</AlertDescription>
+            <AlertDescription className="space-y-1">
+              <p>{state.result.recommended_action}</p>
+              {state.result.raw_message && state.result.raw_message !== state.result.human_message && (
+                <p className="text-xs opacity-90">Détail technique : {state.result.raw_message}</p>
+              )}
+              {typeof state.result.code_retour === 'number' && (
+                <p className="text-xs opacity-90">codeRetour Chorus : {state.result.code_retour}</p>
+              )}
+            </AlertDescription>
           </Alert>
         )}
 

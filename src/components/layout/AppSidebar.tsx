@@ -23,15 +23,20 @@ const mainItems: SidebarNavItem[] = [
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
 ];
 
-const invoiceItems: SidebarNavItem[] = [
-  { title: 'Toutes les factures', url: '/invoices', icon: FileText },
+const receptionItems: SidebarNavItem[] = [
   { title: 'Factures reçues', url: '/invoices/reception', icon: Inbox },
-  { title: 'Rejets / refus', url: '/invoices/reception/responses', icon: MessageSquareWarning },
   { title: 'Notifications', url: '/invoices/reception/notifications', icon: Bell },
   { title: 'Factures traitées', url: '/invoices/reception/processed', icon: CheckCircle2 },
-  { title: 'Factures à traiter', url: '/invoices/to-process', icon: AlertTriangle },
-  { title: 'Nouvelle facture', url: '/invoices/new', icon: Upload },
 ];
+
+const emissionItems: SidebarNavItem[] = [
+  { title: 'Suivi des émissions', url: '/invoices', icon: FileText },
+  { title: 'Rejets / refus', url: '/invoices/rejections', icon: MessageSquareWarning },
+  { title: 'Émissions à corriger', url: '/invoices/to-process', icon: AlertTriangle },
+  { title: 'Nouvelle émission', url: '/invoices/new', icon: Upload },
+];
+
+const invoiceItems: SidebarNavItem[] = [...receptionItems, ...emissionItems];
 
 const cguItem: SidebarNavItem = { title: 'CGU', url: '/cgu', icon: Scale };
 const refItems: SidebarNavItem[] = [
@@ -71,6 +76,7 @@ export function AppSidebar() {
       path === '/invoices/reception/processed'
       || path === '/invoices/reception/responses'
       || path === '/invoices/reception/notifications'
+      || path === '/invoices/rejections'
     ) {
       return location.pathname === path;
     }
@@ -119,7 +125,8 @@ export function AppSidebar() {
       </div>
       <SidebarContent>
         {renderGroup('Principal', mainItems)}
-        {renderGroup('Factures', invoiceItems)}
+        {renderGroup('Réception', receptionItems)}
+        {renderGroup('Émission', emissionItems)}
         {renderGroup('Référentiels', refItems)}
         {renderGroup('Administration', adminItems)}
       </SidebarContent>
