@@ -642,8 +642,7 @@ function splitBusinessRows(rows: ReceptionDisplayRow[]): {
       && isSuspendedInvoice(row.facture.statutFacture),
     ),
     responseRows: rows.filter((row) =>
-      hasReceptionDetail(row)
-      && isReceivedResponse(row.facture.statutFacture),
+      isReceivedResponse(row.facture.statutFacture),
     ),
     notificationRows: rows.filter((row) =>
       row.detailStatus === 'response'
@@ -1244,13 +1243,6 @@ export default function ReceptionProcessing() {
       />
 
       {singleState.status === 'success' && singleState.invoice && <InvoiceDetailPanel invoice={singleState.invoice} />}
-
-      <SingleConsultCard
-        identifier={singleIdentifier}
-        onIdentifierChange={setSingleIdentifier}
-        onConsult={() => void handleSingleConsult()}
-        state={singleState}
-      />
     </div>
   );
 }
@@ -1461,7 +1453,7 @@ export function ReceptionResponsesPage() {
           {loading ? (
             <SkeletonTable rows={5} columns={9} />
           ) : filteredRows.length > 0 ? (
-            <ReceivedResponsesTable rows={filteredRows} onPreviewInvoice={openDrawerForInvoice} />
+            <NotificationRowsTable rows={filteredRows} onPreviewInvoice={openDrawerForInvoice} />
           ) : rows.length > 0 ? (
             <EmptyState
               title="Aucun rejet/refus ne correspond aux filtres"
@@ -1843,7 +1835,7 @@ function BulkConsultCard({
                 Ces retours ne sont pas des factures actionnables. Ils sont disponibles uniquement dans la page dédiée.
               </span>
               <Button variant="outline" size="sm" asChild>
-                <Link to="/invoices/reception/responses">Ouvrir Rejets / refus</Link>
+                <Link to="/invoices/rejections">Ouvrir Rejets / refus</Link>
               </Button>
             </AlertDescription>
           </Alert>
@@ -1909,27 +1901,6 @@ function BulkConsultCard({
         )}
 
         <BulkErrorsList errors={state.errors ?? []} />
-
-        <Separator />
-
-        <div className="space-y-1.5">
-          <Label htmlFor="reception-bulk-input">Identifiants facture CPP</Label>
-          <Textarea
-            id="reception-bulk-input"
-            rows={4}
-            placeholder={BULK_HINT_PLACEHOLDER}
-            value={bulkInput}
-            onChange={(event) => onBulkInputChange(event.target.value)}
-          />
-        </div>
-        <div className="flex justify-end">
-          <Button onClick={onConsult} disabled={busy || !bulkInput.trim()}>
-            {busy
-              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              : <ClipboardList className="mr-2 h-4 w-4" />}
-            Consulter les factures
-          </Button>
-        </div>
       </CardContent>
     </Card>
   );
@@ -2333,6 +2304,81 @@ function ReceivedResponsesTable({
   );
 }
 
+function NotificationRowsTable({
+  rows,
+  onPreviewInvoice,
+}: {
+  rows: ReceptionDisplayRow[];
+  onPreviewInvoice: (invoice: ReceptionInvoice) => void;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="overflow-x-auto rounded-md border">
+      <table className="w-full min-w-[980px] text-sm">
+        <thead>
+          <tr className="border-b bg-muted/30 text-left">
+            <th className="p-3 font-medium">N° facture</th>
+            <th className="p-3 font-medium">ID CPP</th>
+            <th className="p-3 font-medium">Statut Chorus</th>
+            <th className="p-3 font-medium">Fournisseur</th>
+            <th className="p-3 font-medium">Destinataire</th>
+            <th className="p-3 font-medium">Dépôt</th>
+            <th className="p-3 font-medium text-right">TTC</th>
+            <th className="p-3 font-medium">Information</th>
+            <th className="p-3 font-medium text-right">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => {
+            const f = row.facture;
+            const animationDelay = `${Math.min(index, 12) * 40}ms`;
+            return (
+              <tr
+                key={row.identifiantFactureCPP}
+                className="border-b last:border-0 animate-fade-in-up"
+                style={{ animationDelay }}
+              >
+                <td className="p-3">{f.numeroFacture ?? '—'}</td>
+                <td className="p-3 font-mono text-xs">{row.identifiantFactureCPP}</td>
+                <td className="p-3"><StatusPill value={f.statutFacture} /></td>
+                <td className="p-3">
+                  <div className="max-w-[210px] truncate" title={f.fournisseur?.raisonSociale ?? ''}>
+                    {f.fournisseur?.raisonSociale ?? '—'}
+                  </div>
+                </td>
+                <td className="p-3">
+                  <div className="max-w-[230px] truncate" title={f.destinataire?.raisonSociale ?? ''}>
+                    {f.destinataire?.raisonSociale ?? '—'}
+                  </div>
+                </td>
+                <td className="p-3">{f.dates.dateDepot ? formatDate(f.dates.dateDepot) : '—'}</td>
+                <td className="p-3 text-right">{formatCurrency(f.montants.ttc)}</td>
+                <td className="p-3">
+                  <div className="max-w-[300px] truncate text-muted-foreground" title={f.commentaire ?? ''}>
+                    {f.commentaire ?? 'Information disponible dans le détail'}
+                  </div>
+                </td>
+                <td className="p-3 text-right">
+                  <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
+                    <Button variant="ghost" size="sm" onClick={() => onPreviewInvoice(f)}>
+                      <Eye className="mr-1 h-3.5 w-3.5" /> Aperçu
+                    </Button>
+                    <Button variant="ghost" size="sm" asChild>
+                      <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
+                        Détail
+                      </Link>
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function BulkErrorsList({ errors }: { errors: ReceptionBulkResultError[] }) {
   if (errors.length === 0) return null;
   const visibleErrors = errors.slice(0, 8);
@@ -2429,8 +2475,8 @@ export function InvoiceDetailPanel({
       <InvoiceHeaderCard invoice={invoice} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <PartyCard title="Fournisseur" party={invoice.fournisseur} />
-        <PartyCard title="Destinataire" party={invoice.destinataire} />
+        <PartyCard title="Entité envoyeur" party={invoice.fournisseur} />
+        <PartyCard title="Entité destinataire" party={invoice.destinataire} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
