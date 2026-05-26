@@ -61,7 +61,86 @@ import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
 const BULK_HINT_PLACEHOLDER = '8424327\n8424328\n8424329';
 const CONSULT_CHUNK_SIZE = 50;
 const HISTORY_STATUS_RECONCILE_LIMIT = 50;
-const RECEIVED_RESPONSE_STATUSES = new Set(['REJETEE', 'REFUSEE', 'REFUSEE_1', 'REFUSEE_2']);
+
+// Statuts qui doivent rester actionnables même s'ils ne le seraient pas par défaut.
+const FORCED_ACTIONABLE_STATUSES = new Set<string>([
+  'ERREUR_FOURNISSEUR_SUR_VALIDEUR',
+]);
+
+const RECEIVED_RESPONSE_STATUSES = new Set<string>([
+  'REJETEE',
+  'REFUSEE',
+  'REFUSEE_1',
+  'REFUSEE_2',
+  'REFUSEE_MOE',
+  'REFUSEE_MOA',
+  'REFUSEE_FOURNISSEUR',
+  'ABANDONNEE',
+  'SUPPRIMEE',
+  'ABSENCE_VALIDATION_1_HORS_DELAI',
+  'ABSENCE_VALIDATION_2_HORS_DELAI',
+  'ABSENCE_VALIDATION_MOE_DELAI_REGLEMENTAIRE',
+]);
+
+const VALIDATION_INTERNE_STATUSES = new Set<string>([
+  'BROUILLON',
+  'A_VALIDER_1',
+  'A_VALIDER_2',
+  'A_VALIDER_MOE',
+  'VALIDEE_1',
+  'VALIDEE_2',
+]);
+
+const A_ACTIONNER_STATUSES = new Set<string>([
+  'A_COMPLETER',
+  'A_ASSOCIER_FOURNISSEUR',
+  'A_ASSOCIER_MOE',
+  'A_ASSOCIER_MOA',
+  'EN_ATTENTE_RECYCLAGE_FOURNISSEUR',
+  'DUPLIQUE_APRES_REFUS',
+  'NON_CONFORME',
+]);
+
+const CHEMINEMENT_STATUSES = new Set<string>([
+  'DEPOSEE',
+  'EN_COURS_ACHEMINEMENT',
+  'MISE_A_DISPOSITION_COMPTABLE',
+  'MISE_A_DISPOSITION_MOE',
+  'MISE_A_DISPOSITION_MOA',
+  'ASSOCIEE',
+  'TRANSMISE_MOA',
+  'REMPLACEE_PAR_A22',
+  'EN_COURS_TRAITEMENT_PIVOT_S',
+  'INTERPRETEE_OCR',
+  'COMPLETEE',
+  'SERVICE_FAIT',
+]);
+
+const PRISES_EN_COMPTE_STATUSES = new Set<string>([
+  'PRISE_EN_COMPTE_MOE',
+  'PRISE_EN_COMPTE_MOA',
+  'PRISE_EN_COMPTE_DESTINATAIRE',
+]);
+
+const PAIEMENT_STATUSES = new Set<string>([
+  'MANDATEE',
+  'MISE_EN_PAIEMENT',
+  'COMPTABILISEE',
+]);
+
+const ERREURS_TECHNIQUES_STATUSES = new Set<string>([
+  'ERREUR_COTRAITANT_SUR_VALIDEUR',
+  'ERREUR_FOURNISSEUR_SUR_MOE',
+  'ERREUR_FOURNISSEUR_SUR_MOA',
+  'ERREUR_MOE_SUR_FOURNISSEUR',
+  'ERREUR_MOA_SUR_FOURNISSEUR',
+  'ERREUR_MOE_SUR_MOA',
+  'ERREUR_DESTINATAIRE_PD',
+  'ERREUR_DESTINATAIRE_EA',
+  'ERREUR_DE_MOE',
+  'ERREUR_DE_MOA',
+  'TECHNIQUE_INCONNU',
+]);
 
 interface SingleConsultState {
   status: 'idle' | 'loading' | 'success' | 'error';
@@ -74,6 +153,12 @@ interface BulkConsultState {
   status: 'idle' | 'loading' | 'done';
   rows?: ReceptionDisplayRow[];
   suspendedRows?: ReceptionDisplayRow[];
+  aActionnerRows?: ReceptionDisplayRow[];
+  validationInterneRows?: ReceptionDisplayRow[];
+  cheminementRows?: ReceptionDisplayRow[];
+  prisesEnCompteRows?: ReceptionDisplayRow[];
+  paiementRows?: ReceptionDisplayRow[];
+  erreursTechniquesRows?: ReceptionDisplayRow[];
   responseRows?: ReceptionDisplayRow[];
   notificationRows?: ReceptionDisplayRow[];
   pendingRows?: ReceptionDisplayRow[];
@@ -223,25 +308,9 @@ function isExplicitlyProcessed(row: ReceptionDisplayRow): boolean {
   return row.processed?.processed === true;
 }
 
-function isSuspendedInvoice(status: string | null): boolean {
-  return status?.trim().toUpperCase() === 'SUSPENDUE';
-}
-
 function isReceivedResponse(status: string | null): boolean {
   const normalized = status?.trim().toUpperCase();
   return !!normalized && RECEIVED_RESPONSE_STATUSES.has(normalized);
-}
-
-function isRecycleActionable(status: string | null): boolean {
-  return status?.trim().toUpperCase() === 'A_RECYCLER';
-}
-
-function isActionableReceivedInvoice(status: string | null): boolean {
-  return !isReceivedResponse(status);
-}
-
-function hasReceptionDetail(row: ReceptionDisplayRow): boolean {
-  return row.detailStatus === 'detail' || row.detailStatus === 'response';
 }
 
 function normalizeForSearch(value: unknown): string {
@@ -623,35 +692,113 @@ function rowsFromDbInvoices(
     });
 }
 
-function splitBusinessRows(rows: ReceptionDisplayRow[]): {
+type ReceptionPhase =
+  | 'A_TRAITER'
+  | 'SUSPENDUE'
+  | 'A_ACTIONNER'
+  | 'VALIDATION_INTERNE'
+  | 'CHEMINEMENT'
+  | 'PRISES_EN_COMPTE'
+  | 'PAIEMENT'
+  | 'ERREURS_TECHNIQUES'
+  | 'REJETS_REFUS'
+  | 'NOTIFICATIONS'
+  | 'A_QUALIFIER';
+
+function categorizeReceptionRow(row: ReceptionDisplayRow): ReceptionPhase {
+  if (row.detailStatus === 'database' || row.detailStatus === 'error') return 'A_QUALIFIER';
+  const status = row.facture.statutFacture?.trim().toUpperCase() ?? '';
+
+  if (FORCED_ACTIONABLE_STATUSES.has(status)) return 'A_TRAITER';
+
+  if (row.detailStatus === 'response') {
+    if (RECEIVED_RESPONSE_STATUSES.has(status)) return 'REJETS_REFUS';
+    return 'NOTIFICATIONS';
+  }
+
+  if (status === 'SUSPENDUE') return 'SUSPENDUE';
+  if (RECEIVED_RESPONSE_STATUSES.has(status)) return 'REJETS_REFUS';
+  if (ERREURS_TECHNIQUES_STATUSES.has(status)) return 'ERREURS_TECHNIQUES';
+  if (VALIDATION_INTERNE_STATUSES.has(status)) return 'VALIDATION_INTERNE';
+  if (A_ACTIONNER_STATUSES.has(status)) return 'A_ACTIONNER';
+  if (CHEMINEMENT_STATUSES.has(status)) return 'CHEMINEMENT';
+  if (PRISES_EN_COMPTE_STATUSES.has(status)) return 'PRISES_EN_COMPTE';
+  if (PAIEMENT_STATUSES.has(status)) return 'PAIEMENT';
+
+  // Par défaut : actionnable (couvre MISE_A_DISPOSITION, A_RECYCLER, statuts inconnus avec détail).
+  return 'A_TRAITER';
+}
+
+interface ReceptionPhaseBuckets {
   receivedRows: ReceptionDisplayRow[];
   suspendedRows: ReceptionDisplayRow[];
+  aActionnerRows: ReceptionDisplayRow[];
+  validationInterneRows: ReceptionDisplayRow[];
+  cheminementRows: ReceptionDisplayRow[];
+  prisesEnCompteRows: ReceptionDisplayRow[];
+  paiementRows: ReceptionDisplayRow[];
+  erreursTechniquesRows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
   notificationRows: ReceptionDisplayRow[];
   pendingRows: ReceptionDisplayRow[];
-} {
+}
+
+function emptyReceptionPhaseBuckets(): ReceptionPhaseBuckets {
   return {
-    receivedRows: rows.filter((row) =>
-      hasReceptionDetail(row)
-      && isActionableReceivedInvoice(row.facture.statutFacture)
-      && !isSuspendedInvoice(row.facture.statutFacture)
-      && (row.detailStatus === 'detail' || isRecycleActionable(row.facture.statutFacture)),
-    ),
-    suspendedRows: rows.filter((row) =>
-      hasReceptionDetail(row)
-      && isSuspendedInvoice(row.facture.statutFacture),
-    ),
-    responseRows: rows.filter((row) =>
-      isReceivedResponse(row.facture.statutFacture),
-    ),
-    notificationRows: rows.filter((row) =>
-      row.detailStatus === 'response'
-      && !isReceivedResponse(row.facture.statutFacture)
-      && !isRecycleActionable(row.facture.statutFacture)
-      && !isSuspendedInvoice(row.facture.statutFacture),
-    ),
-    pendingRows: rows.filter((row) => row.detailStatus === 'database' || row.detailStatus === 'error'),
+    receivedRows: [],
+    suspendedRows: [],
+    aActionnerRows: [],
+    validationInterneRows: [],
+    cheminementRows: [],
+    prisesEnCompteRows: [],
+    paiementRows: [],
+    erreursTechniquesRows: [],
+    responseRows: [],
+    notificationRows: [],
+    pendingRows: [],
   };
+}
+
+function splitBusinessRows(rows: ReceptionDisplayRow[]): ReceptionPhaseBuckets {
+  const buckets = emptyReceptionPhaseBuckets();
+  for (const row of rows) {
+    switch (categorizeReceptionRow(row)) {
+      case 'A_TRAITER':
+        buckets.receivedRows.push(row);
+        break;
+      case 'SUSPENDUE':
+        buckets.suspendedRows.push(row);
+        break;
+      case 'A_ACTIONNER':
+        buckets.aActionnerRows.push(row);
+        break;
+      case 'VALIDATION_INTERNE':
+        buckets.validationInterneRows.push(row);
+        break;
+      case 'CHEMINEMENT':
+        buckets.cheminementRows.push(row);
+        break;
+      case 'PRISES_EN_COMPTE':
+        buckets.prisesEnCompteRows.push(row);
+        break;
+      case 'PAIEMENT':
+        buckets.paiementRows.push(row);
+        break;
+      case 'ERREURS_TECHNIQUES':
+        buckets.erreursTechniquesRows.push(row);
+        break;
+      case 'REJETS_REFUS':
+        buckets.responseRows.push(row);
+        break;
+      case 'NOTIFICATIONS':
+        buckets.notificationRows.push(row);
+        break;
+      case 'A_QUALIFIER':
+        buckets.pendingRows.push(row);
+        break;
+    }
+  }
+  return buckets;
 }
 
 function applyReceptionErrors(
@@ -850,47 +997,39 @@ export default function ReceptionProcessing() {
     () => new Map(dbRows.map((row) => [row.identifiantFactureCPP, row])),
     [dbRows],
   );
-  const cachedDetailRows = useMemo(
-    () => splitBusinessRows(dbRows).receivedRows,
-    [dbRows],
-  );
-  const cachedSuspendedRows = useMemo(
-    () => splitBusinessRows(dbRows).suspendedRows,
-    [dbRows],
-  );
-  const cachedResponseRows = useMemo(
-    () => splitBusinessRows(dbRows).responseRows,
-    [dbRows],
-  );
-  const cachedNotificationRows = useMemo(
-    () => splitBusinessRows(dbRows).notificationRows,
-    [dbRows],
-  );
-  const cachedPendingRows = useMemo(
-    () => dbRows.filter((row) => row.detailStatus === 'database' || row.detailStatus === 'error'),
-    [dbRows],
-  );
+  const cachedBuckets = useMemo(() => splitBusinessRows(dbRows), [dbRows]);
+  const cachedDetailRows = cachedBuckets.receivedRows;
+  const cachedSuspendedRows = cachedBuckets.suspendedRows;
+  const cachedAActionnerRows = cachedBuckets.aActionnerRows;
+  const cachedValidationInterneRows = cachedBuckets.validationInterneRows;
+  const cachedCheminementRows = cachedBuckets.cheminementRows;
+  const cachedPrisesEnCompteRows = cachedBuckets.prisesEnCompteRows;
+  const cachedPaiementRows = cachedBuckets.paiementRows;
+  const cachedErreursTechniquesRows = cachedBuckets.erreursTechniquesRows;
+  const cachedResponseRows = cachedBuckets.responseRows;
+  const cachedNotificationRows = cachedBuckets.notificationRows;
+  const cachedPendingRows = cachedBuckets.pendingRows;
 
-  const bulkRows = bulkState.rows !== undefined
-    && (bulkState.rows.length > 0 || bulkState.status !== 'loading')
-    ? bulkState.rows
-    : cachedDetailRows;
-  const suspendedRows = bulkState.suspendedRows !== undefined
-    && (bulkState.suspendedRows.length > 0 || bulkState.status !== 'loading')
-    ? bulkState.suspendedRows
-    : cachedSuspendedRows;
-  const responseRows = bulkState.responseRows !== undefined
-    && (bulkState.responseRows.length > 0 || bulkState.status !== 'loading')
-    ? bulkState.responseRows
-    : cachedResponseRows;
-  const notificationRows = bulkState.notificationRows !== undefined
-    && (bulkState.notificationRows.length > 0 || bulkState.status !== 'loading')
-    ? bulkState.notificationRows
-    : cachedNotificationRows;
-  const pendingRows = bulkState.pendingRows !== undefined
-    && (bulkState.pendingRows.length > 0 || bulkState.status !== 'loading')
-    ? bulkState.pendingRows
-    : cachedPendingRows;
+  function pickRows(
+    fromState: ReceptionDisplayRow[] | undefined,
+    fallback: ReceptionDisplayRow[],
+  ): ReceptionDisplayRow[] {
+    if (fromState !== undefined && (fromState.length > 0 || bulkState.status !== 'loading')) {
+      return fromState;
+    }
+    return fallback;
+  }
+  const bulkRows = pickRows(bulkState.rows, cachedDetailRows);
+  const suspendedRows = pickRows(bulkState.suspendedRows, cachedSuspendedRows);
+  const aActionnerRows = pickRows(bulkState.aActionnerRows, cachedAActionnerRows);
+  const validationInterneRows = pickRows(bulkState.validationInterneRows, cachedValidationInterneRows);
+  const cheminementRows = pickRows(bulkState.cheminementRows, cachedCheminementRows);
+  const prisesEnCompteRows = pickRows(bulkState.prisesEnCompteRows, cachedPrisesEnCompteRows);
+  const paiementRows = pickRows(bulkState.paiementRows, cachedPaiementRows);
+  const erreursTechniquesRows = pickRows(bulkState.erreursTechniquesRows, cachedErreursTechniquesRows);
+  const responseRows = pickRows(bulkState.responseRows, cachedResponseRows);
+  const notificationRows = pickRows(bulkState.notificationRows, cachedNotificationRows);
+  const pendingRows = pickRows(bulkState.pendingRows, cachedPendingRows);
   const busy = bulkState.status === 'loading' || syncInvoices.isPending || syncSuppliers.isPending;
 
   useEffect(() => {
@@ -919,6 +1058,12 @@ export default function ReceptionProcessing() {
       status: 'loading',
       rows: cachedDetailRows,
       suspendedRows: cachedSuspendedRows,
+      aActionnerRows: cachedAActionnerRows,
+      validationInterneRows: cachedValidationInterneRows,
+      cheminementRows: cachedCheminementRows,
+      prisesEnCompteRows: cachedPrisesEnCompteRows,
+      paiementRows: cachedPaiementRows,
+      erreursTechniquesRows: cachedErreursTechniquesRows,
       responseRows: cachedResponseRows,
       notificationRows: cachedNotificationRows,
       pendingRows: cachedPendingRows,
@@ -972,13 +1117,7 @@ export default function ReceptionProcessing() {
         rowsAfterHistoryStatusUpdate,
         errors,
       );
-      const {
-        receivedRows,
-        suspendedRows: separatedSuspendedRows,
-        responseRows: separatedResponseRows,
-        notificationRows: separatedNotificationRows,
-        pendingRows: separatedPendingRows,
-      } = splitBusinessRows(classifiedRows);
+      const buckets = splitBusinessRows(classifiedRows);
       const historyNote = historySync.checked > 0
         ? ` Historique contrôlé pour ${historySync.checked} ligne(s), ${historySync.persisted} statut(s) réconcilié(s).`
         : '';
@@ -991,17 +1130,23 @@ export default function ReceptionProcessing() {
       setBulkInput(displayRows.map((row) => row.identifiantFactureCPP).join('\n'));
       setBulkState({
         status: 'done',
-        rows: receivedRows,
-        suspendedRows: separatedSuspendedRows,
-        responseRows: separatedResponseRows,
-        notificationRows: separatedNotificationRows,
-        pendingRows: separatedPendingRows,
+        rows: buckets.receivedRows,
+        suspendedRows: buckets.suspendedRows,
+        aActionnerRows: buckets.aActionnerRows,
+        validationInterneRows: buckets.validationInterneRows,
+        cheminementRows: buckets.cheminementRows,
+        prisesEnCompteRows: buckets.prisesEnCompteRows,
+        paiementRows: buckets.paiementRows,
+        erreursTechniquesRows: buckets.erreursTechniquesRows,
+        responseRows: buckets.responseRows,
+        notificationRows: buckets.notificationRows,
+        pendingRows: buckets.pendingRows,
         errors,
         totalStored: refreshedRows.length,
-        detailSuccess: receivedRows.length,
-        detailFailed: separatedPendingRows.filter((row) => row.detailStatus === 'error').length,
+        detailSuccess: buckets.receivedRows.length,
+        detailFailed: buckets.pendingRows.filter((row) => row.detailStatus === 'error').length,
         syncRuns,
-        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. ${receivedRows.length} facture(s) à traiter, ${separatedSuspendedRows.length} suspendue(s), ${separatedResponseRows.length} rejet/refus orienté(s) vers la page dédiée, ${separatedNotificationRows.length} notification(s), ${separatedPendingRows.length} à qualifier.${historyNote}${historyLimitNote}${historyFailureNote}`,
+        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. ${buckets.receivedRows.length} à traiter, ${buckets.suspendedRows.length} suspendue(s), ${buckets.aActionnerRows.length} à actionner, ${buckets.validationInterneRows.length} en validation, ${buckets.cheminementRows.length} en cheminement, ${buckets.prisesEnCompteRows.length} prise(s) en compte, ${buckets.paiementRows.length} en paiement, ${buckets.erreursTechniquesRows.length} en erreur tech., ${buckets.responseRows.length} rejet/refus, ${buckets.notificationRows.length} notification(s), ${buckets.pendingRows.length} à qualifier.${historyNote}${historyLimitNote}${historyFailureNote}`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -1103,7 +1248,14 @@ export default function ReceptionProcessing() {
       status: 'loading',
       rows: bulkRows,
       suspendedRows,
+      aActionnerRows,
+      validationInterneRows,
+      cheminementRows,
+      prisesEnCompteRows,
+      paiementRows,
+      erreursTechniquesRows,
       responseRows,
+      notificationRows,
       pendingRows,
       totalStored: dbRows.length,
       detailSuccess: bulkRows.length,
@@ -1157,25 +1309,25 @@ export default function ReceptionProcessing() {
           .filter((row): row is ReceptionDisplayRow => row !== undefined),
         errors,
       );
-      const {
-        receivedRows,
-        suspendedRows: separatedSuspendedRows,
-        responseRows: separatedResponseRows,
-        notificationRows: separatedNotificationRows,
-        pendingRows: separatedPendingRows,
-      } = splitBusinessRows(classifiedRows);
+      const buckets = splitBusinessRows(classifiedRows);
       setBulkState({
         status: 'done',
-        rows: receivedRows,
-        suspendedRows: separatedSuspendedRows,
-        responseRows: separatedResponseRows,
-        notificationRows: separatedNotificationRows,
-        pendingRows: separatedPendingRows,
+        rows: buckets.receivedRows,
+        suspendedRows: buckets.suspendedRows,
+        aActionnerRows: buckets.aActionnerRows,
+        validationInterneRows: buckets.validationInterneRows,
+        cheminementRows: buckets.cheminementRows,
+        prisesEnCompteRows: buckets.prisesEnCompteRows,
+        paiementRows: buckets.paiementRows,
+        erreursTechniquesRows: buckets.erreursTechniquesRows,
+        responseRows: buckets.responseRows,
+        notificationRows: buckets.notificationRows,
+        pendingRows: buckets.pendingRows,
         errors,
         totalStored: baseRows.length,
-        detailSuccess: receivedRows.length + separatedSuspendedRows.length,
-        detailFailed: separatedPendingRows.filter((row) => row.detailStatus === 'error').length,
-        note: `Cache PostgreSQL prioritaire. ${receivedRows.length} facture(s) à traiter, ${separatedSuspendedRows.length} suspendue(s), ${separatedResponseRows.length} rejet/refus orienté(s) vers la page dédiée, ${separatedNotificationRows.length} notification(s), ${separatedPendingRows.length} à qualifier.`,
+        detailSuccess: buckets.receivedRows.length + buckets.suspendedRows.length,
+        detailFailed: buckets.pendingRows.filter((row) => row.detailStatus === 'error').length,
+        note: `Cache PostgreSQL prioritaire. ${buckets.receivedRows.length} à traiter, ${buckets.suspendedRows.length} suspendue(s), ${buckets.aActionnerRows.length} à actionner, ${buckets.validationInterneRows.length} en validation, ${buckets.cheminementRows.length} en cheminement, ${buckets.prisesEnCompteRows.length} prise(s) en compte, ${buckets.paiementRows.length} en paiement, ${buckets.erreursTechniquesRows.length} en erreur tech., ${buckets.responseRows.length} rejet/refus, ${buckets.notificationRows.length} notification(s), ${buckets.pendingRows.length} à qualifier.`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -1226,6 +1378,12 @@ export default function ReceptionProcessing() {
         state={bulkState}
         rows={bulkRows}
         suspendedRows={suspendedRows}
+        aActionnerRows={aActionnerRows}
+        validationInterneRows={validationInterneRows}
+        cheminementRows={cheminementRows}
+        prisesEnCompteRows={prisesEnCompteRows}
+        paiementRows={paiementRows}
+        erreursTechniquesRows={erreursTechniquesRows}
         responseRows={responseRows}
         notificationRows={notificationRows}
         pendingRows={pendingRows}
@@ -1251,9 +1409,12 @@ export function ProcessedReceptionInvoices() {
   const [drawerInvoice, setDrawerInvoice] = useState<ReceptionInvoice | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [filters, setFilters] = useState<ReceptionRowFilters>(EMPTY_ROW_FILTERS);
+  const [chorusSyncError, setChorusSyncError] = useState<string | null>(null);
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
   const customersQuery = usePublicCustomersQuery();
+  const syncInvoices = useSyncInvoicesMutation();
+  const syncSuppliers = useSyncSuppliersMutation();
 
   const suppliersById = useMemo(
     () => new Map((suppliersQuery.data ?? []).map((supplier) => [supplier.id, supplier])),
@@ -1274,10 +1435,36 @@ export function ProcessedReceptionInvoices() {
     [filters, processedRows],
   );
   const loading = invoicesQuery.isLoading || suppliersQuery.isLoading || customersQuery.isLoading;
+  const syncing = syncInvoices.isPending || syncSuppliers.isPending;
+  const busy = loading || syncing;
 
   function openDrawerForInvoice(invoice: ReceptionInvoice) {
     setDrawerInvoice(invoice);
     setDrawerOpen(true);
+  }
+
+  async function handleRefreshFromChorus() {
+    setChorusSyncError(null);
+    try {
+      const config = resolveChorusRuntimeConfig(loadChorusConfig());
+      const supplierId = parseConfiguredSupplierId(config.submissionSupplierId);
+      const syncInput = {
+        environment: config.environment,
+        ...(supplierId !== undefined ? { supplierId } : {}),
+      };
+      await syncSuppliers.mutateAsync(syncInput).catch((error) => {
+        console.warn('[processed] sync suppliers skipped', error);
+      });
+      await syncInvoices.mutateAsync({ ...syncInput, mode: 'full' });
+      await Promise.all([
+        invoicesQuery.refetch(),
+        suppliersQuery.refetch(),
+        customersQuery.refetch(),
+      ]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inattendue.';
+      setChorusSyncError(`Synchronisation Chorus impossible : ${message}`);
+    }
   }
 
   return (
@@ -1298,23 +1485,26 @@ export function ProcessedReceptionInvoices() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                void invoicesQuery.refetch();
-                void suppliersQuery.refetch();
-                void customersQuery.refetch();
-              }}
-              disabled={loading}
+              onClick={() => void handleRefreshFromChorus()}
+              disabled={busy}
             >
-              {loading
+              {busy
                 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 : <RefreshCw className="mr-2 h-4 w-4" />}
-              Actualiser
+              Actualiser Chorus
             </Button>
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
           Les factures acceptées par l’action de traitement côté valideur sont rangées ici.
+          Le bouton Actualiser Chorus synchronise les statuts depuis Chorus pour garantir un affichage à jour.
         </p>
+        {chorusSyncError && (
+          <Alert variant="destructive" className="mt-2">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>{chorusSyncError}</AlertDescription>
+          </Alert>
+        )}
       </header>
 
       <Card>
@@ -1775,6 +1965,12 @@ function BulkConsultCard({
   state,
   rows,
   suspendedRows,
+  aActionnerRows,
+  validationInterneRows,
+  cheminementRows,
+  prisesEnCompteRows,
+  paiementRows,
+  erreursTechniquesRows,
   responseRows,
   notificationRows,
   pendingRows,
@@ -1787,6 +1983,12 @@ function BulkConsultCard({
   state: BulkConsultState;
   rows: ReceptionDisplayRow[];
   suspendedRows: ReceptionDisplayRow[];
+  aActionnerRows: ReceptionDisplayRow[];
+  validationInterneRows: ReceptionDisplayRow[];
+  cheminementRows: ReceptionDisplayRow[];
+  prisesEnCompteRows: ReceptionDisplayRow[];
+  paiementRows: ReceptionDisplayRow[];
+  erreursTechniquesRows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
   notificationRows: ReceptionDisplayRow[];
   pendingRows: ReceptionDisplayRow[];
@@ -1794,7 +1996,15 @@ function BulkConsultCard({
   onPreviewInvoice: (invoice: ReceptionInvoice) => void;
 }) {
   const isLoading = state.status === 'loading';
-  const hasAnyRows = rows.length > 0 || suspendedRows.length > 0 || pendingRows.length > 0;
+  const hasAnyRows = rows.length > 0
+    || suspendedRows.length > 0
+    || aActionnerRows.length > 0
+    || validationInterneRows.length > 0
+    || cheminementRows.length > 0
+    || prisesEnCompteRows.length > 0
+    || paiementRows.length > 0
+    || erreursTechniquesRows.length > 0
+    || pendingRows.length > 0;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -1861,23 +2071,79 @@ function BulkConsultCard({
             <BulkSummaryStrip
               received={rows.length}
               suspended={suspendedRows.length}
+              aActionner={aActionnerRows.length}
+              validation={validationInterneRows.length}
+              cheminement={cheminementRows.length}
+              prisesEnCompte={prisesEnCompteRows.length}
+              paiement={paiementRows.length}
+              erreursTechniques={erreursTechniquesRows.length}
               pending={pendingRows.length}
               totalStored={state.totalStored ?? rows.length + suspendedRows.length + pendingRows.length}
               detailFailed={state.detailFailed ?? pendingRows.filter((row) => row.detailStatus === 'error').length}
             />
             {rows.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Factures reçues à traiter</h3>
-                <p className="text-xs text-muted-foreground">Factures reçues à examiner ou traiter depuis Chorus Pilot.</p>
-                <BulkResultsTable rows={rows} onPreviewInvoice={onPreviewInvoice} />
-              </div>
+              <PhaseSection
+                title="Factures reçues à traiter"
+                description="Factures actionnables (mises à disposition, à recycler, erreurs fournisseur sur valideur)."
+                rows={rows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
             )}
             {suspendedRows.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">Factures suspendues</h3>
-                <p className="text-xs text-muted-foreground">Factures nécessitant un complément : commentaire ou pièce jointe complémentaire.</p>
-                <BulkResultsTable rows={suspendedRows} onPreviewInvoice={onPreviewInvoice} />
-              </div>
+              <PhaseSection
+                title="Factures suspendues"
+                description="Factures nécessitant un complément : commentaire ou pièce jointe complémentaire."
+                rows={suspendedRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
+            )}
+            {aActionnerRows.length > 0 && (
+              <PhaseSection
+                title="À actionner"
+                description="Factures en attente d'une action métier : à compléter, à associer, à recycler, non conforme."
+                rows={aActionnerRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
+            )}
+            {validationInterneRows.length > 0 && (
+              <PhaseSection
+                title="Validation interne"
+                description="Workflow valideur (BROUILLON, A_VALIDER_*, VALIDEE_*)."
+                rows={validationInterneRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
+            )}
+            {cheminementRows.length > 0 && (
+              <PhaseSection
+                title="En cheminement Chorus"
+                description="Factures en cours d'acheminement, mises à disposition ou en traitement pivot (DEPOSEE, EN_COURS_ACHEMINEMENT, ASSOCIEE, INTERPRETEE_OCR, COMPLETEE, SERVICE_FAIT, etc.)."
+                rows={cheminementRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
+            )}
+            {prisesEnCompteRows.length > 0 && (
+              <PhaseSection
+                title="Prises en compte"
+                description="Accusés de prise en compte (MOE, MOA, destinataire)."
+                rows={prisesEnCompteRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
+            )}
+            {paiementRows.length > 0 && (
+              <PhaseSection
+                title="Paiement et comptabilité"
+                description="Factures mandatées, mises en paiement ou comptabilisées."
+                rows={paiementRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
+            )}
+            {erreursTechniquesRows.length > 0 && (
+              <PhaseSection
+                title="Erreurs techniques"
+                description="Erreurs côté MOE / MOA / destinataire ou statut technique inconnu."
+                rows={erreursTechniquesRows}
+                onPreviewInvoice={onPreviewInvoice}
+              />
             )}
             {pendingRows.length > 0 && (
               <div className="space-y-2">
@@ -1906,28 +2172,68 @@ function BulkConsultCard({
   );
 }
 
+function PhaseSection({
+  title,
+  description,
+  rows,
+  onPreviewInvoice,
+}: {
+  title: string;
+  description: string;
+  rows: ReceptionDisplayRow[];
+  onPreviewInvoice: (invoice: ReceptionInvoice) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium">{title} ({rows.length})</h3>
+      <p className="text-xs text-muted-foreground">{description}</p>
+      <BulkResultsTable rows={rows} onPreviewInvoice={onPreviewInvoice} />
+    </div>
+  );
+}
+
 function BulkSummaryStrip({
   received,
   suspended,
+  aActionner,
+  validation,
+  cheminement,
+  prisesEnCompte,
+  paiement,
+  erreursTechniques,
   pending,
   totalStored,
   detailFailed,
 }: {
   received: number;
   suspended: number;
+  aActionner: number;
+  validation: number;
+  cheminement: number;
+  prisesEnCompte: number;
+  paiement: number;
+  erreursTechniques: number;
   pending: number;
   totalStored: number;
   detailFailed: number;
 }) {
+  const tone = (count: number, activeClass: string) =>
+    count > 0 ? activeClass : 'text-muted-foreground';
   const tiles = [
     { label: 'À traiter', value: received, tone: 'text-foreground' },
-    { label: 'Suspendues', value: suspended, tone: suspended > 0 ? 'text-amber-700' : 'text-muted-foreground' },
-    { label: 'À qualifier', value: pending, tone: pending > 0 ? 'text-amber-600' : 'text-muted-foreground' },
+    { label: 'Suspendues', value: suspended, tone: tone(suspended, 'text-amber-700') },
+    { label: 'À actionner', value: aActionner, tone: tone(aActionner, 'text-amber-700') },
+    { label: 'Validation', value: validation, tone: tone(validation, 'text-yellow-700') },
+    { label: 'Cheminement', value: cheminement, tone: tone(cheminement, 'text-sky-700') },
+    { label: 'Prises en compte', value: prisesEnCompte, tone: tone(prisesEnCompte, 'text-emerald-700') },
+    { label: 'Paiement', value: paiement, tone: tone(paiement, 'text-emerald-700') },
+    { label: 'Erreurs tech.', value: erreursTechniques, tone: tone(erreursTechniques, 'text-destructive') },
+    { label: 'À qualifier', value: pending, tone: tone(pending, 'text-amber-600') },
     { label: 'En base', value: totalStored, tone: 'text-muted-foreground' },
-    { label: 'À vérifier', value: detailFailed, tone: detailFailed > 0 ? 'text-amber-600' : 'text-muted-foreground' },
+    { label: 'À vérifier', value: detailFailed, tone: tone(detailFailed, 'text-amber-600') },
   ];
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5 stagger-children">
+    <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 stagger-children">
       {tiles.map((tile, index) => (
         <div
           key={tile.label}
@@ -2091,7 +2397,7 @@ function ProcessedInvoicesTable({
           <tr className="border-b bg-muted/30 text-left">
             <th className="p-3 font-medium">ID CPP</th>
             <th className="p-3 font-medium">N° facture</th>
-            <th className="p-3 font-medium">Statut traité</th>
+            <th className="p-3 font-medium">Statut Chorus actuel</th>
             <th className="p-3 font-medium">Traitement</th>
             <th className="p-3 font-medium">Fournisseur</th>
             <th className="p-3 font-medium">Destinataire</th>
@@ -2105,6 +2411,11 @@ function ProcessedInvoicesTable({
             const f = row.facture;
             const processedAt = row.processed?.processedAt;
             const animationDelay = `${Math.min(index, 12) * 40}ms`;
+            const currentStatus = f.statutFacture ?? row.processed?.status ?? null;
+            const appliedStatus = row.processed?.status ?? null;
+            const statusDiffers = currentStatus
+              && appliedStatus
+              && currentStatus.trim().toUpperCase() !== appliedStatus.trim().toUpperCase();
             return (
               <tr
                 key={row.identifiantFactureCPP}
@@ -2128,7 +2439,14 @@ function ProcessedInvoicesTable({
                   </span>
                 </td>
                 <td className="p-3">{f.numeroFacture ?? '—'}</td>
-                <td className="p-3"><StatusPill value={row.processed?.status ?? f.statutFacture} /></td>
+                <td className="p-3">
+                  <StatusPill value={currentStatus} />
+                  {statusDiffers && (
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      Appliqué : {appliedStatus}
+                    </div>
+                  )}
+                </td>
                 <td className="p-3">
                   <div>{processedAt ? formatDateTime(processedAt) : '—'}</div>
                   {row.processed?.libelle && (

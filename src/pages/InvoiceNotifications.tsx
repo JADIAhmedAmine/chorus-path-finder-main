@@ -30,6 +30,8 @@ import {
 import { formatCurrency, formatDateTime } from '@/lib/status-utils';
 import type { Invoice, InvoiceStatusHistory, PublicCustomer, SupplierOrganization } from '@/types';
 
+type NotificationScope = 'emission' | 'reception';
+
 type NotificationFilters = {
   query: string;
   status: string;
@@ -316,6 +318,7 @@ function buildNotificationRows(
   histories: InvoiceStatusHistory[],
   suppliersById: Map<string, SupplierOrganization>,
   customersById: Map<string, PublicCustomer>,
+  scope: NotificationScope = 'emission',
 ): NotificationRow[] {
   const historyByInvoiceId = histories.reduce((map, event) => {
     if (!event.invoiceId) return map;
@@ -325,9 +328,12 @@ function buildNotificationRows(
     return map;
   }, new Map<string, InvoiceStatusHistory[]>());
 
+  const scopeFilter = scope === 'reception'
+    ? (invoice: Invoice) => isReceptionDerivedInvoice(invoice)
+    : (invoice: Invoice) => !isReceptionDerivedInvoice(invoice) && isEmittedChorusInvoice(invoice);
+
   return invoices
-    .filter((invoice) => !isReceptionDerivedInvoice(invoice))
-    .filter(isEmittedChorusInvoice)
+    .filter(scopeFilter)
     .map((invoice) => {
       const currentStatus = getInvoiceChorusStatus(invoice);
       const historyEvents = [
@@ -367,6 +373,7 @@ function buildNotificationRows(
 
 export default function InvoiceNotificationsPage() {
   const navigate = useNavigate();
+  const [scope, setScope] = useState<NotificationScope>('emission');
   const [filters, setFilters] = useState<NotificationFilters>(EMPTY_FILTERS);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -397,8 +404,9 @@ export default function InvoiceNotificationsPage() {
       historyQuery.data ?? [],
       suppliersById,
       customersById,
+      scope,
     ),
-    [customersById, historyQuery.data, invoicesQuery.data?.items, suppliersById],
+    [customersById, historyQuery.data, invoicesQuery.data?.items, scope, suppliersById],
   );
 
   const statusOptions = useMemo(
@@ -497,15 +505,18 @@ export default function InvoiceNotificationsPage() {
           <div className="flex items-center gap-3">
             <Bell className="h-7 w-7 text-primary" />
             <div>
-              <h1 className="text-2xl font-semibold">Notifications d’émission</h1>
+              <h1 className="text-2xl font-semibold">
+                {scope === 'emission' ? 'Notifications d’émission' : 'Notifications de réception'}
+              </h1>
               <p className="max-w-4xl text-sm text-muted-foreground">
-                Ici on suit les factures émises dont Chorus a remonté un changement de statut côté destinataire.
-                La page est en lecture seule : on observe le retour, puis on ouvre la fiche complète si besoin.
+                {scope === 'emission'
+                  ? 'Ici on suit les factures émises dont Chorus a remonté un changement de statut côté destinataire. La page est en lecture seule : on observe le retour, puis on ouvre la fiche complète si besoin.'
+                  : 'Ici on suit les factures reçues dont le statut Chorus a évolué (rejets, refus, suspensions, paiements, prises en compte…). La page est en lecture seule : ouvrir la fiche pour agir.'}
               </p>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Badge variant="secondary">Émission</Badge>
+            <Badge variant="secondary">{scope === 'emission' ? 'Émission' : 'Réception'}</Badge>
             <Badge variant="outline">Lecture seule</Badge>
             <Badge variant="outline">Basé sur le statut Chorus et l’historique disponible</Badge>
           </div>
@@ -517,6 +528,33 @@ export default function InvoiceNotificationsPage() {
           </Button>
         </div>
       </header>
+
+      <div className="inline-flex rounded-md border bg-muted/30 p-1">
+        {([
+          { value: 'emission', label: 'Émission' },
+          { value: 'reception', label: 'Réception' },
+        ] as const).map((tab) => {
+          const active = scope === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => {
+                setScope(tab.value);
+                setFilters(EMPTY_FILTERS);
+              }}
+              className={`rounded px-4 py-1.5 text-sm font-medium transition-colors ${
+                active
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              aria-pressed={active}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
       {error && (
         <Alert variant="destructive">
@@ -543,10 +581,9 @@ export default function InvoiceNotificationsPage() {
         <Clock3 className="h-4 w-4" />
         <AlertTitle>Aucune action métier directe ici</AlertTitle>
         <AlertDescription>
-          Une notification signale un changement de statut sur une facture émise. Les corrections, compléments ou rejets
-          se traitent depuis les pages Émissions à traiter, Rejets / refus ou depuis la fiche de facture.
-          L’historique et les actions connues restent affichés ici pour comprendre le contexte.
-          MISE_A_DISPOSITION seule reste du suivi normal : elle n’apparaît pas comme notification tant que le destinataire n’a pas traité.
+          {scope === 'emission'
+            ? 'Une notification signale un changement de statut sur une facture émise. Les corrections, compléments ou rejets se traitent depuis les pages Émissions à traiter, Rejets / refus ou depuis la fiche de facture. L’historique et les actions connues restent affichés ici pour comprendre le contexte. MISE_A_DISPOSITION seule reste du suivi normal : elle n’apparaît pas comme notification tant que le destinataire n’a pas traité.'
+            : 'Une notification signale un changement de statut sur une facture reçue (rejet, refus, suspension, recyclage, paiement, prise en compte…). Les actions métier s’effectuent depuis la page Traiter reçues ou la fiche de facture. L’historique reste consultable ici pour comprendre le contexte.'}
         </AlertDescription>
       </Alert>
 
@@ -661,7 +698,7 @@ export default function InvoiceNotificationsPage() {
               <table className="w-full min-w-[1260px] text-sm">
                 <thead>
                   <tr className="border-b bg-muted/30 text-left">
-                    <th className="p-3 font-medium">Facture émise</th>
+                    <th className="p-3 font-medium">{scope === 'emission' ? 'Facture émise' : 'Facture reçue'}</th>
                     <th className="p-3 font-medium">Nouveau statut</th>
                     <th className="p-3 font-medium">Fournisseur</th>
                     <th className="p-3 font-medium">Destinataire</th>
@@ -676,7 +713,30 @@ export default function InvoiceNotificationsPage() {
                 <tbody>
                   {filteredRows.map((row) => {
                     const invoice = row.invoice;
-                    const detailPath = `/invoices/chorus/${encodeURIComponent(invoice.id)}`;
+                    const receptionCpp = scope === 'reception'
+                      ? (() => {
+                          const raw = rawPayload(invoice);
+                          const candidates: unknown[] = [
+                            invoice.chorusInvoiceNumber,
+                            raw.identifiantFactureCPP,
+                            raw.idFactureCPP,
+                            raw.idFacture,
+                          ];
+                          for (const candidate of candidates) {
+                            if (typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0) {
+                              return candidate;
+                            }
+                            if (typeof candidate === 'string' && /^\d+$/.test(candidate.trim())) {
+                              const parsed = Number(candidate.trim());
+                              if (Number.isInteger(parsed) && parsed > 0) return parsed;
+                            }
+                          }
+                          return null;
+                        })()
+                      : null;
+                    const detailPath = receptionCpp !== null
+                      ? `/invoices/reception/${receptionCpp}`
+                      : `/invoices/chorus/${encodeURIComponent(invoice.id)}`;
                     return (
                       <tr
                         key={`${invoice.id}-${row.eventAt}-${row.status}`}
@@ -754,8 +814,12 @@ export default function InvoiceNotificationsPage() {
           ) : (
             <EmptyState
               icon={Bell}
-              title="Aucune notification d’émission"
-              description="Les changements de statut sur les factures émises apparaîtront ici après synchronisation Chorus."
+              title={scope === 'emission' ? 'Aucune notification d’émission' : 'Aucune notification de réception'}
+              description={
+                scope === 'emission'
+                  ? 'Les changements de statut sur les factures émises apparaîtront ici après synchronisation Chorus.'
+                  : 'Les changements de statut sur les factures reçues apparaîtront ici après synchronisation Chorus.'
+              }
             />
           )}
         </CardContent>
