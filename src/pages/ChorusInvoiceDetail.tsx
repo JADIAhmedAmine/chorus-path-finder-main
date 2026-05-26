@@ -13,6 +13,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ChorusBackendAutomationClient, ChorusBackendAutomationError } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
+import { CompleteSuspendedInvoiceCard } from '@/components/chorus/CompleteSuspendedInvoiceCard';
 import { SubmissionStateInsight } from '@/components/chorus/SubmissionStateInsight';
 import {
   dbQueryKeys,
@@ -418,6 +419,7 @@ export default function ChorusInvoiceDetail() {
 
   const rawStatus = (invoice.statusChorus || invoice.statusInternal).toUpperCase();
   const isRecyclable = isRecycleStatus(rawStatus);
+  const isSuspended = rawStatus.includes('SUSPEND');
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS'
     || invoice.statusInternal === 'REJECTED_TECHNICAL'
     || rawStatus.includes('REJET')
@@ -667,6 +669,28 @@ export default function ChorusInvoiceDetail() {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {isSuspended && chorusPaymentRequestId && (
+        <CompleteSuspendedInvoiceCard
+          identifiantFactureCPP={chorusPaymentRequestId}
+          statutFacture={invoice.statusChorus || invoice.statusInternal}
+          attachments={[]}
+          onCompleted={() => {
+            void queryClient.invalidateQueries({ queryKey: ['db', 'invoices'] });
+            void queryClient.invalidateQueries({ queryKey: dbQueryKeys.invoiceDetail(invoice.id) });
+            void loadInvoiceHistory();
+          }}
+        />
+      )}
+
+      {isSuspended && !chorusPaymentRequestId && (
+        <Alert>
+          <AlertDescription>
+            Facture suspendue côté émission, mais l’identifiant CPP nécessaire au complément est introuvable
+            dans les données synchronisées. Actualisez l’historique Chorus ou resynchronisez la facture.
+          </AlertDescription>
+        </Alert>
       )}
 
       {isRecyclable && (

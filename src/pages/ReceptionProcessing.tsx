@@ -1569,7 +1569,7 @@ export function ReceptionNotificationsPage() {
           {loading ? (
             <SkeletonTable rows={5} columns={9} />
           ) : filteredRows.length > 0 ? (
-            <ReceivedResponsesTable rows={filteredRows} onPreviewInvoice={openDrawerForInvoice} />
+            <NotificationRowsTable rows={filteredRows} onPreviewInvoice={openDrawerForInvoice} />
           ) : rows.length > 0 ? (
             <EmptyState
               title="Aucune notification ne correspond aux filtres"
@@ -2216,7 +2216,7 @@ function FavorableResponsesTable({ rows }: { rows: ReceptionDisplayRow[] }) {
                 <td className="p-3 text-right">
                   <Button variant="ghost" size="sm" asChild>
                     <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
-                      <Eye className="mr-1 h-3.5 w-3.5" /> Comprendre
+                      <Eye className="mr-1 h-3.5 w-3.5" /> Détail
                     </Link>
                   </Button>
                 </td>
@@ -2290,7 +2290,7 @@ function ReceivedResponsesTable({
                     </Button>
                     <Button variant="ghost" size="sm" asChild>
                       <Link to={`/invoices/reception/${row.identifiantFactureCPP}`}>
-                        Comprendre
+                        Détail
                       </Link>
                     </Button>
                   </div>
@@ -2335,7 +2335,17 @@ function NotificationRowsTable({
             return (
               <tr
                 key={row.identifiantFactureCPP}
-                className="border-b last:border-0 animate-fade-in-up"
+                onClick={() => onPreviewInvoice(f)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onPreviewInvoice(f);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                aria-label={`Aperçu notification ${row.identifiantFactureCPP}`}
+                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none animate-fade-in-up"
                 style={{ animationDelay }}
               >
                 <td className="p-3">{f.numeroFacture ?? '—'}</td>

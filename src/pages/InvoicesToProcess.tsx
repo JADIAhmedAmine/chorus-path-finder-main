@@ -93,6 +93,43 @@ function ChorusStatusPill({ value }: { value: string }) {
   );
 }
 
+function actionForStatus(invoice: Invoice): { label: string; helper: string; href: string } {
+  const status = getInvoiceChorusStatus(invoice).toUpperCase();
+  if (status.includes('SUSPEND')) {
+    return {
+      label: 'Compléter',
+      helper: 'Répondre à la suspension côté émission avec commentaire ou pièces.',
+      href: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
+    };
+  }
+  if (status.includes('RECYCL')) {
+    return {
+      label: 'Recycler',
+      helper: 'Corriger puis relancer selon le motif Chorus.',
+      href: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
+    };
+  }
+  if (status.includes('A_VALIDER')) {
+    return {
+      label: 'Valider',
+      helper: 'Contrôler la facture avant action de validation.',
+      href: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
+    };
+  }
+  if (status.includes('ERREUR') || status.includes('NON_CONFORME')) {
+    return {
+      label: 'Analyser',
+      helper: 'Lire le motif technique et corriger les données.',
+      href: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
+    };
+  }
+  return {
+    label: 'Voir détail',
+    helper: 'Consulter la fiche pour choisir la prochaine action.',
+    href: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
+  };
+}
+
 export default function InvoicesToProcess() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<TreatmentFilter>('all');
@@ -297,7 +334,7 @@ export default function InvoicesToProcess() {
   ].filter(Boolean).length;
 
   const statCards = [
-    { label: 'À corriger', value: actionableInvoices.length, icon: AlertTriangle, color: 'text-destructive/60' },
+    { label: 'À traiter', value: actionableInvoices.length, icon: AlertTriangle, color: 'text-destructive/60' },
     { label: 'En attente', value: pendingCount, icon: Clock3, color: 'text-warning/70' },
     { label: 'Montant TTC', value: formatCurrency(actionableTotalTtc), icon: Euro, color: 'text-info/70' },
   ];
@@ -306,9 +343,9 @@ export default function InvoicesToProcess() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Émissions à corriger</h1>
+          <h1 className="text-2xl font-semibold">Émissions à traiter</h1>
           <p className="text-sm text-muted-foreground">
-            {loading ? 'Chargement depuis le cache local...' : `${filteredInvoices.length} émission(s) à corriger`}
+            {loading ? 'Chargement depuis le cache local...' : `${filteredInvoices.length} émission(s) à traiter`}
           </p>
         </div>
         <Button variant="outline" onClick={handleRefresh} disabled={syncing || loading}>
@@ -355,7 +392,7 @@ export default function InvoicesToProcess() {
             <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as TreatmentFilter)}>
               <SelectTrigger className="w-full lg:w-[220px]"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Toutes à corriger</SelectItem>
+                <SelectItem value="all">Toutes à traiter</SelectItem>
                 <SelectItem value="pending">En attente</SelectItem>
               </SelectContent>
             </Select>
@@ -449,13 +486,15 @@ export default function InvoicesToProcess() {
                   <th className="p-3 text-left font-medium">Motif</th>
                   <th className="p-3 text-right font-medium">Montant TTC</th>
                   <th className="p-3 text-left font-medium">Dernier statut</th>
-                  <th className="p-3 text-left font-medium">Action</th>
+                  <th className="p-3 text-left font-medium">Action possible</th>
+                  <th className="p-3 text-right font-medium">Fiche</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredInvoices.map((invoice) => {
                   const supplier = supplierById.get(invoice.supplierOrganizationId);
                   const customer = customerById.get(invoice.publicCustomerId);
+                  const action = actionForStatus(invoice);
                   return (
                     <tr key={invoice.id} className="border-b hover:bg-muted/20">
                       <td className="p-3 font-medium">
@@ -484,9 +523,16 @@ export default function InvoicesToProcess() {
                         {invoice.lastStatusSyncAt ? formatDateTime(invoice.lastStatusSyncAt) : '-'}
                       </td>
                       <td className="p-3">
+                        <div className="max-w-[260px]">
+                          <div className="font-medium">{action.label}</div>
+                          <div className="text-xs text-muted-foreground">{action.helper}</div>
+                        </div>
+                      </td>
+                      <td className="p-3 text-right">
                         <Button variant="ghost" size="sm" asChild>
-                          <Link to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`} target="_blank" rel="noreferrer">
-                            <ExternalLink className="h-4 w-4" />
+                          <Link to={action.href}>
+                            <ExternalLink className="mr-1 h-4 w-4" />
+                            {action.label}
                           </Link>
                         </Button>
                       </td>
@@ -495,8 +541,8 @@ export default function InvoicesToProcess() {
                 })}
                 {filteredInvoices.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-muted-foreground">
-                      {loading ? 'Chargement des émissions...' : 'Aucune émission à corriger'}
+                    <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                      {loading ? 'Chargement des émissions...' : 'Aucune émission à traiter'}
                     </td>
                   </tr>
                 )}
