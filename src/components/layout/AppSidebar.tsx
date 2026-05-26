@@ -25,12 +25,12 @@ const mainItems: SidebarNavItem[] = [
 
 const receptionItems: SidebarNavItem[] = [
   { title: 'Factures reçues', url: '/invoices/reception', icon: Inbox },
-  { title: 'Notifications', url: '/invoices/reception/notifications', icon: Bell },
   { title: 'Factures traitées', url: '/invoices/reception/processed', icon: CheckCircle2 },
 ];
 
 const emissionItems: SidebarNavItem[] = [
   { title: 'Suivi des émissions', url: '/invoices', icon: FileText },
+  { title: 'Notifications', url: '/invoices/notifications', icon: Bell },
   { title: 'Rejets / refus', url: '/invoices/rejections', icon: MessageSquareWarning },
   { title: 'Émissions à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle émission', url: '/invoices/new', icon: Upload },
@@ -75,7 +75,7 @@ export function AppSidebar() {
     if (
       path === '/invoices/reception/processed'
       || path === '/invoices/reception/responses'
-      || path === '/invoices/reception/notifications'
+      || path === '/invoices/notifications'
       || path === '/invoices/rejections'
     ) {
       return location.pathname === path;
@@ -86,7 +86,6 @@ export function AppSidebar() {
           location.pathname.startsWith('/invoices/reception/')
           && location.pathname !== '/invoices/reception/processed'
           && location.pathname !== '/invoices/reception/responses'
-          && location.pathname !== '/invoices/reception/notifications'
         );
     }
     if (invoiceItems.some((item) => item.url === path)) {
