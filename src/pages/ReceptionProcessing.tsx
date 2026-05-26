@@ -1847,10 +1847,10 @@ function BulkConsultCard({
             <AlertTitle>{notificationRows.length} notification(s) Chorus isolée(s)</AlertTitle>
             <AlertDescription className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
               <span>
-                Ces retours ne sont pas des factures à traiter. Ils sont disponibles dans la page Notifications.
+                Ces retours ne sont pas des factures à traiter dans la file de réception. Ils sont disponibles dans Notifications d’émission.
               </span>
               <Button variant="outline" size="sm" asChild>
-                <Link to="/invoices/reception/notifications">Ouvrir Notifications</Link>
+                <Link to="/invoices/notifications">Ouvrir Notifications</Link>
               </Button>
             </AlertDescription>
           </Alert>

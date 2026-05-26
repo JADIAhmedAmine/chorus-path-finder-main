@@ -20,8 +20,9 @@ import Monitoring from "./pages/Monitoring";
 import ChorusPilotPage from "./pages/ChorusPilotPage";
 import CGUPage from "./pages/CGUPage";
 import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
-import ReceptionProcessing, { ProcessedReceptionInvoices, ReceptionNotificationsPage } from "./pages/ReceptionProcessing";
+import ReceptionProcessing, { ProcessedReceptionInvoices } from "./pages/ReceptionProcessing";
 import EmissionRejectionsPage from "./pages/EmissionRejections";
+import InvoiceNotificationsPage from "./pages/InvoiceNotifications";
 import Login from "./pages/Login";
 import NotFound from "./pages/NotFound";
 
@@ -120,10 +121,11 @@ const App = () => (
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/chorus-pilot" element={<RequireAuth><AppLayout><ChorusPilotPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/notifications" element={<RequireAuth><AppLayout><InvoiceNotificationsPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/rejections" element={<RequireAuth><AppLayout><EmissionRejectionsPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception" element={<RequireAuth><AppLayout><ReceptionProcessing /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception/responses" element={<RequireAuth><Navigate to="/invoices/rejections" replace /></RequireAuth>} />
-            <Route path="/invoices/reception/notifications" element={<RequireAuth><AppLayout><ReceptionNotificationsPage /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/reception/notifications" element={<RequireAuth><Navigate to="/invoices/notifications" replace /></RequireAuth>} />
             <Route path="/invoices/reception/processed" element={<RequireAuth><AppLayout><ProcessedReceptionInvoices /></AppLayout></RequireAuth>} />
             <Route path="/invoices/reception/:id" element={<RequireAuth><AppLayout><ReceptionInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/to-process" element={<RequireAuth><AppLayout><InvoicesToProcess /></AppLayout></RequireAuth>} />
