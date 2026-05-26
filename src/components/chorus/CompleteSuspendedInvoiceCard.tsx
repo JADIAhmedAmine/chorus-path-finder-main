@@ -46,7 +46,7 @@ export function CompleteSuspendedInvoiceCard({
   attachments,
   onCompleted,
 }: CompleteSuspendedInvoiceCardProps) {
-  const isSuspended = statutFacture === 'SUSPENDUE';
+  const isSuspended = statutFacture?.trim().toUpperCase() === 'SUSPENDUE';
   const [commentaire, setCommentaire] = useState('');
   const [selectedAttachmentId, setSelectedAttachmentId] = useState('');
   const [attachmentType, setAttachmentType] = useState('DIVERS');

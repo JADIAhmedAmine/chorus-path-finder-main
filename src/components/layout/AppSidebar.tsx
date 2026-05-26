@@ -32,7 +32,7 @@ const receptionItems: SidebarNavItem[] = [
 const emissionItems: SidebarNavItem[] = [
   { title: 'Suivi des émissions', url: '/invoices', icon: FileText },
   { title: 'Rejets / refus', url: '/invoices/rejections', icon: MessageSquareWarning },
-  { title: 'Émissions à corriger', url: '/invoices/to-process', icon: AlertTriangle },
+  { title: 'Émissions à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle émission', url: '/invoices/new', icon: Upload },
 ];
 

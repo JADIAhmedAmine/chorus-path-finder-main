@@ -4,7 +4,6 @@ import { ArrowLeft, FileJson, History, Loader2, Receipt, RefreshCw } from 'lucid
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { CompleteSuspendedInvoiceCard } from '@/components/chorus/CompleteSuspendedInvoiceCard';
 import { ProcessReceivedInvoiceCard } from '@/components/chorus/ProcessReceivedInvoiceCard';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -104,11 +103,112 @@ function resolveInvoiceIdentifier(invoice: Invoice): number | null {
   return null;
 }
 
+function asDisplayString(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function firstString(record: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = asDisplayString(record[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function firstNumber(record: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value.replace(/\s/g, '').replace(',', '.'));
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function receptionInvoiceFromDbFallback(
+  invoice: Invoice,
+  raw: Record<string, unknown>,
+  identifier: number,
+): ReceptionInvoice {
+  const base = emptyReceptionInvoice(identifier);
+  return {
+    ...base,
+    numeroFacture: invoice.supplierInvoiceNumber
+      || firstString(raw, ['numeroFacture', 'numeroFactureSaisi', 'numeroFactureFournisseur']),
+    statutFacture: invoice.statusChorus
+      || firstString(raw, ['statutCourant', 'libelleStatutCourant', 'statut'])
+      || invoice.statusInternal,
+    modeDepot: invoice.depositMode || firstString(raw, ['modeDepot', 'formatDepot']),
+    rejetTraite: invoice.rejectionProcessed ?? (typeof raw.rejetTraite === 'boolean' ? raw.rejetTraite : null),
+    commentaire: invoice.statusReasonLabel
+      || invoice.statusReasonCode
+      || firstString(raw, ['commentaire', 'motif', 'libelle']),
+    fournisseur: {
+      id: invoice.supplierChorusCode || firstString(raw, ['idFournisseur', 'idStructureCPP']),
+      siret: firstString(raw, ['codeFournisseur', 'siretFournisseur', 'identifiantFournisseur']),
+      raisonSociale: invoice.supplierChorusName
+        || firstString(raw, ['designationFournisseur', 'raisonSocialeFournisseur', 'nomFournisseur']),
+      codeService: firstString(raw, ['codeServiceFournisseur']),
+      code: firstString(raw, ['codeFournisseur']),
+      typeIdentifiant: firstString(raw, ['typeIdentifiantFournisseur']),
+      serviceExecutantId: firstString(raw, ['idServiceFournisseur']),
+      serviceExecutantLibelle: firstString(raw, ['libelleServiceFournisseur']),
+      miseEnPaiement: null,
+      adresse: null,
+    },
+    destinataire: {
+      id: invoice.recipientChorusId || firstString(raw, ['idDestinataire', 'idStructureDestinataire', 'idStructureCPP']),
+      siret: firstString(raw, ['codeDestinataire', 'siretDestinataire', 'siretStructure']),
+      raisonSociale: invoice.recipientChorusName
+        || firstString(raw, ['designationDestinataire', 'raisonSocialeDestinataire', 'nomDestinataire']),
+      codeService: invoice.serviceChorusCode || firstString(raw, ['codeServiceExecutant']),
+      code: invoice.recipientChorusCode || firstString(raw, ['codeDestinataire']),
+      typeIdentifiant: firstString(raw, ['typeIdentifiantDestinataire', 'typeIdentifiantStructure']),
+      serviceExecutantId: invoice.serviceChorusId || firstString(raw, ['idServiceExecutant']),
+      serviceExecutantLibelle: invoice.serviceChorusName || firstString(raw, ['libelleServiceExecutant']),
+      miseEnPaiement: typeof raw.miseEnPaiementDestinataire === 'boolean' ? raw.miseEnPaiementDestinataire : null,
+      adresse: null,
+    },
+    dates: {
+      dateFacture: invoice.invoiceDate || firstString(raw, ['dateFacture', 'dateEmission']),
+      dateDepot: invoice.submittedAt || firstString(raw, ['dateDepot', 'dateHeureDepot']),
+      dateEcheancePaiement: invoice.dueDate || firstString(raw, ['dateEcheancePaiement', 'dateEcheance']),
+      dateCreationFacture: firstString(raw, ['dateCreationFacture']),
+    },
+    montants: {
+      ht: invoice.totalHt || firstNumber(raw, ['montantHT', 'montantHtTotal']) || 0,
+      tva: invoice.totalVat || firstNumber(raw, ['montantTVA', 'montantTva']) || 0,
+      ttc: invoice.totalTtc || firstNumber(raw, ['montantTTC', 'montantTtcTotal']) || 0,
+      aPayer: invoice.amountToPay || firstNumber(raw, ['montantAPayer', 'montantApayer']) || invoice.totalTtc || 0,
+      devise: invoice.currencyCode || firstString(raw, ['codeDeviseFacture', 'deviseFacture', 'devise']) || 'EUR',
+      remiseGlobaleTtc: firstNumber(raw, ['montantRemiseGlobaleTTC']) || 0,
+      ttcAvantRemiseGlobale: firstNumber(raw, ['montantTtcAvantRemiseGlobalTTC']),
+      libelleDevise: firstString(raw, ['libelleDeviseFacture']),
+    },
+    references: {
+      numeroBonCommande: invoice.purchaseOrderNumber || firstString(raw, ['numeroBonCommande']),
+      numeroMarche: invoice.marketNumber || firstString(raw, ['numeroMarche']),
+      numeroDpMandat: firstString(raw, ['numeroDpMandat', 'numeroDp', 'numeroDP', 'numeroDemandePaiement']),
+      numeroFactureOrigine: firstString(raw, ['numeroFactureOrigine']),
+      motifExonerationTva: firstString(raw, ['motifExonerationTva']),
+      modePaiement: firstString(raw, ['modePaiement']),
+      typeFacture: invoice.chorusInvoiceType || firstString(raw, ['typeFacture', 'typeDemandePaiement']),
+      typeTva: firstString(raw, ['typeTva']),
+      tailleTotalePiecesJointes: firstNumber(raw, ['tailleTotalePiecesJointes']),
+    },
+  };
+}
+
 function storedReceptionInvoice(invoice: Invoice | undefined, identifier: number): ReceptionInvoice | null {
+  if (!invoice) return null;
   const rawPayload = invoice?.rawPayload;
-  const raw = isRecord(rawPayload) ? rawPayload : null;
+  const raw = isRecord(rawPayload) ? rawPayload : {};
   const stored = raw?.receptionNormalized;
-  if (!isRecord(stored)) return null;
+  if (!isRecord(stored)) return receptionInvoiceFromDbFallback(invoice, raw, identifier);
 
   const base = emptyReceptionInvoice(identifier);
   const detail = stored as unknown as ReceptionInvoice;
@@ -260,7 +360,7 @@ export default function ReceptionInvoiceDetail() {
     );
   }
 
-  if (invoicesQuery.isLoading || loadState.status === 'loading') {
+  if (!displayedInvoice && (invoicesQuery.isLoading || loadState.status === 'loading')) {
     return (
       <div className="mx-auto flex max-w-3xl items-center justify-center py-16">
         <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Chargement du détail réception...
@@ -332,13 +432,6 @@ export default function ReceptionInvoiceDetail() {
           onProcessed={refreshStoredInvoice}
         />
       )}
-
-      <CompleteSuspendedInvoiceCard
-        identifiantFactureCPP={identifier}
-        statutFacture={displayedInvoice.statutFacture}
-        attachments={displayedInvoice.piecesJointes}
-        onCompleted={refreshStoredInvoice}
-      />
 
       <ReceptionHistoryCard identifiantFactureCPP={identifier} onHistorySynced={refreshStoredInvoice} />
 

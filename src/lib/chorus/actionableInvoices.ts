@@ -14,8 +14,10 @@ export function isPaidChorusStatus(status: string): boolean {
 
 export function isActionableChorusStatus(status: string): boolean {
   const normalized = status.toUpperCase();
-  return isRejectedChorusStatus(status)
-    || normalized.includes('ERREUR')
+  if (isRejectedChorusStatus(status)) {
+    return false;
+  }
+  return normalized.includes('ERREUR')
     || normalized.includes('SUSPEND')
     || normalized.includes('RECYCL')
     || normalized.includes('NON_CONFORME')
