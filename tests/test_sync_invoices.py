@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import sys
 import unittest
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -63,6 +66,21 @@ class _FakeStorageSession:
 
     def scalar(self, _statement):
         return self.scalar_value
+
+
+class _FakePersistSession:
+    def __init__(self, invoice):
+        self.invoice = invoice
+        self.flushed = False
+
+    def get(self, _model, key: str):
+        return self.invoice if key == self.invoice.id else None
+
+    def scalar(self, _statement):
+        return self.invoice
+
+    def flush(self):
+        self.flushed = True
 
 
 class InvoiceSyncTest(unittest.TestCase):
@@ -168,6 +186,327 @@ class InvoiceSyncTest(unittest.TestCase):
                     sync_module._normalize_chorus_status_internal(status),
                     expected,
                 )
+
+    def test_persist_reception_invoice_detail_stores_raw_and_normalized_detail(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429597",
+            tenant_id="tenant-1",
+            raw_payload={"identifiantFactureCPP": 8429597, "statut": "REJETEE"},
+        )
+        session = _FakePersistSession(invoice)
+        facture = {
+            "identifiantFactureCPP": 8429597,
+            "numeroFacture": "EST-2025-00018",
+            "statutFacture": "MISE_A_DISPOSITION",
+        }
+        normalized = {
+            "identifiantFactureCPP": 8429597,
+            "numeroFacture": "EST-2025-00018",
+            "statutFacture": "MISE_A_DISPOSITION",
+            "modeDepot": "DEPOT_PDF_PORTAIL",
+            "rejetTraite": False,
+            "fournisseur": {
+                "id": "26359578",
+                "siret": "12345678901234",
+                "raisonSociale": "Fournisseur détail",
+                "codeService": None,
+            },
+            "destinataire": {
+                "id": "32242033407300",
+                "siret": "32242033407300",
+                "raisonSociale": "Destinataire détail",
+                "codeService": "SFACT",
+            },
+            "dates": {
+                "dateFacture": "2025-01-15",
+                "dateDepot": "2026-05-23",
+                "dateEcheancePaiement": "2026-06-30",
+            },
+            "montants": {
+                "ht": 1146.0,
+                "tva": 229.2,
+                "ttc": 1375.2,
+                "aPayer": 1375.2,
+                "devise": "EUR",
+            },
+            "references": {
+                "numeroBonCommande": "BC-001",
+                "numeroMarche": "M-001",
+                "typeFacture": "FACTURE",
+            },
+            "piecesJointes": [{"pieceJointeId": "PJ-1"}],
+        }
+
+        persisted = sync_module.persist_reception_invoice_detail(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429597,
+            facture=facture,
+            normalized_invoice=normalized,
+        )
+
+        self.assertTrue(persisted)
+        self.assertTrue(session.flushed)
+        self.assertEqual(invoice.raw_payload["receptionDetail"], facture)
+        self.assertEqual(invoice.raw_payload["receptionNormalized"], normalized)
+        self.assertEqual(
+            invoice.raw_payload["receptionClassification"]["kind"],
+            sync_module.RECEPTION_CLASS_FACTURE_RECUE,
+        )
+        self.assertEqual(invoice.chorus_invoice_number, "8429597")
+        self.assertEqual(invoice.supplier_invoice_number, "EST-2025-00018")
+        self.assertEqual(invoice.status_chorus, "MISE_A_DISPOSITION")
+        self.assertEqual(invoice.status_internal, "ACCEPTED_BY_CHORUS")
+        self.assertEqual(invoice.invoice_date, date(2025, 1, 15))
+        self.assertEqual(invoice.due_date, date(2026, 6, 30))
+        self.assertEqual(invoice.total_ttc, Decimal("1375.2"))
+        self.assertEqual(invoice.amount_to_pay, Decimal("1375.2"))
+        self.assertEqual(invoice.supplier_chorus_name, "Fournisseur détail")
+        self.assertEqual(invoice.recipient_chorus_name, "Destinataire détail")
+        self.assertEqual(invoice.service_chorus_code, "SFACT")
+        self.assertFalse(invoice.rejection_processed)
+        self.assertEqual(invoice.attachment_count, 1)
+
+    def test_merge_reception_raw_metadata_keeps_existing_classification_and_detail(self) -> None:
+        now = sync_module.datetime(2026, 5, 24, tzinfo=sync_module.timezone.utc)
+        merged = sync_module._merge_reception_raw_metadata(
+            {"identifiantFactureCPP": 8429597, "statut": "MISE_A_DISPOSITION"},
+            {
+                "identifiantFactureCPP": 8429597,
+                "receptionDetail": {"facture": "detail"},
+                "receptionNormalized": {"numeroFacture": "F-001"},
+                "receptionProcessing": {"processed": True, "status": "SERVICE_FAIT"},
+                "receptionClassification": {"kind": sync_module.RECEPTION_CLASS_FACTURE_RECUE},
+            },
+            now,
+        )
+
+        self.assertEqual(merged["statut"], "MISE_A_DISPOSITION")
+        self.assertEqual(merged["receptionDetail"], {"facture": "detail"})
+        self.assertEqual(merged["receptionNormalized"], {"numeroFacture": "F-001"})
+        self.assertEqual(merged["receptionProcessing"]["status"], "SERVICE_FAIT")
+        self.assertEqual(
+            merged["receptionClassification"]["kind"],
+            sync_module.RECEPTION_CLASS_FACTURE_RECUE,
+        )
+
+    def test_merge_reception_raw_metadata_marks_new_rows_to_qualify(self) -> None:
+        now = sync_module.datetime(2026, 5, 24, tzinfo=sync_module.timezone.utc)
+        merged = sync_module._merge_reception_raw_metadata(
+            {"identifiantFactureCPP": 8429597},
+            None,
+            now,
+        )
+
+        self.assertEqual(
+            merged["receptionClassification"]["kind"],
+            sync_module.RECEPTION_CLASS_A_QUALIFIER,
+        )
+        self.assertEqual(merged["receptionClassification"]["source"], "search_sync")
+
+    def test_merge_reception_raw_metadata_backfills_detail_classification(self) -> None:
+        now = sync_module.datetime(2026, 5, 24, tzinfo=sync_module.timezone.utc)
+        merged = sync_module._merge_reception_raw_metadata(
+            {"identifiantFactureCPP": 8429597},
+            {"receptionNormalized": {"identifiantFactureCPP": 8429597}},
+            now,
+        )
+
+        self.assertEqual(
+            merged["receptionClassification"]["kind"],
+            sync_module.RECEPTION_CLASS_FACTURE_RECUE,
+        )
+
+    def test_persist_reception_invoice_classification_marks_favorable_response(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429597",
+            tenant_id="tenant-1",
+            raw_payload={"identifiantFactureCPP": 8429597},
+        )
+        session = _FakePersistSession(invoice)
+
+        persisted = sync_module.persist_reception_invoice_classification(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429597,
+            kind=sync_module.RECEPTION_CLASS_REPONSE_FAVORABLE,
+            reason="Détail non disponible côté réception",
+        )
+
+        self.assertTrue(persisted)
+        self.assertTrue(session.flushed)
+        self.assertEqual(
+            invoice.raw_payload["receptionClassification"]["kind"],
+            sync_module.RECEPTION_CLASS_REPONSE_FAVORABLE,
+        )
+        self.assertEqual(
+            invoice.raw_payload["receptionClassification"]["reason"],
+            "Détail non disponible côté réception",
+        )
+
+    def test_persist_reception_invoice_processing_marks_invoice_processed(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429597",
+            tenant_id="tenant-1",
+            raw_payload={
+                "identifiantFactureCPP": 8429597,
+                "receptionNormalized": {
+                    "identifiantFactureCPP": 8429597,
+                    "numeroFacture": "F-001",
+                    "statutFacture": "MISE_A_DISPOSITION",
+                },
+            },
+            status_chorus="MISE_A_DISPOSITION",
+            status_internal="ACCEPTED_BY_CHORUS",
+        )
+        session = _FakePersistSession(invoice)
+
+        persisted = sync_module.persist_reception_invoice_processing(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429597,
+            new_status="SERVICE_FAIT",
+            response={"codeRetour": 0, "libelle": "TRA_MSG_00.000"},
+        )
+
+        self.assertTrue(persisted)
+        self.assertTrue(session.flushed)
+        self.assertEqual(invoice.status_chorus, "SERVICE_FAIT")
+        self.assertEqual(invoice.status_internal, "ACCEPTED_BY_CHORUS")
+        self.assertEqual(invoice.raw_payload["receptionProcessing"]["processed"], True)
+        self.assertEqual(invoice.raw_payload["receptionProcessing"]["status"], "SERVICE_FAIT")
+        self.assertEqual(invoice.raw_payload["receptionProcessing"]["libelle"], "TRA_MSG_00.000")
+        self.assertEqual(
+            invoice.raw_payload["receptionNormalized"]["statutFacture"],
+            "SERVICE_FAIT",
+        )
+
+    def test_persist_reception_invoice_detail_does_not_auto_mark_suspended_processed(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429592",
+            tenant_id="tenant-1",
+            raw_payload={
+                "identifiantFactureCPP": 8429592,
+                "receptionNormalized": {
+                    "identifiantFactureCPP": 8429592,
+                    "statutFacture": "MISE_A_DISPOSITION",
+                },
+            },
+            status_chorus="MISE_A_DISPOSITION",
+            status_internal="ACCEPTED_BY_CHORUS",
+        )
+        session = _FakePersistSession(invoice)
+        facture = {"identifiantFactureCPP": 8429592, "statutFacture": "SUSPENDUE"}
+        normalized = {
+            "identifiantFactureCPP": 8429592,
+            "numeroFacture": "EST-2025-00001",
+            "statutFacture": "SUSPENDUE",
+            "dates": {},
+            "montants": {},
+            "references": {},
+            "piecesJointes": [],
+        }
+
+        persisted = sync_module.persist_reception_invoice_detail(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429592,
+            facture=facture,
+            normalized_invoice=normalized,
+        )
+
+        self.assertTrue(persisted)
+        self.assertEqual(invoice.status_chorus, "SUSPENDUE")
+        self.assertNotIn("receptionProcessing", invoice.raw_payload)
+
+    def test_persist_reception_invoice_history_status_updates_status_without_processing_marker(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429592",
+            tenant_id="tenant-1",
+            raw_payload={
+                "identifiantFactureCPP": 8429592,
+                "receptionNormalized": {
+                    "identifiantFactureCPP": 8429592,
+                    "statutFacture": "MISE_A_DISPOSITION",
+                },
+            },
+            status_chorus="MISE_A_DISPOSITION",
+            status_internal="ACCEPTED_BY_CHORUS",
+        )
+        session = _FakePersistSession(invoice)
+
+        persisted = sync_module.persist_reception_invoice_history_status(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429592,
+            history_response={
+                "codeRetour": 0,
+                "idFacture": 8429592,
+                "statutCourantCode": "SUSPENDUE",
+                "historiquesDesStatuts": {
+                    "histoStatut": [
+                        {
+                            "histoStatutId": 1,
+                            "histoStatutCode": "MISE_A_DISPOSITION",
+                            "histoStatutDatePassage": "2026-05-23T12:00:00+02:00",
+                        },
+                        {
+                            "histoStatutId": 2,
+                            "histoStatutCode": "SUSPENDUE",
+                            "histoStatutDatePassage": "2026-05-23T12:10:00+02:00",
+                        },
+                    ],
+                },
+            },
+        )
+
+        self.assertTrue(persisted)
+        self.assertTrue(session.flushed)
+        self.assertEqual(invoice.status_chorus, "SUSPENDUE")
+        self.assertEqual(invoice.raw_payload["receptionHistory"]["status"], "SUSPENDUE")
+        self.assertNotIn("receptionProcessing", invoice.raw_payload)
+        self.assertEqual(
+            invoice.raw_payload["receptionNormalized"]["statutFacture"],
+            "SUSPENDUE",
+        )
+
+    def test_persist_reception_invoice_history_status_uses_latest_history_item(self) -> None:
+        invoice = SimpleNamespace(
+            id="chorus-8429592",
+            tenant_id="tenant-1",
+            raw_payload={"identifiantFactureCPP": 8429592},
+            status_chorus="MISE_A_DISPOSITION",
+            status_internal="ACCEPTED_BY_CHORUS",
+        )
+        session = _FakePersistSession(invoice)
+
+        persisted = sync_module.persist_reception_invoice_history_status(
+            session,
+            tenant_id="tenant-1",
+            identifier=8429592,
+            history_response={
+                "codeRetour": 0,
+                "idFacture": 8429592,
+                "historiquesDesStatuts": {
+                    "histoStatut": [
+                        {
+                            "histoStatutId": 1,
+                            "histoStatutCode": "MISE_A_DISPOSITION",
+                            "histoStatutDatePassage": "2026-05-23T12:00:00+02:00",
+                        },
+                        {
+                            "histoStatutId": 2,
+                            "histoStatutCode": "SERVICE_FAIT",
+                            "histoStatutDatePassage": "2026-05-23T12:05:00+02:00",
+                        },
+                    ],
+                },
+            },
+        )
+
+        self.assertTrue(persisted)
+        self.assertEqual(invoice.status_chorus, "SERVICE_FAIT")
+        self.assertNotIn("receptionProcessing", invoice.raw_payload)
 
 
 if __name__ == "__main__":

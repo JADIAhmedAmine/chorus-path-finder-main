@@ -6,11 +6,13 @@ on:
       - main
       - PRE_PROD_V0
       - developpement
+      - initiative
   pull_request:
     branches:
       - main
       - PRE_PROD_V0
       - developpement
+      -initiative
   workflow_dispatch:
 
 permissions:

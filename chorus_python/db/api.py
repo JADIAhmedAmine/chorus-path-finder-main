@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, datetime
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -8,9 +9,11 @@ from sqlalchemy.orm import Session
 
 from sqlalchemy import select
 
+from ..audit import read_audit_events
 from ..auth import get_current_auth_user, require_auth
 from ..client import ChorusClient
 from ..config import load_chorus_settings
+from ..dashboard import CustomerLookup, build_dashboard_summary
 from . import repositories
 from .config import load_database_settings
 from .entities import Supplier, Tenant
@@ -144,6 +147,53 @@ def get_invoice_endpoint(
     if invoice is None:
         raise HTTPException(status_code=404, detail=f"Invoice {invoice_id} not found")
     return InvoiceOut.model_validate(invoice)
+
+
+def _parse_iso_date(value: Optional[str]) -> Optional[date]:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).date()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Date invalide '{value}' (format attendu : YYYY-MM-DD).",
+        ) from error
+
+
+@router.get("/dashboard/summary")
+def dashboard_summary_endpoint(
+    tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
+    from_date: Optional[str] = Query(default=None, alias="from"),
+    to_date: Optional[str] = Query(default=None, alias="to"),
+    audit_window: int = Query(default=200, ge=1, le=1000, alias="auditWindow"),
+    session: Session = Depends(fastapi_session),
+) -> dict[str, Any]:
+    resolved_tenant = _resolve_tenant_id(tenant_id)
+    period_from = _parse_iso_date(from_date)
+    period_to = _parse_iso_date(to_date)
+
+    invoices = repositories.list_invoices_for_dashboard(
+        session,
+        tenant_id=resolved_tenant,
+        from_date=period_from,
+        to_date=period_to,
+    )
+    customers = repositories.list_public_customers(session, tenant_id=resolved_tenant)
+    customer_lookups = [
+        CustomerLookup(public_customer_id=customer.id, name=customer.legal_name)
+        for customer in customers
+    ]
+    audit_events = read_audit_events(limit=audit_window)
+
+    summary = build_dashboard_summary(
+        invoices,
+        audit_events=audit_events,
+        customers=customer_lookups,
+        period_from=period_from.isoformat() if period_from else None,
+        period_to=period_to.isoformat() if period_to else None,
+    )
+    return summary.to_dict()
 
 
 @router.get("/sync-runs", response_model=list[SyncRunOut])

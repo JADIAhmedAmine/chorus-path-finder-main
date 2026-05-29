@@ -419,9 +419,10 @@ def audit_log(
     authorization: Optional[str] = Header(default=None),
     limit: int = Query(default=100, ge=1, le=500),
     email: str | None = Query(default=None),
+    action: str | None = Query(default=None),
 ) -> dict[str, Any]:
     require_admin(authorization)
-    events = read_audit_events(email=email, action="invoice.submit", limit=limit)
+    events = read_audit_events(email=email, action=action, limit=limit)
     return {"items": events}
 
 

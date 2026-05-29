@@ -12,7 +12,7 @@ import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { authenticatedFetch, loadAuthSession } from '@/lib/auth/session';
-import { applyEnvironmentPreset, loadChorusConfig, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
+import { applyEnvironmentPreset, getDefaultChorusConfig, loadChorusConfig, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
 import type {
   ChorusConfig,
   ChorusConnectionResult,
@@ -130,6 +130,16 @@ export default function SettingsPage() {
     toast({
       title: 'Configuration sauvegardée',
       description: 'Le connecteur Chorus Pro a été mis à jour dans ce navigateur.',
+    });
+  };
+
+  const handleResetFromEnv = () => {
+    const nextConfig = getDefaultChorusConfig();
+    setConfig(nextConfig);
+    saveChorusConfig(nextConfig);
+    toast({
+      title: 'Configuration rechargée',
+      description: 'Le connecteur Chorus Pro utilise maintenant les valeurs du build local.',
     });
   };
 
@@ -762,6 +772,7 @@ export default function SettingsPage() {
 
           <div className="flex flex-wrap gap-3">
             <Button onClick={handleSave}>Enregistrer la configuration</Button>
+            <Button variant="secondary" onClick={handleResetFromEnv}>Recharger depuis .env.local</Button>
             <Button variant="outline" onClick={handleTestConnection} disabled={testingConnection}>
               {testingConnection ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Tester la connexion

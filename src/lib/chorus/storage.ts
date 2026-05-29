@@ -46,7 +46,12 @@ const DEFAULT_BACKEND_BRIDGE_URL = '/api/chorus/submit';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
-  return typeof value === 'string' ? value : fallback;
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : fallback;
 }
 
 function envBool(key: string, fallback: boolean): boolean {
@@ -59,7 +64,7 @@ function pickEnumValue<T extends string>(value: string, allowed: readonly T[], f
 }
 
 export function resolveChorusEnvironment(): ChorusEnvironment {
-  const raw = envValue('VITE_CHORUS_ENV', 'prod').trim().toLowerCase();
+  const raw = envValue('VITE_CHORUS_ENV', 'qualif').trim().toLowerCase();
   return raw === 'prod' ? 'prod' : 'qualif';
 }
 
@@ -293,8 +298,12 @@ export function loadChorusConfig(): ChorusConfig {
   try {
     const parsed = JSON.parse(raw) as Partial<ChorusConfig>;
     const merged = mergeConfigWithFallback(fallback, parsed);
+    const environmentAligned = merged.environment === fallback.environment
+      ? merged
+      : applyEnvironmentPreset(merged, fallback.environment);
+
     return normalizeChorusConfig({
-      ...merged,
+      ...environmentAligned,
       ...readEnvReferenceConfig(),
     });
   } catch {

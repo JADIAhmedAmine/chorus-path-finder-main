@@ -22,6 +22,9 @@ class FakeChorusClient:
         self.uploaded_content: list[dict[str, str]] = []
         self.resolved_attachment_types: list[dict[str, str]] = []
         self.submitted_payload: dict[str, object] | None = None
+        self.recycled_payload: dict[str, object] | None = None
+        self.corrected_validator_payload: dict[str, object] | None = None
+        self.invoice_history_payload: dict[str, object] | None = None
 
     def reset_api_calls(self) -> None:
         self.api_calls = []
@@ -83,25 +86,62 @@ class FakeChorusClient:
             "invoiceId": "CHORUS-TEST-001",
         }
 
-    def resolve_attachment_type_code(
-        self,
-        attachment_type: str,
-        *,
-        type_objet: str = "FACTURE",
-        code_langue: str = "fr",
-    ) -> str:
-        self.resolved_attachment_types.append(
-            {
-                "attachment_type": attachment_type,
-                "type_objet": type_objet,
-                "code_langue": code_langue,
-            }
-        )
+    def recycle_invoice(self, payload: dict[str, object]) -> dict[str, object]:
+        self.recycled_payload = payload
         return {
-            "BORDEREAU_SUIVI_VALIDATION": "18",
-            "BL": "19",
-            "DIVERS": "20",
-        }.get(attachment_type, attachment_type)
+            "codeRetour": 0,
+            "identifiantFactureCPP": payload["identifiantFactureCPP"],
+            "statutFacture": "BROUILLON",
+        }
+
+    def correct_invoice_validator(self, payload: dict[str, object]) -> dict[str, object]:
+        self.corrected_validator_payload = payload
+        return {
+            "codeRetour": 0,
+            "idFacture": payload["idFacture"],
+            "libelle": "TRA_MSG_00.000",
+        }
+
+    def consult_invoice_history(self, payload: dict[str, object]) -> dict[str, object]:
+        self.invoice_history_payload = payload
+        return {
+            "codeRetour": 0,
+            "libelle": "GCU_MSG_01_000",
+            "idFacture": payload["idFacture"],
+            "numeroFacture": "20260000000000000064",
+            "modeDepot": "SAISIE_API",
+            "statutCourantCode": "REJETEE",
+            "historiquesDesStatuts": {
+                "histoStatut": [
+                    {
+                        "histoStatutId": 19990676,
+                        "histoStatutCode": "REJETEE",
+                        "histoStatutDatePassage": "2026-04-28 14:51",
+                    }
+                ],
+                "pageCouranteHistoStatut": 1,
+                "pagesHistoStatut": 1,
+                "nbResultatsParPageHistoStatut": 10,
+                "totalHistoStatut": 1,
+            },
+            "historiquesDesActionsUtilisateurs": {
+                "histoAction": [
+                    {
+                        "histoActionId": 100085487,
+                        "histoActionCode": "ACQUITTEMENT_REJET",
+                        "histoActionDateHeure": "2026-04-29 16:08",
+                    }
+                ],
+                "pageCouranteHistoAction": 1,
+                "pagesHistoAction": 1,
+                "nbResultatsParPageHistoAction": 10,
+                "totalHistoAction": 1,
+            },
+            "derniereAction": {
+                "derniereActionId": 100085487,
+                "derniereActionCode": "ACQUITTEMENT_REJET",
+            },
+        }
 
 
 class SoumissionFactureTest(unittest.TestCase):
@@ -543,6 +583,99 @@ class SoumissionFactureTest(unittest.TestCase):
                 "additional_preferred_ids": (32242033407300,),
             }
         ])
+
+    def test_recycle_invoice_posts_recycler_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "commentaire": "Correction acheminement",
+            "destinataire": {
+                "codeDestinataire": "32242033407300",
+            },
+            "identifiantFactureCPP": 8426157,
+        }
+
+        result = service.recycle_invoice(payload)
+
+        self.assertEqual(result["response"], {
+            "codeRetour": 0,
+            "identifiantFactureCPP": 8426157,
+            "statutFacture": "BROUILLON",
+        })
+        self.assertNotIn("reference", result["payload"])
+        self.assertNotIn("idUtilisateurCourant", result["payload"])
+        self.assertEqual(fake_client.recycled_payload, result["payload"])
+
+    def test_consult_invoice_history_posts_consulter_historique_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "idFacture": 8424327,
+            "nbResultatsMaximum": 10,
+            "paramRechercheHistoActionsUtilisateurs": {
+                "nbResultatsParPageListeHistoAction": 10,
+                "pageResultatDemandeeListeHistoAction": 1,
+                "triColonneListeHistoAction": "HistoActionDateHeure",
+                "triSensListeHistoAction": "Descendant",
+            },
+            "paramRechercheHistoEvenementsComplementaires": {
+                "nbResultatsParPageListeHistoEvenement": 10,
+                "pageResultatDemandeeListeHistoEvenement": 1,
+                "triColonneListeHistoEvenement": "EvenementLibelle",
+                "triSensListeHistoEvenement": "Descendant",
+            },
+            "paramRechercheHistoStatuts": {
+                "nbResultatsParPageListeHistoStatut": 10,
+                "pageResultatDemandeeListeHistoStatut": 1,
+                "triColonneListeHistoStatut": "HistoStatutDatePassage",
+                "triSensListeHistoStatut": "Descendant",
+            },
+        }
+
+        result = service.consult_invoice_history(payload)
+
+        self.assertEqual(result["response"]["idFacture"], 8424327)
+        self.assertEqual(result["response"]["statutCourantCode"], "REJETEE")
+        self.assertEqual(result["payload"], payload)
+        self.assertEqual(fake_client.invoice_history_payload, payload)
+
+    def test_correct_invoice_validator_posts_corriger_valideur_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "idFacture": 8424327,
+            "idStructure": 123456,
+            "identifiantStructure": "32242033407300",
+            "typeIdentifiantStructure": "SIRET",
+        }
+
+        result = service.correct_invoice_validator(payload)
+
+        self.assertEqual(result["response"], {
+            "codeRetour": 0,
+            "idFacture": 8424327,
+            "libelle": "TRA_MSG_00.000",
+        })
+        self.assertEqual(result["payload"], payload)
+        self.assertEqual(fake_client.corrected_validator_payload, payload)
 
 
 if __name__ == "__main__":
