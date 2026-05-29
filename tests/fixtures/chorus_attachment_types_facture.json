@@ -1,0 +1,22 @@
+{
+  "codeRetour": 0,
+  "libelle": "TRA_MSG_00.000",
+  "listeTypePieceJointe": [
+    { "idTypePieceJointe": 11005, "codeTypePieceJointe": "ATTESTATION", "libelleTypePieceJointe": "Attestation ou certificat administratif", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 33, "codeTypePieceJointe": "BC", "libelleTypePieceJointe": "Bon de commande", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 32, "codeTypePieceJointe": "BL", "libelleTypePieceJointe": "Bon de livraison", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 101, "codeTypePieceJointe": "BORDEREAU_SUIVI", "libelleTypePieceJointe": "Bordereau de suivi", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 121, "codeTypePieceJointe": "BORDEREAU_SUIVI_VALIDATION", "libelleTypePieceJointe": "Bordereau de suivi de validation", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11006, "codeTypePieceJointe": "DECISION_ADMISSION", "libelleTypePieceJointe": "Décision d'admission", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11007, "codeTypePieceJointe": "DECISION_RECEPTION", "libelleTypePieceJointe": "Decision de réception", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11001, "codeTypePieceJointe": "DEVIS", "libelleTypePieceJointe": "Devis", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 29, "codeTypePieceJointe": "DIVERS", "libelleTypePieceJointe": "Document annexe", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 12050, "codeTypePieceJointe": "DUPLICATA_FACTUR-X", "libelleTypePieceJointe": "DUPLICATA_FACTUR-X", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11002, "codeTypePieceJointe": "ECHEANCIER", "libelleTypePieceJointe": "Echéancier", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 12, "codeTypePieceJointe": "FACTURE_PDF", "libelleTypePieceJointe": "Facture PDF", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 8, "codeTypePieceJointe": "FACTURE_XML", "libelleTypePieceJointe": "Facture XML", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11004, "codeTypePieceJointe": "OS", "libelleTypePieceJointe": "Ordre de service", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11003, "codeTypePieceJointe": "PVSF", "libelleTypePieceJointe": "Procès-verbal de service fait ou de réception", "typeObjet": "FACTURE" },
+    { "idTypePieceJointe": 11000, "codeTypePieceJointe": "RIB", "libelleTypePieceJointe": "Relevé d'identité bancaire", "typeObjet": "FACTURE" }
+  ]
+}
