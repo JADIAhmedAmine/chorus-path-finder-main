@@ -350,6 +350,7 @@ export async function submitInvoiceFromDetail(invoiceId: string): Promise<Chorus
       invoiceData: payload,
       mainFile,
       attachments: [],
+      currentState: invoice.statusChorus || undefined,
     });
 
     const submittedAt = nowIso();

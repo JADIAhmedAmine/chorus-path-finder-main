@@ -16,6 +16,7 @@ import {
   useSyncSuppliersMutation,
 } from '@/lib/queries/db';
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
+import { SubmissionStateOverview } from '@/components/chorus/SubmissionStateOverview';
 import { saveChorusLiveInvoiceDetails } from '@/lib/chorus/liveInvoiceDetails';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import type { Invoice } from '@/types';
@@ -421,6 +422,8 @@ export default function InvoiceList() {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+
+      <SubmissionStateOverview />
 
       {syncing && <SyncRunProgress />}
 

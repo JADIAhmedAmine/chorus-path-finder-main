@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import logging
@@ -100,7 +101,14 @@ from chorus_python.annuaire import build_annuaire_files_from_api_response, relat
 from chorus_python.audit import append_audit_event
 from chorus_python.auth import get_current_auth_user, require_auth, require_submit_permission, router as auth_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
+from chorus_python.errors import normalize_chorus_error
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
+from chorus_python.reception import coerce_identifier_list, normalize_invoice_for_reception
+from chorus_python.submission_state import (
+    InvalidPaymentRequestStateError,
+    extract_payment_request_state,
+    validate_payment_request_state,
+)
 
 try:
     from chorus_python.db.api import router as db_router
@@ -119,6 +127,55 @@ except Exception as _db_import_error:  # noqa: BLE001
 HOST = os.environ.get("CHORUS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHORUS_PORT", "8008"))
 SUBMIT_PATH = "/api/chorus/submit"
+RECYCLE_PATH = "/api/chorus/recycle"
+CORRECT_VALIDATOR_PATH = "/api/chorus/validator/correct"
+RECEPTION_CONSULT_PATH = "/api/reception/consult"
+RECEPTION_CONSULT_BULK_PATH = "/api/reception/consult-bulk"
+RECEPTION_PROCESS_PATH = "/api/reception/process"
+RECEPTION_COMPLETE_PATH = "/api/reception/complete"
+RECEPTION_DOWNLOAD_PATH = "/api/reception/download"
+INVOICE_DOWNLOAD_PATH = "/api/chorus/invoices/download"
+INVOICE_HISTORY_PATH = "/api/chorus/invoices/history"
+RECEPTION_BULK_MAX_IDENTIFIERS = 50
+CHORUS_RECEPTION_CONSULT_PATH = "/factures/v1/consulter/valideur"
+CHORUS_TRAITER_RECUE_PATH = "/factures/v1/traiter/recue"
+CHORUS_COMPLETER_FACTURE_PATH = "/factures/v1/completer"
+CHORUS_TELECHARGER_GROUPE_PATH = "/factures/v1/telecharger/groupe"
+
+RECEPTION_DOWNLOAD_FORMATS: frozenset[str] = frozenset({"PDF", "PIVOT", "XML", "ZIP", "ZIP_WITH_ATTACHMENTS"})
+RECEPTION_DOWNLOAD_CHORUS_FORMAT_BY_REQUEST: dict[str, str] = {
+    "PDF": "PDF",
+    "PIVOT": "PIVOT",
+    # Alias UI: le bouton XML télécharge le pivot Chorus.
+    "XML": "PIVOT",
+    # Chorus n'accepte pas ZIP comme format ; le ZIP est obtenu via PDF + PJ.
+    "ZIP": "PDF",
+    "ZIP_WITH_ATTACHMENTS": "PDF",
+}
+RECEPTION_DOWNLOAD_MIME_BY_FORMAT: dict[str, tuple[str, str]] = {
+    "PDF": ("application/pdf", "pdf"),
+    "PIVOT": ("application/xml", "xml"),
+    "XML": ("application/xml", "xml"),
+    "ZIP": ("application/zip", "zip"),
+}
+
+RECEPTION_PROCESS_ALLOWED_STATUTS: frozenset[str] = frozenset(
+    {
+        "A_RECYCLER",
+        "COMPLETEE",
+        "COMPTABILISEE",
+        "MISE_A_DISPOSITION",
+        "MISE_A_DISPOSITION_COMPTABLE",
+        "MISE_EN_PAIEMENT",
+        "PRISE_EN_COMPTE_DESTINATAIRE",
+        "REJETEE",
+        "SERVICE_FAIT",
+        "SUSPENDUE",
+        "TRANSMISE_MOA",
+        "MANDATEE",
+    }
+)
+RECEPTION_PROCESS_MOTIF_REQUIRED: frozenset[str] = frozenset({"REJETEE", "SUSPENDUE"})
 EXTRACT_PDF_PATH = "/api/extract-pdf-text"
 OAUTH_TOKEN_PATH = "/api/chorus/oauth-token"
 SYNC_ANNUAIRE_PATH = "/api/chorus/annuaire/sync"
@@ -146,6 +203,8 @@ app.add_middleware(
 
 AUDITED_ACTIONS = {
     SUBMIT_PATH: "invoice.submit",
+    RECYCLE_PATH: "invoice.recycle",
+    CORRECT_VALIDATOR_PATH: "invoice.validator.correct",
 }
 
 
@@ -257,6 +316,48 @@ def _invoice_audit_fields(
     })
 
 
+def _recycle_audit_fields(
+    payload: dict[str, Any] | None,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    chorus_id = payload.get("identifiantFactureCPP")
+    if isinstance(result, dict):
+        chorus_id = result.get("externalId") or chorus_id
+
+    return _compact_audit_fields({
+        "chorusId": _audit_value(chorus_id, max_length=80),
+        "customerCode": _audit_text(_nested_value(payload, "destinataire", "codeDestinataire"), max_length=32),
+        "comment": _audit_text(payload.get("commentaire"), max_length=240),
+    })
+
+
+def _correct_validator_audit_fields(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+
+    return _compact_audit_fields({
+        "chorusId": _audit_value(payload.get("idFacture"), max_length=80),
+        "validatorStructureId": _audit_value(payload.get("idStructure"), max_length=80),
+        "validatorStructureIdentifier": _audit_text(payload.get("identifiantStructure"), max_length=80),
+        "validatorStructureIdentifierType": _audit_text(payload.get("typeIdentifiantStructure"), max_length=24),
+    })
+
+
+def _chorus_operation_audit_fields(
+    action: str,
+    payload: dict[str, Any] | None,
+    result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if action == "invoice.recycle":
+        return _recycle_audit_fields(payload, result=result)
+    if action == "invoice.validator.correct":
+        return _correct_validator_audit_fields(payload)
+    return _invoice_audit_fields(payload, result=result)
+
+
 def _safe_append_audit_event(event: dict[str, Any]) -> None:
     try:
         append_audit_event(event)
@@ -280,6 +381,32 @@ def _audit_invoice_submission(
         "email": user.get("email"),
         "roleCode": user.get("roleCode"),
         **_invoice_audit_fields(payload, result=result),
+        "status": status,
+        "httpStatus": int(http_status),
+        "durationMs": round((perf_counter() - started_at) * 1000),
+        "errorMessage": _audit_text(error_message, max_length=240) if status != "success" else None,
+    })
+    _safe_append_audit_event(event)
+    request.state.audit_logged = True
+
+
+def _audit_chorus_operation(
+    request: Request,
+    *,
+    action: str,
+    user: dict[str, Any],
+    payload: dict[str, Any] | None,
+    status: str,
+    http_status: int | HTTPStatus,
+    started_at: float,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> None:
+    event = _compact_audit_fields({
+        "action": action,
+        "email": user.get("email"),
+        "roleCode": user.get("roleCode"),
+        **_chorus_operation_audit_fields(action, payload, result=result),
         "status": status,
         "httpStatus": int(http_status),
         "durationMs": round((perf_counter() - started_at) * 1000),
@@ -437,6 +564,21 @@ def _as_positive_int(value: Any) -> int | None:
         except ValueError:
             return None
         return parsed if parsed > 0 else None
+    return None
+
+
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(value)
+        except ValueError:
+            return None
     return None
 
 
@@ -866,7 +1008,7 @@ def handle_extract_pdf(body: dict[str, Any] | None = Body(default=None)) -> JSON
             HTTPStatus.BAD_GATEWAY,
             {
                 "ok": False,
-                "error": f"Erreur Docling lors de l'extraction: {error}",
+                "error": f"Erreur lors de l'extraction PDF: {error}",
             },
         )
     except Exception as error:  # noqa: BLE001
@@ -951,6 +1093,1292 @@ def handle_supplier_invoice_search(body: dict[str, Any] | None = Body(default=No
         api_calls = list(client.api_calls) if "client" in locals() else []
         duration_ms = round((perf_counter() - started_at) * 1000)
         logger.debug("Recherche factures fournisseur error: duration=%s ms, error=%s", duration_ms, message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
+
+
+def _build_invoice_history_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    id_facture = _as_positive_int(raw_payload.get("idFacture"))
+    if id_facture is None:
+        raise ValueError("Le champ idFacture est obligatoire et doit être un entier positif.")
+
+    def nested_payload(name: str, defaults: dict[str, Any]) -> dict[str, Any]:
+        value = raw_payload.get(name)
+        if isinstance(value, dict):
+            return {**defaults, **value}
+        return dict(defaults)
+
+    return {
+        "idFacture": id_facture,
+        "nbResultatsMaximum": _as_positive_int(raw_payload.get("nbResultatsMaximum")) or 10,
+        "paramRechercheHistoActionsUtilisateurs": nested_payload(
+            "paramRechercheHistoActionsUtilisateurs",
+            {
+                "nbResultatsParPageListeHistoAction": 10,
+                "pageResultatDemandeeListeHistoAction": 1,
+                "triColonneListeHistoAction": "HistoActionDateHeure",
+                "triSensListeHistoAction": "Descendant",
+            },
+        ),
+        "paramRechercheHistoEvenementsComplementaires": nested_payload(
+            "paramRechercheHistoEvenementsComplementaires",
+            {
+                "nbResultatsParPageListeHistoEvenement": 10,
+                "pageResultatDemandeeListeHistoEvenement": 1,
+                "triColonneListeHistoEvenement": "EvenementLibelle",
+                "triSensListeHistoEvenement": "Descendant",
+            },
+        ),
+        "paramRechercheHistoStatuts": nested_payload(
+            "paramRechercheHistoStatuts",
+            {
+                "nbResultatsParPageListeHistoStatut": 10,
+                "pageResultatDemandeeListeHistoStatut": 1,
+                "triColonneListeHistoStatut": "HistoStatutDatePassage",
+                "triSensListeHistoStatut": "Descendant",
+            },
+        ),
+    }
+
+
+def _build_correct_validator_payload(raw_payload: dict[str, Any]) -> dict[str, Any]:
+    id_facture = _as_positive_int(raw_payload.get("idFacture"))
+    if id_facture is None:
+        raise ValueError("Le champ idFacture est obligatoire et doit être un entier positif.")
+
+    id_structure = _as_positive_int(raw_payload.get("idStructure"))
+    identifiant_structure = _as_non_empty_string(raw_payload.get("identifiantStructure"))
+    if id_structure is None and identifiant_structure is None:
+        raise ValueError("Renseigne idStructure ou identifiantStructure pour corriger le valideur.")
+
+    type_identifiant = _as_non_empty_string(raw_payload.get("typeIdentifiantStructure")) or "SIRET"
+    payload: dict[str, Any] = {
+        "idFacture": id_facture,
+        "typeIdentifiantStructure": type_identifiant,
+    }
+    if id_structure is not None:
+        payload["idStructure"] = id_structure
+    if identifiant_structure is not None:
+        payload["identifiantStructure"] = identifiant_structure
+    return payload
+
+
+def _build_reception_consult_payload(identifier: int, *, code_langue: str = "fr") -> dict[str, Any]:
+    """Construit le payload canonique pour /factures/v1/consulter/valideur.
+
+    Les blocs de pagination/tri sont systématiquement injectés afin que le
+    front n'ait à fournir que `identifiantFactureCPP`.
+    """
+    return {
+        "codeLangue": code_langue,
+        "identifiantFactureCPP": identifier,
+        "rechercheLignePoste": {
+            "nbResultatsParPageLignesPoste": 50,
+            "pageResultatDemandeeLignesPoste": 1,
+            "triColonneListeLignesPoste": "LignePosteNumero",
+            "triSensListeLignesPoste": "Ascendant",
+        },
+        "rechercheLigneTvaRecap": {
+            "nbResultatsParPageListeListeRecapitulatifTVA": 50,
+            "pageResultatDemandeeListeRecapitulatifTVA": 1,
+            "triColonneListeRecapitulatifTVA": "LigneTvaMontantTvaParTaux",
+            "triSensListeRecapitulatifTVA": "Ascendant",
+        },
+        "recherchePj": {
+            "pageResultatDemandeeListePieceJointe": 1,
+            "triColonneListePiecesJointes": "PieceJointeTypeCode",
+            "triSensListePiecesJointes": "Ascendant",
+        },
+    }
+
+
+def _persist_reception_detail_if_available(
+    identifier: int,
+    *,
+    facture: dict[str, Any],
+    normalized_invoice: dict[str, Any],
+) -> bool:
+    if not _DB_ROUTER_AVAILABLE:
+        return False
+    try:
+        from chorus_python.db.config import load_database_settings
+        from chorus_python.db.session import get_session
+        from chorus_python.db.sync import persist_reception_invoice_detail
+
+        tenant_id = load_database_settings().default_tenant_id
+        with get_session() as session:
+            return persist_reception_invoice_detail(
+                session,
+                tenant_id=tenant_id,
+                identifier=identifier,
+                facture=facture,
+                normalized_invoice=normalized_invoice,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "Réception detail persistence skipped: identifiantFactureCPP=%s, error=%s",
+            identifier,
+            error,
+        )
+        return False
+
+
+def _persist_reception_classification_if_available(
+    identifier: int,
+    *,
+    kind: str,
+    reason: str | None = None,
+) -> bool:
+    if not _DB_ROUTER_AVAILABLE:
+        return False
+    try:
+        from chorus_python.db.config import load_database_settings
+        from chorus_python.db.session import get_session
+        from chorus_python.db.sync import persist_reception_invoice_classification
+
+        tenant_id = load_database_settings().default_tenant_id
+        with get_session() as session:
+            return persist_reception_invoice_classification(
+                session,
+                tenant_id=tenant_id,
+                identifier=identifier,
+                kind=kind,
+                source="reception_consult",
+                reason=reason,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "Réception classification persistence skipped: identifiantFactureCPP=%s, kind=%s, error=%s",
+            identifier,
+            kind,
+            error,
+        )
+        return False
+
+
+def _persist_reception_processing_if_available(
+    identifier: int,
+    *,
+    new_status: str,
+    response: dict[str, Any] | None,
+) -> bool:
+    if not _DB_ROUTER_AVAILABLE:
+        return False
+    try:
+        from chorus_python.db.config import load_database_settings
+        from chorus_python.db.session import get_session
+        from chorus_python.db.sync import persist_reception_invoice_processing
+
+        tenant_id = load_database_settings().default_tenant_id
+        with get_session() as session:
+            return persist_reception_invoice_processing(
+                session,
+                tenant_id=tenant_id,
+                identifier=identifier,
+                new_status=new_status,
+                response=response,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "Réception processing persistence skipped: identifiantFactureCPP=%s, status=%s, error=%s",
+            identifier,
+            new_status,
+            error,
+        )
+        return False
+
+
+def _persist_reception_history_status_if_available(
+    identifier: int,
+    *,
+    history_response: dict[str, Any] | None,
+) -> bool:
+    if not _DB_ROUTER_AVAILABLE or not isinstance(history_response, dict):
+        return False
+    try:
+        from chorus_python.db.config import load_database_settings
+        from chorus_python.db.session import get_session
+        from chorus_python.db.sync import persist_reception_invoice_history_status
+
+        tenant_id = load_database_settings().default_tenant_id
+        with get_session() as session:
+            return persist_reception_invoice_history_status(
+                session,
+                tenant_id=tenant_id,
+                identifier=identifier,
+                history_response=history_response,
+            )
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "Réception history status persistence skipped: idFacture=%s, error=%s",
+            identifier,
+            error,
+        )
+        return False
+
+
+def _consult_single_invoice_for_reception(
+    identifier: int,
+    *,
+    environment_override: str | None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Appelle Chorus pour un identifiant et retourne (result_item, api_calls).
+
+    `result_item` est soit un succès `{success: true, identifiantFactureCPP, facture}`,
+    soit un échec normalisé `{success: false, identifiantFactureCPP, category, ...}`.
+    Aucune exception n'est propagée — l'appelant peut donc itérer en sécurité.
+    """
+    payload = _build_reception_consult_payload(identifier)
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    try:
+        client.reset_api_calls()
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_RECEPTION_CONSULT_PATH,
+            payload,
+            "Consultation facture réception",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        persisted = _persist_reception_classification_if_available(
+            identifier,
+            kind="A_QUALIFIER",
+            reason=normalized.human_message,
+        )
+        return (
+            {
+                "identifiantFactureCPP": identifier,
+                "success": False,
+                "classificationPersisted": persisted,
+                **normalized.to_dict(),
+            },
+            list(client.api_calls),
+        )
+
+    api_calls = list(client.api_calls)
+    if status_code >= 400:
+        raw_message = (
+            chorus_response.get("libelle")
+            if isinstance(chorus_response, dict)
+            else chorus_response
+        )
+        normalized = normalize_chorus_error(
+            f"Consultation facture réception échouée ({status_code}): {raw_message}"
+        )
+        persisted = _persist_reception_classification_if_available(
+            identifier,
+            kind="REPONSE_FAVORABLE",
+            reason=normalized.human_message,
+        )
+        return (
+            {
+                "identifiantFactureCPP": identifier,
+                "success": False,
+                "classificationPersisted": persisted,
+                **normalized.to_dict(),
+            },
+            api_calls,
+        )
+
+    code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
+
+    if code_retour is None or code_retour == 0:
+        facture = chorus_response.get("facture") if isinstance(chorus_response, dict) else None
+        normalized_invoice = normalize_invoice_for_reception(facture)
+        if normalized_invoice is None:
+            normalized = normalize_chorus_error(
+                "Réponse Chorus inattendue : aucune facture trouvée dans la réponse.",
+                code_retour=code_retour,
+            )
+            persisted = _persist_reception_classification_if_available(
+                identifier,
+                kind="REPONSE_FAVORABLE",
+                reason=normalized.human_message,
+            )
+            return (
+                {
+                    "identifiantFactureCPP": identifier,
+                    "success": False,
+                    "classificationPersisted": persisted,
+                    **normalized.to_dict(),
+                },
+                api_calls,
+            )
+        if normalized_invoice.get("identifiantFactureCPP") is None:
+            normalized_invoice["identifiantFactureCPP"] = identifier
+        persisted = _persist_reception_detail_if_available(
+            identifier,
+            facture=facture,
+            normalized_invoice=normalized_invoice,
+        )
+        return (
+            {
+                "identifiantFactureCPP": identifier,
+                "success": True,
+                "facture": normalized_invoice,
+                "persisted": persisted,
+            },
+            api_calls,
+        )
+
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+    normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+    persisted = _persist_reception_classification_if_available(
+        identifier,
+        kind="REPONSE_FAVORABLE",
+        reason=normalized.human_message,
+    )
+    return (
+        {
+            "identifiantFactureCPP": identifier,
+            "success": False,
+            "classificationPersisted": persisted,
+            **normalized.to_dict(),
+        },
+        api_calls,
+    )
+
+
+@app.post(RECEPTION_CONSULT_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_consult(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    identifier = _as_positive_int(body.get("identifiantFactureCPP"))
+    if identifier is None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Le champ identifiantFactureCPP est obligatoire et doit être un entier positif.",
+                "raw_message": "identifiantFactureCPP missing or invalid",
+                "recommended_action": "Saisir l'identifiant CPP exact retourné par Chorus Pro (ex. 8424327).",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Réception consult start: identifiantFactureCPP=%s, env=%s",
+        identifier,
+        environment_override or "default",
+    )
+
+    item, api_calls = _consult_single_invoice_for_reception(identifier, environment_override=environment_override)
+    duration_ms = round((perf_counter() - started_at) * 1000)
+
+    if item.get("success"):
+        logger.debug(
+            "Réception consult success: identifiantFactureCPP=%s, duration=%s ms",
+            identifier,
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "ok": True,
+                "success": True,
+                "identifiantFactureCPP": identifier,
+                "facture": item["facture"],
+                "persisted": bool(item.get("persisted")),
+                "apiCalls": api_calls,
+            },
+        )
+
+    logger.warning(
+        "Réception consult refusée: identifiantFactureCPP=%s, category=%s, duration=%s ms",
+        identifier,
+        item.get("category"),
+        duration_ms,
+    )
+    return _json_response(
+        HTTPStatus.UNPROCESSABLE_ENTITY,
+        {
+            "ok": False,
+            "success": False,
+            "identifiantFactureCPP": identifier,
+            **{key: value for key, value in item.items() if key not in {"success", "identifiantFactureCPP"}},
+            "apiCalls": api_calls,
+        },
+    )
+
+
+@app.post(RECEPTION_CONSULT_BULK_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_consult_bulk(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    raw_identifiers = body.get("identifiantsFactureCPP")
+    if not isinstance(raw_identifiers, list):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Le champ identifiantsFactureCPP doit être une liste d'entiers positifs.",
+                "raw_message": "identifiantsFactureCPP must be a list",
+                "recommended_action": "Envoyer { \"identifiantsFactureCPP\": [8424327, 8424328, ...] }.",
+            },
+        )
+
+    identifiers = coerce_identifier_list(raw_identifiers)
+    if not identifiers:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Aucun identifiant exploitable dans la requête.",
+                "raw_message": "no positive integers parsed from identifiantsFactureCPP",
+                "recommended_action": "Vérifier que les identifiants sont des entiers positifs.",
+            },
+        )
+
+    if len(identifiers) > RECEPTION_BULK_MAX_IDENTIFIERS:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": f"Maximum {RECEPTION_BULK_MAX_IDENTIFIERS} identifiants par requête.",
+                "raw_message": f"received {len(identifiers)} identifiers, limit is {RECEPTION_BULK_MAX_IDENTIFIERS}",
+                "recommended_action": f"Découper la liste en lots de {RECEPTION_BULK_MAX_IDENTIFIERS} maximum.",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Réception bulk consult start: count=%s, env=%s",
+        len(identifiers),
+        environment_override or "default",
+    )
+
+    items: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    all_api_calls: list[dict[str, Any]] = []
+    total_success = 0
+    total_failed = 0
+
+    for identifier in identifiers:
+        item, api_calls = _consult_single_invoice_for_reception(
+            identifier,
+            environment_override=environment_override,
+        )
+        all_api_calls.extend(api_calls)
+        if item.get("success"):
+            total_success += 1
+            items.append(item)
+        else:
+            total_failed += 1
+            errors.append(item)
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Réception bulk consult done: requested=%s, success=%s, failed=%s, duration=%s ms",
+        len(identifiers),
+        total_success,
+        total_failed,
+        duration_ms,
+    )
+
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "success": True,
+            "totalRequested": len(identifiers),
+            "totalSuccess": total_success,
+            "totalFailed": total_failed,
+            "items": items,
+            "errors": errors,
+            "apiCalls": all_api_calls,
+        },
+    )
+
+
+def _build_reception_process_payload(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Construit le payload `/v1/traiter/recue` ou retourne une erreur structurée.
+
+    `body` est le corps envoyé par le frontend (camelCase libre). En sortie :
+    - (payload, None) si tout est bon ;
+    - ({}, error_dict) sinon (l'appelant renvoie 400 avec error_dict).
+    """
+    id_facture = _as_positive_int(body.get("idFacture") or body.get("identifiantFactureCPP"))
+    if id_facture is None:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ idFacture est obligatoire et doit être un entier positif.",
+            "raw_message": "idFacture missing or invalid",
+            "recommended_action": "Renseigner l'identifiant Chorus de la facture à traiter (ex. 8429592).",
+        }
+
+    raw_status = _as_non_empty_string(body.get("nouveauStatut"))
+    if not raw_status:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ nouveauStatut est obligatoire.",
+            "raw_message": "nouveauStatut missing",
+            "recommended_action": (
+                "Sélectionner un statut parmi : "
+                + ", ".join(sorted(RECEPTION_PROCESS_ALLOWED_STATUTS))
+            ),
+        }
+    nouveau_statut = raw_status.upper()
+    if nouveau_statut not in RECEPTION_PROCESS_ALLOWED_STATUTS:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": f"Statut '{nouveau_statut}' non autorisé pour cette action.",
+            "raw_message": f"nouveauStatut={nouveau_statut} not in allowed set",
+            "recommended_action": (
+                "Choisir parmi : " + ", ".join(sorted(RECEPTION_PROCESS_ALLOWED_STATUTS))
+            ),
+        }
+
+    motif = _as_non_empty_string(body.get("motif"))
+    if nouveau_statut in RECEPTION_PROCESS_MOTIF_REQUIRED and not motif:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": (
+                "Un motif est obligatoire pour passer la facture en REJETEE ou SUSPENDUE."
+            ),
+            "raw_message": "motif required for REJETEE/SUSPENDUE",
+            "recommended_action": "Renseigner un motif clair et précis dans le champ Motif.",
+        }
+
+    numero_dp_mandat = _as_non_empty_string(body.get("numeroDPMandat") or body.get("numeroDpMandat"))
+    id_utilisateur = _as_positive_int(body.get("idUtilisateurCourant"))
+
+    payload: dict[str, Any] = {
+        "idFacture": id_facture,
+        "nouveauStatut": nouveau_statut,
+    }
+    if motif:
+        payload["motif"] = motif
+    if numero_dp_mandat:
+        payload["numeroDPMandat"] = numero_dp_mandat
+    if id_utilisateur is not None:
+        payload["idUtilisateurCourant"] = id_utilisateur
+
+    return payload, None
+
+
+def _build_reception_complete_payload(body: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Construit le payload `/v1/completer` pour une facture suspendue."""
+    identifier = _as_positive_int(body.get("identifiantFactureCPP") or body.get("idFacture"))
+    if identifier is None:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ identifiantFactureCPP est obligatoire et doit être un entier positif.",
+            "raw_message": "identifiantFactureCPP missing or invalid",
+            "recommended_action": "Ouvrir une facture suspendue valide puis réessayer.",
+        }
+
+    commentaire = _as_non_empty_string(body.get("commentaire"))
+    raw_attachments = body.get("pieceJointeComplementaire")
+    attachments: list[dict[str, Any]] = []
+    if raw_attachments is not None:
+        if not isinstance(raw_attachments, list):
+            return {}, {
+                "category": "VALIDATION",
+                "human_message": "Le champ pieceJointeComplementaire doit être une liste.",
+                "raw_message": "pieceJointeComplementaire is not a list",
+                "recommended_action": "Sélectionner une ou plusieurs pièces jointes complémentaires connues.",
+            }
+        for index, item in enumerate(raw_attachments):
+            if not isinstance(item, dict):
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"La pièce jointe complémentaire #{index + 1} est invalide.",
+                    "raw_message": f"pieceJointeComplementaire[{index}] is not an object",
+                    "recommended_action": "Vérifier les pièces jointes sélectionnées.",
+                }
+            attachment_id = _as_positive_int(item.get("pieceJointeComplementaireId"))
+            designation = _as_non_empty_string(item.get("pieceJointeComplementaireDesignation"))
+            attachment_type = _as_non_empty_string(item.get("pieceJointeComplementaireType"))
+            line_number = _as_int(item.get("pieceJointeComplementaireNumeroLigneFacture"))
+            if attachment_id is None:
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"L'identifiant de la pièce jointe complémentaire #{index + 1} est obligatoire.",
+                    "raw_message": f"pieceJointeComplementaire[{index}].pieceJointeComplementaireId missing",
+                    "recommended_action": "Choisir une pièce jointe déjà connue par Chorus.",
+                }
+            if not designation:
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"La désignation de la pièce jointe complémentaire #{index + 1} est obligatoire.",
+                    "raw_message": f"pieceJointeComplementaire[{index}].pieceJointeComplementaireDesignation missing",
+                    "recommended_action": "Renseigner une désignation claire.",
+                }
+            if not attachment_type:
+                return {}, {
+                    "category": "VALIDATION",
+                    "human_message": f"Le type de la pièce jointe complémentaire #{index + 1} est obligatoire.",
+                    "raw_message": f"pieceJointeComplementaire[{index}].pieceJointeComplementaireType missing",
+                    "recommended_action": "Renseigner le type de pièce jointe attendu par Chorus.",
+                }
+            attachment: dict[str, Any] = {
+                "pieceJointeComplementaireId": attachment_id,
+                "pieceJointeComplementaireDesignation": designation,
+                "pieceJointeComplementaireType": attachment_type,
+            }
+            if line_number is not None:
+                attachment["pieceJointeComplementaireNumeroLigneFacture"] = line_number
+            attachments.append(attachment)
+
+    if not commentaire and not attachments:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Ajouter au moins un commentaire ou une pièce jointe complémentaire.",
+            "raw_message": "commentaire and pieceJointeComplementaire both empty",
+            "recommended_action": "Saisir un commentaire ou sélectionner une pièce jointe déjà connue.",
+        }
+
+    payload: dict[str, Any] = {"identifiantFactureCPP": identifier}
+    if commentaire:
+        payload["commentaire"] = commentaire
+    id_utilisateur = _as_positive_int(body.get("idUtilisateurCourant"))
+    if id_utilisateur is not None:
+        payload["idUtilisateurCourant"] = id_utilisateur
+    if attachments:
+        payload["pieceJointeComplementaire"] = attachments
+    return payload, None
+
+
+def _build_reception_complete_uploaded_attachment(
+    item: dict[str, Any],
+    *,
+    upload_id: int,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    designation = _as_non_empty_string(item.get("designation") or item.get("name"))
+    attachment_type = _as_non_empty_string(item.get("type")) or "DIVERS"
+    line_number = _as_int(item.get("lineNumber"))
+    if not designation:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "La désignation de la pièce jointe uploadée est obligatoire.",
+            "raw_message": "attachmentFiles[].designation missing",
+            "recommended_action": "Renseigner une désignation ou choisir un fichier nommé correctement.",
+        }
+    attachment: dict[str, Any] = {
+        "pieceJointeComplementaireId": upload_id,
+        "pieceJointeComplementaireDesignation": designation,
+        "pieceJointeComplementaireType": attachment_type,
+    }
+    if line_number is not None:
+        attachment["pieceJointeComplementaireNumeroLigneFacture"] = line_number
+    return attachment, None
+
+
+def _upload_reception_complete_attachments(
+    client: ChorusClient,
+    raw_files: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    if raw_files in (None, ""):
+        return [], None
+    if not isinstance(raw_files, list):
+        return [], {
+            "category": "VALIDATION",
+            "human_message": "Le champ attachmentFiles doit être une liste.",
+            "raw_message": "attachmentFiles is not a list",
+            "recommended_action": "Joindre un ou plusieurs fichiers complémentaires valides.",
+        }
+
+    attachments: list[dict[str, Any]] = []
+    for index, item in enumerate(raw_files):
+        if not isinstance(item, dict):
+            return [], {
+                "category": "VALIDATION",
+                "human_message": f"Le fichier complémentaire #{index + 1} est invalide.",
+                "raw_message": f"attachmentFiles[{index}] is not an object",
+                "recommended_action": "Vérifier les fichiers joints.",
+            }
+        file_name = _as_non_empty_string(item.get("name"))
+        file_base64 = _as_non_empty_string(item.get("base64"))
+        if not file_name or not file_base64:
+            return [], {
+                "category": "VALIDATION",
+                "human_message": f"Le fichier complémentaire #{index + 1} est incomplet.",
+                "raw_message": f"attachmentFiles[{index}].name/base64 missing",
+                "recommended_action": "Sélectionner à nouveau le fichier complémentaire.",
+            }
+        upload_result = client.upload_attachment_content(
+            file_name=file_name,
+            file_base64=file_base64,
+            mime_type=_as_non_empty_string(item.get("mimeType")) or "application/octet-stream",
+        )
+        attachment, error = _build_reception_complete_uploaded_attachment(
+            item,
+            upload_id=upload_result.piece_jointe_id,
+        )
+        if error is not None:
+            return [], error
+        attachments.append(attachment)
+
+    return attachments, None
+
+
+@app.post(RECEPTION_PROCESS_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_process(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    payload, validation_error = _build_reception_process_payload(body)
+    if validation_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **validation_error},
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Traitement facture reçue start: idFacture=%s, nouveauStatut=%s, env=%s",
+        payload["idFacture"],
+        payload["nouveauStatut"],
+        environment_override or "default",
+    )
+
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    try:
+        client.reset_api_calls()
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_TRAITER_RECUE_PATH,
+            payload,
+            "Traitement facture reçue",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = list(client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Traitement facture reçue error: idFacture=%s, duration=%s ms, error=%s",
+            payload["idFacture"],
+            duration_ms,
+            message,
+        )
+        normalized = normalize_chorus_error(message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "apiCalls": api_calls,
+            },
+        )
+
+    api_calls = list(client.api_calls)
+    code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+
+    if status_code >= 400 or (code_retour is not None and code_retour != 0):
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Traitement facture reçue refusé: idFacture=%s, codeRetour=%s, status=%s, duration=%s ms",
+            payload["idFacture"],
+            code_retour,
+            status_code,
+            duration_ms,
+        )
+        normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+        return _json_response(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Traitement facture reçue success: idFacture=%s, nouveauStatut=%s, duration=%s ms",
+        payload["idFacture"],
+        payload["nouveauStatut"],
+        duration_ms,
+    )
+    processed_persisted = _persist_reception_processing_if_available(
+        payload["idFacture"],
+        new_status=payload["nouveauStatut"],
+        response=chorus_response if isinstance(chorus_response, dict) else None,
+    )
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "success": True,
+            "payload": payload,
+            "response": chorus_response,
+            "processedPersisted": processed_persisted,
+            "apiCalls": api_calls,
+        },
+    )
+
+
+@app.post(RECEPTION_COMPLETE_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_complete(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    client.reset_api_calls()
+
+    try:
+        uploaded_attachments, upload_error = _upload_reception_complete_attachments(
+            client,
+            body.get("attachmentFiles"),
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "apiCalls": list(client.api_calls),
+            },
+        )
+    if upload_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **upload_error},
+        )
+    if uploaded_attachments:
+        existing_attachments = body.get("pieceJointeComplementaire")
+        if isinstance(existing_attachments, list):
+            body = {
+                **body,
+                "pieceJointeComplementaire": [*existing_attachments, *uploaded_attachments],
+            }
+        else:
+            body = {
+                **body,
+                "pieceJointeComplementaire": uploaded_attachments,
+            }
+
+    payload, validation_error = _build_reception_complete_payload(body)
+    if validation_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **validation_error},
+        )
+
+    identifier = payload["identifiantFactureCPP"]
+    logger.debug(
+        "Complément facture suspendue start: identifiantFactureCPP=%s, hasComment=%s, pjCount=%s, env=%s",
+        identifier,
+        "commentaire" in payload,
+        len(payload.get("pieceJointeComplementaire", [])),
+        environment_override or "default",
+    )
+
+    try:
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_COMPLETER_FACTURE_PATH,
+            payload,
+            "Complément facture suspendue",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Complément facture suspendue error: identifiantFactureCPP=%s, duration=%s ms, error=%s",
+            identifier,
+            duration_ms,
+            message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "apiCalls": list(client.api_calls),
+            },
+        )
+
+    api_calls = list(client.api_calls)
+    code_retour = _as_int(chorus_response.get("codeRetour")) if isinstance(chorus_response, dict) else None
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+    if status_code >= 400 or (code_retour is not None and code_retour != 0):
+        normalized = normalize_chorus_error(libelle if libelle is not None else chorus_response, code_retour=code_retour)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Complément facture suspendue refusé: identifiantFactureCPP=%s, codeRetour=%s, status=%s, duration=%s ms",
+            identifier,
+            code_retour,
+            status_code,
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Complément facture suspendue success: identifiantFactureCPP=%s, duration=%s ms",
+        identifier,
+        duration_ms,
+    )
+    response_record = chorus_response if isinstance(chorus_response, dict) else {}
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "ok": True,
+            "success": True,
+            "identifiantFactureCPP": _as_int(response_record.get("identifiantFactureCPP")) or identifier,
+            "numeroFacture": _as_non_empty_string(response_record.get("numeroFacture")),
+            "dateTraitement": _as_non_empty_string(response_record.get("dateTraitement")),
+            "libelle": _as_non_empty_string(response_record.get("libelle")),
+            "payload": payload,
+            "raw": response_record,
+            "apiCalls": api_calls,
+        },
+    )
+
+
+def _build_telecharger_groupe_payload(
+    body: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Construit le payload `/v1/telecharger/groupe` ou retourne une erreur structurée.
+
+    Supporte soit `idFacture` (un seul), soit `listeFacture: [{idFacture: ...}]`
+    pour rester aligné avec le contrat Chorus (multi-factures).
+    """
+    raw_list = body.get("listeFacture")
+    liste_facture: list[dict[str, int]] = []
+    raw_invoice_ids = body.get("invoiceIds")
+    if isinstance(raw_invoice_ids, list):
+        for item in raw_invoice_ids:
+            parsed = _as_positive_int(item)
+            if parsed is not None:
+                liste_facture.append({"idFacture": parsed})
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            if isinstance(item, dict):
+                parsed = _as_positive_int(item.get("idFacture"))
+                if parsed is not None:
+                    liste_facture.append({"idFacture": parsed})
+    if not liste_facture:
+        single = _as_positive_int(body.get("idFacture") or body.get("identifiantFactureCPP"))
+        if single is not None:
+            liste_facture = [{"idFacture": single}]
+    if not liste_facture:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": "Le champ idFacture (ou listeFacture) est obligatoire.",
+            "raw_message": "no idFacture provided",
+            "recommended_action": "Fournir invoiceIds, idFacture ou listeFacture.",
+        }
+
+    raw_format = _as_non_empty_string(body.get("format")) or "PDF"
+    requested_format = raw_format.upper()
+    if requested_format not in RECEPTION_DOWNLOAD_FORMATS:
+        return {}, {
+            "category": "VALIDATION",
+            "human_message": f"Format '{requested_format}' non supporté.",
+            "raw_message": f"format={requested_format} not in {sorted(RECEPTION_DOWNLOAD_FORMATS)}",
+            "recommended_action": "Choisir parmi : PDF, XML, PIVOT, ZIP.",
+        }
+    format_value = RECEPTION_DOWNLOAD_CHORUS_FORMAT_BY_REQUEST[requested_format]
+
+    with_attachments_raw = (
+        body.get("avecPiecesJointesComplementaires")
+        if "avecPiecesJointesComplementaires" in body
+        else body.get("withComplementaryAttachments")
+    )
+    default_with_attachments = requested_format in {"ZIP", "ZIP_WITH_ATTACHMENTS"}
+    if isinstance(with_attachments_raw, bool):
+        avec_pj = "Oui" if with_attachments_raw else "Non"
+    elif isinstance(with_attachments_raw, str):
+        normalized = with_attachments_raw.strip().lower()
+        avec_pj = "Non" if normalized in {"false", "0", "non", "no"} else "Oui"
+    else:
+        avec_pj = "Oui" if default_with_attachments else "Non"
+
+    payload: dict[str, Any] = {
+        "format": format_value,
+        "listeFacture": liste_facture,
+        "avecPiecesJointesComplementaires": avec_pj,
+    }
+
+    id_espace = _as_positive_int(body.get("idEspace"))
+    if id_espace is not None:
+        payload["idEspace"] = id_espace
+    id_user = _as_positive_int(body.get("idUtilisateurCourant"))
+    if id_user is not None:
+        payload["idUtilisateurCourant"] = id_user
+
+    return payload, None
+
+
+@app.post(INVOICE_DOWNLOAD_PATH, dependencies=[Depends(require_auth)])
+@app.post(RECEPTION_DOWNLOAD_PATH, dependencies=[Depends(require_auth)])
+def handle_reception_download(body: dict[str, Any] | None = Body(default=None)) -> Response:
+    body = body or {}
+    payload, validation_error = _build_telecharger_groupe_payload(body)
+    if validation_error is not None:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {"ok": False, "success": False, **validation_error},
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    id_facture_first = payload["listeFacture"][0]["idFacture"]
+    logger.debug(
+        "Téléchargement groupe start: idFacture=%s, format=%s, avecPJ=%s, env=%s",
+        id_facture_first,
+        payload["format"],
+        payload["avecPiecesJointesComplementaires"],
+        environment_override or "default",
+    )
+
+    settings = load_chorus_settings(environment_override=environment_override)
+    client = ChorusClient(settings)
+    try:
+        client.reset_api_calls()
+        status_code, chorus_response = client._post_json_raw(
+            CHORUS_TELECHARGER_GROUPE_PATH,
+            payload,
+            "Téléchargement groupe facture",
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        normalized = normalize_chorus_error(message)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Téléchargement groupe error: idFacture=%s, duration=%s ms, error=%s",
+            id_facture_first,
+            duration_ms,
+            message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "apiCalls": list(client.api_calls),
+            },
+        )
+
+    api_calls = list(client.api_calls)
+    code_retour = chorus_response.get("codeRetour") if isinstance(chorus_response, dict) else None
+    libelle = chorus_response.get("libelle") if isinstance(chorus_response, dict) else None
+
+    # 413 = dossier > 120 Mo. On expose un message dédié au lieu du normalizer générique.
+    if status_code == 413:
+        logger.warning(
+            "Téléchargement groupe refusé (413 Payload Too Large): idFacture=%s",
+            id_facture_first,
+        )
+        return _json_response(
+            HTTPStatus.PAYLOAD_TOO_LARGE,
+            {
+                "ok": False,
+                "success": False,
+                "category": "VALIDATION",
+                "human_message": "Le dossier dépasse 120 Mo : Chorus refuse le téléchargement groupé.",
+                "raw_message": "HTTP 413 — dossier > 120 Mo",
+                "recommended_action": (
+                    "Demander un format moins lourd (XML seul) ou télécharger les factures une par une."
+                ),
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    if status_code >= 400 or (code_retour is not None and code_retour != 0):
+        normalized = normalize_chorus_error(libelle, code_retour=code_retour)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.warning(
+            "Téléchargement groupe refusé: idFacture=%s, codeRetour=%s, status=%s, duration=%s ms",
+            id_facture_first,
+            code_retour,
+            status_code,
+            duration_ms,
+        )
+        return _json_response(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {
+                "ok": False,
+                "success": False,
+                **normalized.to_dict(),
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    file_b64 = chorus_response.get("fichierResultat") if isinstance(chorus_response, dict) else None
+    if not isinstance(file_b64, str) or not file_b64.strip():
+        logger.warning(
+            "Téléchargement groupe : fichierResultat manquant pour idFacture=%s",
+            id_facture_first,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                "category": "UNKNOWN",
+                "human_message": "Chorus n'a pas renvoyé de fichier exploitable.",
+                "raw_message": "fichierResultat missing or empty",
+                "recommended_action": "Réessayer ; si le problème persiste, signaler le cas avec l'idFacture concerné.",
+                "payload": payload,
+                "response": chorus_response,
+                "apiCalls": api_calls,
+            },
+        )
+
+    try:
+        file_bytes = base64.b64decode(file_b64, validate=False)
+    except (ValueError, base64.binascii.Error) as decode_error:  # type: ignore[attr-defined]
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "success": False,
+                "category": "UNKNOWN",
+                "human_message": "Fichier Chorus illisible (base64 invalide).",
+                "raw_message": str(decode_error),
+                "recommended_action": "Réessayer ultérieurement.",
+                "payload": payload,
+                "apiCalls": api_calls,
+            },
+        )
+
+    requested_format = (_as_non_empty_string(body.get("format")) or "PDF").upper()
+    mime, suffix = RECEPTION_DOWNLOAD_MIME_BY_FORMAT.get(
+        requested_format, ("application/octet-stream", "bin")
+    )
+    filename = (
+        f"chorus-factures.{suffix}"
+        if len(payload["listeFacture"]) > 1
+        else f"chorus-facture-{id_facture_first}.{suffix}"
+    )
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Téléchargement groupe success: idFacture=%s, format=%s, bytes=%s, duration=%s ms",
+        id_facture_first,
+        payload["format"],
+        len(file_bytes),
+        duration_ms,
+    )
+
+    return Response(
+        content=file_bytes,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Chorus-Code-Retour": str(code_retour) if code_retour is not None else "0",
+            "X-Chorus-Libelle": libelle or "",
+            "X-Chorus-Format": str(payload["format"]),
+        },
+    )
+
+
+@app.post(INVOICE_HISTORY_PATH, dependencies=[Depends(require_auth)])
+def handle_invoice_history(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
+    body = body or {}
+    raw_payload = body.get("payload")
+    if raw_payload is None:
+        raw_payload = {
+            key: value
+            for key, value in body.items()
+            if key not in {"environment", "chorusEnv", "env"}
+        }
+    if not isinstance(raw_payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload doit être un objet JSON.",
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+
+    try:
+        payload = _build_invoice_history_payload(raw_payload)
+    except ValueError as error:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": str(error),
+            },
+        )
+
+    logger.debug(
+        "Consultation historique facture start: idFacture=%s, env=%s",
+        payload.get("idFacture"),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.consult_invoice_history(payload)
+        history_response = result.get("response") if isinstance(result, dict) else None
+        history_status_persisted = _persist_reception_history_status_if_available(
+            payload["idFacture"],
+            history_response=history_response if isinstance(history_response, dict) else None,
+        )
+        if isinstance(result, dict):
+            result = {
+                **result,
+                "historyStatusPersisted": history_status_persisted,
+            }
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Consultation historique facture success: idFacture=%s, duration=%s ms",
+            payload.get("idFacture"),
+            duration_ms,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Consultation historique facture error: idFacture=%s, duration=%s ms, error=%s",
+            payload.get("idFacture"),
+            duration_ms,
+            message,
+        )
         return _json_response(
             HTTPStatus.BAD_GATEWAY,
             {
@@ -1183,6 +2611,33 @@ def handle_submit(
             error_message=error_message,
         )
 
+    state_provided, raw_current_state = extract_payment_request_state(body)
+    if state_provided:
+        try:
+            validate_payment_request_state(raw_current_state)
+        except InvalidPaymentRequestStateError as state_error:
+            logger.warning(
+                "Soumission bloquée: endpoint=%s, numero=%s, état=%s, motif=%s",
+                SUBMIT_PATH,
+                payload.get("numeroFactureSaisi"),
+                state_error.current_state,
+                state_error.reason,
+            )
+            response_payload = {
+                "ok": False,
+                "error": str(state_error),
+                **state_error.to_error_payload(),
+            }
+            return _audit_submit_response(
+                request,
+                user=auth_user,
+                payload=payload,
+                http_status=HTTPStatus.UNPROCESSABLE_ENTITY,
+                response_payload=response_payload,
+                started_at=audit_started_at,
+                error_message=str(state_error),
+            )
+
     payload = _add_submitter_comment(payload, auth_user)
     started_at = perf_counter()
     environment_override = _extract_environment_override(body)
@@ -1247,6 +2702,182 @@ def handle_submit(
         )
 
 
+@app.post(RECYCLE_PATH)
+def handle_recycle(
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+    auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    body = body or {}
+    _print_received_post_debug(RECYCLE_PATH, body)
+    payload = body.get("payload")
+
+    if not isinstance(payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload est obligatoire et doit être un objet JSON.",
+            },
+        )
+
+    payload = _add_submitter_comment(payload, auth_user)
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Recyclage start: identifiantFactureCPP=%s, env=%s",
+        payload.get("identifiantFactureCPP"),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.recycle_invoice(payload)
+        result["externalId"] = _extract_external_id(result.get("response"))
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Recyclage success: identifiantFactureCPP=%s, externalId=%s, duration=%s ms",
+            payload.get("identifiantFactureCPP"),
+            result.get("externalId"),
+            duration_ms,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.recycle",
+            user=auth_user,
+            payload=payload,
+            status="success",
+            http_status=HTTPStatus.OK,
+            started_at=started_at,
+            result=result,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Recyclage error: identifiantFactureCPP=%s, duration=%s ms, error=%s",
+            payload.get("identifiantFactureCPP"),
+            duration_ms,
+            message,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.recycle",
+            user=auth_user,
+            payload=payload,
+            status="failed",
+            http_status=HTTPStatus.BAD_GATEWAY,
+            started_at=started_at,
+            error_message=message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
+
+
+@app.post(CORRECT_VALIDATOR_PATH)
+def handle_correct_validator(
+    request: Request,
+    body: dict[str, Any] | None = Body(default=None),
+    auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    body = body or {}
+    _print_received_post_debug(CORRECT_VALIDATOR_PATH, body)
+    raw_payload = body.get("payload")
+
+    if not isinstance(raw_payload, dict):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": "Le champ payload est obligatoire et doit être un objet JSON.",
+            },
+        )
+
+    try:
+        payload = _build_correct_validator_payload(raw_payload)
+    except ValueError as error:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "ok": False,
+                "error": str(error),
+            },
+        )
+
+    started_at = perf_counter()
+    environment_override = _extract_environment_override(body)
+    logger.debug(
+        "Correction valideur start: idFacture=%s, idStructure=%s, identifiantStructure=%s, env=%s",
+        payload.get("idFacture"),
+        payload.get("idStructure"),
+        payload.get("identifiantStructure"),
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        service = ChorusSubmissionService(settings)
+        result = service.correct_invoice_validator(payload)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Correction valideur success: idFacture=%s, duration=%s ms",
+            payload.get("idFacture"),
+            duration_ms,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.validator.correct",
+            user=auth_user,
+            payload=payload,
+            status="success",
+            http_status=HTTPStatus.OK,
+            started_at=started_at,
+            result=result,
+        )
+        return _json_response(HTTPStatus.OK, result)
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        api_calls = []
+        if "service" in locals():
+            api_calls = list(service.client.api_calls)
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug(
+            "Correction valideur error: idFacture=%s, duration=%s ms, error=%s",
+            payload.get("idFacture"),
+            duration_ms,
+            message,
+        )
+        _audit_chorus_operation(
+            request,
+            action="invoice.validator.correct",
+            user=auth_user,
+            payload=payload,
+            status="failed",
+            http_status=HTTPStatus.BAD_GATEWAY,
+            started_at=started_at,
+            error_message=message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "ok": False,
+                "error": message,
+                "apiCalls": api_calls,
+            },
+        )
+
+
 def main() -> int:
     logging.basicConfig(level=os.environ.get("CHORUS_LOG_LEVEL", "INFO").upper())
     print(f"Python executable: {sys.executable}")
@@ -1254,6 +2885,14 @@ def main() -> int:
     print(f"FastAPI listening on http://{HOST}:{PORT}")
     print(f"  - OAuth token: {OAUTH_TOKEN_PATH}")
     print(f"  - Submit:      {SUBMIT_PATH}")
+    print(f"  - Recycle:     {RECYCLE_PATH}")
+    print(f"  - Validator:   {CORRECT_VALIDATOR_PATH}")
+    print(f"  - Reception:   {RECEPTION_CONSULT_PATH}")
+    print(f"  - Reception ×: {RECEPTION_CONSULT_BULK_PATH}")
+    print(f"  - Reception →: {RECEPTION_PROCESS_PATH}")
+    print(f"  - Reception +: {RECEPTION_COMPLETE_PATH}")
+    print(f"  - Reception ↓: {RECEPTION_DOWNLOAD_PATH}")
+    print(f"  - History:     {INVOICE_HISTORY_PATH}")
     print(f"  - Extract PDF: {EXTRACT_PDF_PATH}")
     print(f"  - Annuaire:    {SYNC_ANNUAIRE_PATH}")
     print(f"  - SIRET info:  {SIRET_INFO_PATH}")

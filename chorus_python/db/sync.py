@@ -29,6 +29,22 @@ DELTA_SAFETY_MARGIN = timedelta(hours=24)
 logger = logging.getLogger(__name__)
 
 
+RECEPTION_CLASS_FACTURE_RECUE = "FACTURE_RECUE"
+RECEPTION_CLASS_REPONSE_FAVORABLE = "REPONSE_FAVORABLE"
+RECEPTION_CLASS_A_QUALIFIER = "A_QUALIFIER"
+RECEPTION_CLASSIFICATION_KEY = "receptionClassification"
+RECEPTION_PROCESSING_KEY = "receptionProcessing"
+RECEPTION_HISTORY_KEY = "receptionHistory"
+RECEPTION_RAW_PRESERVED_KEYS = {
+    "receptionDetail",
+    "receptionNormalized",
+    "receptionDetailSyncedAt",
+    RECEPTION_HISTORY_KEY,
+    RECEPTION_PROCESSING_KEY,
+    RECEPTION_CLASSIFICATION_KEY,
+}
+
+
 # ---------------------------------------------------------------------------
 # Coercion helpers (Chorus payloads are loosely typed)
 # ---------------------------------------------------------------------------
@@ -109,6 +125,118 @@ def _try_advisory_xact_lock(session: Session, *parts: str) -> bool:
         return True
     key = _advisory_lock_key(*parts)
     return bool(session.scalar(select(func.pg_try_advisory_xact_lock(key))))
+
+
+def _reception_classification(
+    kind: str,
+    now: datetime,
+    *,
+    source: str,
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "kind": kind,
+        "source": source,
+        "updatedAt": now.isoformat(),
+    }
+    if reason:
+        payload["reason"] = reason[:1000]
+    return payload
+
+
+def _history_status_sort_key(item: dict[str, Any]) -> tuple[float, int]:
+    timestamp = _as_datetime(item.get("histoStatutDatePassage"))
+    if timestamp is not None and timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    raw_id = item.get("histoStatutId")
+    try:
+        status_id = int(raw_id) if raw_id is not None else 0
+    except (TypeError, ValueError):
+        status_id = 0
+    return (timestamp.timestamp() if timestamp is not None else 0.0, status_id)
+
+
+def _latest_reception_history_status(history_response: dict[str, Any]) -> Optional[str]:
+    current_status = _as_str(
+        _first_present(
+            history_response,
+            "statutCourantCode",
+            "codeStatutCourant",
+            "statutFacture",
+            "statut",
+        )
+    )
+    if current_status:
+        return current_status
+
+    status_section = history_response.get("historiquesDesStatuts")
+    raw_items = status_section.get("histoStatut") if isinstance(status_section, dict) else None
+    if isinstance(raw_items, dict):
+        items = [raw_items]
+    elif isinstance(raw_items, list):
+        items = [item for item in raw_items if isinstance(item, dict)]
+    else:
+        items = []
+    if not items:
+        return None
+    latest = max(items, key=_history_status_sort_key)
+    return _as_str(latest.get("histoStatutCode"))
+
+
+def _reception_processing_marker(
+    *,
+    status: str,
+    now: datetime,
+    source: str,
+    existing: Any = None,
+    response: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    existing_record = existing if isinstance(existing, dict) else {}
+    marker: dict[str, Any] = {
+        **existing_record,
+        "processed": True,
+        "status": status,
+        "source": existing_record.get("source") or source,
+        "processedAt": existing_record.get("processedAt") or now.isoformat(),
+        "observedAt": now.isoformat(),
+    }
+    if isinstance(response, dict):
+        code_retour = response.get("codeRetour")
+        libelle = response.get("libelle")
+        if code_retour is not None:
+            marker["codeRetour"] = code_retour
+        if libelle is not None:
+            marker["libelle"] = _as_str(libelle) or str(libelle)
+    return marker
+
+
+def _merge_reception_raw_metadata(
+    incoming_payload: dict[str, Any],
+    existing_payload: Any,
+    now: datetime,
+) -> dict[str, Any]:
+    existing = existing_payload if isinstance(existing_payload, dict) else {}
+    preserved = {
+        key: existing[key]
+        for key in RECEPTION_RAW_PRESERVED_KEYS
+        if key in existing
+    }
+    merged = {
+        **incoming_payload,
+        **preserved,
+    }
+    if RECEPTION_CLASSIFICATION_KEY not in merged:
+        default_kind = (
+            RECEPTION_CLASS_FACTURE_RECUE
+            if isinstance(merged.get("receptionNormalized"), dict)
+            else RECEPTION_CLASS_A_QUALIFIER
+        )
+        merged[RECEPTION_CLASSIFICATION_KEY] = _reception_classification(
+            default_kind,
+            now,
+            source="search_sync",
+        )
+    return merged
 
 
 # ---------------------------------------------------------------------------
@@ -972,6 +1100,10 @@ def _upsert_invoice(
         )
     )
 
+    existing_record = session.get(Invoice, invoice_id) if existing_invoice else None
+    existing_raw_payload = existing_record.raw_payload if existing_record is not None else None
+    merged_raw_payload = _merge_reception_raw_metadata(invoice, existing_raw_payload, now)
+
     payload = {
         "id": invoice_id,
         "tenant_id": tenant_id,
@@ -1055,7 +1187,7 @@ def _upsert_invoice(
             _first_present(invoice, "dateHeureEtatCourant", "dateEtatCourant")
         ),
         "last_status_sync_at": now,
-        "raw_payload": invoice,
+        "raw_payload": merged_raw_payload,
         "last_synced_at": now,
     }
 
@@ -1104,6 +1236,339 @@ def _upsert_invoice(
     )
     session.execute(stmt)
     return existing_invoice
+
+
+# ---------------------------------------------------------------------------
+# Reception detail enrichment
+# ---------------------------------------------------------------------------
+
+
+def _find_invoice_for_reception_detail(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    normalized_invoice: dict[str, Any],
+) -> Optional[Invoice]:
+    identifier_str = str(identifier)
+    invoice = session.get(Invoice, f"chorus-{identifier_str}")
+    if invoice is not None and invoice.tenant_id == tenant_id:
+        return invoice
+
+    invoice = session.scalar(
+        select(Invoice).where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.chorus_invoice_number == identifier_str,
+        )
+    )
+    if invoice is not None:
+        return invoice
+
+    supplier_invoice_number = _as_str(normalized_invoice.get("numeroFacture"))
+    if not supplier_invoice_number:
+        return None
+
+    return session.scalar(
+        select(Invoice).where(
+            Invoice.tenant_id == tenant_id,
+            Invoice.supplier_invoice_number == supplier_invoice_number,
+        )
+    )
+
+
+def _dict_section(payload: dict[str, Any], key: str) -> dict[str, Any]:
+    section = payload.get(key)
+    return section if isinstance(section, dict) else {}
+
+
+def _list_section(payload: dict[str, Any], key: str) -> list[Any]:
+    section = payload.get(key)
+    return section if isinstance(section, list) else []
+
+
+def _set_present(target: Any, attribute: str, value: Any) -> None:
+    if value is not None:
+        setattr(target, attribute, value)
+
+
+def persist_reception_invoice_detail(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    facture: dict[str, Any],
+    normalized_invoice: dict[str, Any],
+) -> bool:
+    """Persist the rich reception detail returned by Chorus on the invoice row.
+
+    The supplier-invoice search endpoint gives a compact list. The reception
+    consult endpoint gives the business detail used by the reception screen, so
+    we store both the raw detail and the normalized frontend shape in JSONB and
+    copy the main fields into indexed invoice columns.
+    """
+    invoice = _find_invoice_for_reception_detail(
+        session,
+        tenant_id=tenant_id,
+        identifier=identifier,
+        normalized_invoice=normalized_invoice,
+    )
+    if invoice is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    identifier_str = str(identifier)
+    dates = _dict_section(normalized_invoice, "dates")
+    amounts = _dict_section(normalized_invoice, "montants")
+    references = _dict_section(normalized_invoice, "references")
+    supplier = _dict_section(normalized_invoice, "fournisseur")
+    recipient = _dict_section(normalized_invoice, "destinataire")
+    attachments = _list_section(normalized_invoice, "piecesJointes")
+
+    existing_raw = invoice.raw_payload if isinstance(invoice.raw_payload, dict) else {}
+    normalized_status = _as_str(normalized_invoice.get("statutFacture"))
+    invoice.raw_payload = {
+        **existing_raw,
+        **facture,
+        "receptionDetail": facture,
+        "receptionNormalized": normalized_invoice,
+        "receptionDetailSyncedAt": now.isoformat(),
+        RECEPTION_CLASSIFICATION_KEY: _reception_classification(
+            RECEPTION_CLASS_FACTURE_RECUE,
+            now,
+            source="reception_consult",
+        ),
+    }
+
+    _set_present(invoice, "chorus_invoice_number", identifier_str)
+    _set_present(invoice, "supplier_invoice_number", _as_str(normalized_invoice.get("numeroFacture")))
+    _set_present(invoice, "status_chorus", normalized_status)
+    if invoice.status_chorus:
+        invoice.status_internal = _normalize_chorus_status_internal(invoice.status_chorus)
+    _set_present(invoice, "deposit_mode", _as_str(normalized_invoice.get("modeDepot")))
+    _set_present(invoice, "invoice_date", _as_date(dates.get("dateFacture")))
+    _set_present(invoice, "due_date", _as_date(dates.get("dateEcheancePaiement")))
+    _set_present(invoice, "submitted_at", _as_datetime(dates.get("dateDepot")))
+
+    _set_present(invoice, "total_ht", _as_decimal(amounts.get("ht")))
+    _set_present(invoice, "total_vat", _as_decimal(amounts.get("tva")))
+    _set_present(invoice, "total_ttc", _as_decimal(amounts.get("ttc")))
+    _set_present(invoice, "amount_to_pay", _as_decimal(amounts.get("aPayer")))
+    _set_present(invoice, "currency_code", _as_str(amounts.get("devise")))
+
+    _set_present(invoice, "purchase_order_number", _as_str(references.get("numeroBonCommande")))
+    market_number = _as_str(references.get("numeroMarche"))
+    if market_number and market_number.lower() == "null":
+        market_number = None
+    _set_present(invoice, "market_number", market_number)
+    _set_present(invoice, "chorus_invoice_type", _as_str(references.get("typeFacture")))
+
+    _set_present(invoice, "supplier_chorus_code", _as_str(supplier.get("id")))
+    _set_present(invoice, "supplier_chorus_name", _as_str(supplier.get("raisonSociale")))
+    _set_present(invoice, "recipient_chorus_id", _as_str(recipient.get("id")))
+    _set_present(invoice, "recipient_chorus_name", _as_str(recipient.get("raisonSociale")))
+    _set_present(invoice, "service_chorus_code", _as_str(recipient.get("codeService")))
+
+    rejection_processed = normalized_invoice.get("rejetTraite")
+    if isinstance(rejection_processed, bool):
+        invoice.rejection_processed = rejection_processed
+    invoice.attachment_count = len(attachments)
+    invoice.last_synced_at = now
+    invoice.last_status_sync_at = now
+
+    session.flush()
+    return True
+
+
+def _find_invoice_by_reception_identifier(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+) -> Optional[Invoice]:
+    identifier_str = str(identifier)
+    invoice = session.get(Invoice, f"chorus-{identifier_str}")
+    if invoice is not None and invoice.tenant_id == tenant_id:
+        return invoice
+
+    return session.scalar(
+        select(Invoice).where(
+            Invoice.tenant_id == tenant_id,
+            (
+                (Invoice.chorus_invoice_number == identifier_str)
+                | (Invoice.supplier_invoice_number == identifier_str)
+            ),
+        )
+    )
+
+
+def persist_reception_invoice_classification(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    kind: str,
+    source: str = "reception_consult",
+    reason: Optional[str] = None,
+) -> bool:
+    """Store the business bucket for reception rows when no rich detail exists.
+
+    This keeps SQL as the source of truth: a row with no reception detail is not
+    automatically a favorable response. It stays `A_QUALIFIER` until the Chorus
+    consultation classifies it, or becomes `FACTURE_RECUE` when detail is stored.
+    """
+    if kind not in {
+        RECEPTION_CLASS_FACTURE_RECUE,
+        RECEPTION_CLASS_REPONSE_FAVORABLE,
+        RECEPTION_CLASS_A_QUALIFIER,
+    }:
+        raise ValueError(f"Classification réception inconnue: {kind}")
+
+    invoice = _find_invoice_by_reception_identifier(
+        session,
+        tenant_id=tenant_id,
+        identifier=identifier,
+    )
+    if invoice is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    existing_raw = invoice.raw_payload if isinstance(invoice.raw_payload, dict) else {}
+    invoice.raw_payload = {
+        **existing_raw,
+        RECEPTION_CLASSIFICATION_KEY: _reception_classification(
+            kind,
+            now,
+            source=source,
+            reason=reason,
+        ),
+    }
+    invoice.last_synced_at = now
+    session.flush()
+    return True
+
+
+def persist_reception_invoice_processing(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    new_status: str,
+    source: str = "reception_process",
+    response: Optional[dict[str, Any]] = None,
+) -> bool:
+    """Mark a received invoice as processed immediately after `/traiter/recue`.
+
+    Chorus search/consultation can lag after a successful processing action. This
+    local marker lets the UI move the invoice out of the active reception queue
+    while keeping the raw Chorus payload available for later syncs.
+    """
+    invoice = _find_invoice_by_reception_identifier(
+        session,
+        tenant_id=tenant_id,
+        identifier=identifier,
+    )
+    if invoice is None:
+        return False
+
+    now = datetime.now(timezone.utc)
+    normalized_status = _as_str(new_status) or new_status
+    existing_raw = invoice.raw_payload if isinstance(invoice.raw_payload, dict) else {}
+    existing_normalized = existing_raw.get("receptionNormalized")
+    if isinstance(existing_normalized, dict):
+        next_normalized = {
+            **existing_normalized,
+            "statutFacture": normalized_status,
+        }
+    else:
+        next_normalized = existing_normalized
+
+    processing = _reception_processing_marker(
+        status=normalized_status,
+        now=now,
+        source=source,
+        existing=existing_raw.get(RECEPTION_PROCESSING_KEY),
+        response=response,
+    )
+
+    invoice.raw_payload = {
+        **existing_raw,
+        "statut": normalized_status,
+        "statutFacture": normalized_status,
+        RECEPTION_PROCESSING_KEY: processing,
+        **(
+            {"receptionNormalized": next_normalized}
+            if isinstance(next_normalized, dict)
+            else {}
+        ),
+    }
+    invoice.status_chorus = normalized_status
+    invoice.status_internal = _normalize_chorus_status_internal(normalized_status)
+    invoice.status_changed_at = now
+    invoice.last_status_sync_at = now
+    invoice.last_synced_at = now
+    session.flush()
+    return True
+
+
+def persist_reception_invoice_history_status(
+    session: Session,
+    *,
+    tenant_id: str,
+    identifier: int,
+    history_response: dict[str, Any],
+) -> bool:
+    """Persist the current reception status observed in Chorus history.
+
+    The history endpoint is often the freshest source after a reception action.
+    When it reports a terminal/handled status, we also set the local processing
+    marker used by the reception queue.
+    """
+    invoice = _find_invoice_by_reception_identifier(
+        session,
+        tenant_id=tenant_id,
+        identifier=identifier,
+    )
+    if invoice is None:
+        return False
+
+    latest_status = _latest_reception_history_status(history_response)
+    normalized_status = latest_status.upper() if latest_status else None
+    if not normalized_status:
+        return False
+
+    now = datetime.now(timezone.utc)
+    existing_raw = invoice.raw_payload if isinstance(invoice.raw_payload, dict) else {}
+    existing_normalized = existing_raw.get("receptionNormalized")
+    next_normalized = (
+        {**existing_normalized, "statutFacture": normalized_status}
+        if isinstance(existing_normalized, dict)
+        else existing_normalized
+    )
+
+    previous_status = _as_str(getattr(invoice, "status_chorus", None))
+    invoice.raw_payload = {
+        **existing_raw,
+        "statut": normalized_status,
+        "statutFacture": normalized_status,
+        RECEPTION_HISTORY_KEY: {
+            "status": normalized_status,
+            "syncedAt": now.isoformat(),
+            "response": history_response,
+        },
+        **(
+            {"receptionNormalized": next_normalized}
+            if isinstance(next_normalized, dict)
+            else {}
+        ),
+    }
+    invoice.status_chorus = normalized_status
+    invoice.status_internal = _normalize_chorus_status_internal(normalized_status)
+    if previous_status != normalized_status:
+        invoice.status_changed_at = now
+    invoice.last_status_sync_at = now
+    invoice.last_synced_at = now
+    session.flush()
+    return True
 
 
 # ---------------------------------------------------------------------------

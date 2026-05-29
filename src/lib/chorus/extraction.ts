@@ -7,7 +7,6 @@ import type {
 } from '@/lib/chorus/types';
 import { authenticatedFetch } from '@/lib/auth/session';
 import { applyExtractionTemplates } from '@/lib/chorus/extraction-templates';
-import { extractInvoiceDataWithOllama } from '@/lib/llm/ollama';
 
 interface CandidateMatch<T> {
   value?: T;
@@ -25,12 +24,6 @@ interface ServiceReference {
   publicCustomerId: string;
   codeServiceExecutant: string;
   label: string;
-}
-
-interface ReferenceHintInput {
-  text: string;
-  fields: ExtractedInvoiceDraftData;
-  references: InvoiceExtractionReferences;
 }
 
 interface PositionedPdfTextFragment {
@@ -176,12 +169,6 @@ function collapseSequentialDuplicates(values: string[]): string[] {
   }
 
   return collapsed;
-}
-
-function normalizeForTokenSearch(value: string): string[] {
-  return normalizeLookup(value)
-    .split(/[^a-z0-9]+/g)
-    .filter((token) => token.length >= 4);
 }
 
 function scoreReadableText(value: string): number {
@@ -1575,155 +1562,6 @@ function findMatchByName<T extends { id: string; legalName: string }>(text: stri
     .sort((left, right) => right.normalizedName.length - left.normalizedName.length)[0]?.item;
 }
 
-function rankNamedCandidates<T extends { id: string; legalName: string; siret: string }>(
-  text: string,
-  refs: T[],
-  explicitSiret?: string,
-): T[] {
-  const normalizedText = normalizeLookup(text);
-  const textTokens = new Set(normalizeForTokenSearch(text));
-
-  return refs
-    .map((item) => {
-      let score = 0;
-      if (explicitSiret && item.siret === explicitSiret) {
-        score += 10;
-      }
-      if (item.siret && normalizedText.includes(item.siret)) {
-        score += 6;
-      }
-      const normalizedName = normalizeLookup(item.legalName);
-      if (normalizedName && normalizedText.includes(normalizedName)) {
-        score += 8;
-      }
-
-      const itemTokens = normalizeForTokenSearch(item.legalName);
-      score += itemTokens.filter((token) => textTokens.has(token)).length;
-
-      return { item, score };
-    })
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 5)
-    .map(({ item }) => item);
-}
-
-function rankServiceCandidates(
-  text: string,
-  refs: ServiceReference[],
-  currentCustomerId?: string,
-  explicitServiceCode?: string,
-): ServiceReference[] {
-  const normalizedText = normalizeLookup(text);
-  const textTokens = new Set(normalizeForTokenSearch(text));
-
-  return refs
-    .map((item) => {
-      let score = 0;
-      if (currentCustomerId && item.publicCustomerId === currentCustomerId) {
-        score += 4;
-      }
-      if (explicitServiceCode && item.codeServiceExecutant.toLowerCase() === explicitServiceCode.toLowerCase()) {
-        score += 10;
-      }
-      if (normalizedText.includes(normalizeLookup(item.codeServiceExecutant))) {
-        score += 7;
-      }
-      if (normalizedText.includes(normalizeLookup(item.label))) {
-        score += 8;
-      }
-      const itemTokens = normalizeForTokenSearch(item.label);
-      score += itemTokens.filter((token) => textTokens.has(token)).length;
-      return { item, score };
-    })
-    .filter(({ score }) => score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, 5)
-    .map(({ item }) => item);
-}
-
-function buildKeywordEvidence(text: string): string {
-  const patterns = [
-    'facture',
-    'invoice',
-    'siret',
-    'tva',
-    'montant',
-    'total',
-    'engagement',
-    'marche',
-    'commande',
-    'echeance',
-    'reglement',
-    'règlement',
-    'paiement',
-    'virement',
-    'cheque',
-    'chèque',
-    'prelevement',
-    'prélèvement',
-    'service',
-    'destinataire',
-  ];
-  const snippets: string[] = [];
-
-  for (const pattern of patterns) {
-    const regex = new RegExp(pattern, 'ig');
-    let match: RegExpExecArray | null;
-    let count = 0;
-
-    while ((match = regex.exec(text)) !== null && count < 2) {
-      const start = Math.max(0, match.index - 120);
-      const end = Math.min(text.length, match.index + pattern.length + 180);
-      const snippet = compactWhitespace(text.slice(start, end));
-      if (snippet.length >= 20) {
-        snippets.push(snippet);
-      }
-      count += 1;
-    }
-  }
-
-  return uniqueValues(snippets).slice(0, 20).join('\n');
-}
-
-function buildReferenceHints(input: ReferenceHintInput): string {
-  const { text, fields, references } = input;
-  const supplierCandidates = rankNamedCandidates(text, references.suppliers as NamedReference[], fields.supplierSiret);
-  const customerCandidates = rankNamedCandidates(text, references.publicCustomers as NamedReference[], fields.publicCustomerSiret);
-  const serviceCandidates = rankServiceCandidates(
-    text,
-    references.publicServices as ServiceReference[],
-    fields.publicCustomerId,
-    fields.publicServiceCode,
-  );
-
-  const lines: string[] = [];
-
-  if (supplierCandidates.length > 0) {
-    lines.push('Suppliers:');
-    supplierCandidates.forEach((supplier) => {
-      lines.push(`- supplierOrganizationId=${supplier.id}; legalName=${supplier.legalName}; siret=${supplier.siret}`);
-    });
-  }
-
-  if (customerCandidates.length > 0) {
-    lines.push('Public customers:');
-    customerCandidates.forEach((customer) => {
-      const codeDestinataire = references.publicCustomers.find((item) => item.id === customer.id)?.codeDestinataire ?? '';
-      lines.push(`- publicCustomerId=${customer.id}; legalName=${customer.legalName}; siret=${customer.siret}; codeDestinataire=${codeDestinataire}`);
-    });
-  }
-
-  if (serviceCandidates.length > 0) {
-    lines.push('Public services:');
-    serviceCandidates.forEach((service) => {
-      lines.push(`- publicServiceId=${service.id}; publicCustomerId=${service.publicCustomerId}; codeServiceExecutant=${service.codeServiceExecutant}; label=${service.label}`);
-    });
-  }
-
-  return lines.join('\n');
-}
-
 function findLabelledSiret(text: string, labels: string[]): string | undefined {
   const escapedLabels = labels.map((label) => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const regex = new RegExp(`(?:${escapedLabels.join('|')})[^\\d]{0,30}((?:\\d[\\s.-]?){14,20})`, 'i');
@@ -1882,17 +1720,6 @@ export async function extractInvoiceData(
     fields.publicCustomerName = explicitPublicCustomerName.value;
     fieldConfidences.push(explicitPublicCustomerName.confidence ?? 0.6);
   }
-
-  const llmEnrichedFields = await extractInvoiceDataWithOllama(rawText || text, sourceFormat, file.name, fields, {
-    evidenceText: buildKeywordEvidence(rawText || text),
-    referenceHints: buildReferenceHints({
-      text: rawText || text,
-      fields,
-      references,
-    }),
-  });
-  Object.assign(fields, llmEnrichedFields);
-  completeDerivedTotals(fields, text, fieldConfidences);
 
   const templateResult = applyExtractionTemplates(rawText || text);
   if (templateResult) {

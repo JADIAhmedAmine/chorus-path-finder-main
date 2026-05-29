@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { loadBackendDataApiConfig } from '@/data/backend-client';
+import { BackendDataClient, loadBackendDataApiConfig } from '@/data/backend-client';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -23,5 +23,51 @@ describe('loadBackendDataApiConfig', () => {
     expect(config.baseUrl).toBe('https://backend.example.test/api');
     expect(config.invoicesPath).toBe('/invoices');
     expect(config.invoiceAttachmentsPath).toBe('/invoice-attachments');
+  });
+});
+
+describe('BackendDataClient', () => {
+  it('keeps Chorus invoice raw payload fields needed by rejection handling', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({
+      invoices: [
+        {
+          id: 'chorus-123',
+          tenantId: 'tenant',
+          supplierOrganizationId: 'supplier',
+          sourceFormat: 'PDF',
+          supplierInvoiceNumber: 'FAC-123',
+          invoiceDate: '2026-05-22',
+          totalHt: 100,
+          totalVat: 20,
+          totalTtc: 120,
+          statusInternal: 'REJECTED_BUSINESS',
+          statusChorus: 'REJETEE',
+          rejectionProcessed: false,
+          rawPayload: {
+            idDemandePaiement: 987654,
+            motifRejet: 'ERR_DEST',
+          },
+          createdAt: '2026-05-22T10:00:00.000Z',
+          updatedAt: '2026-05-22T10:00:00.000Z',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })) as unknown as typeof fetch;
+
+    const client = new BackendDataClient({
+      ...loadBackendDataApiConfig(),
+      baseUrl: '',
+      invoicesPath: '/invoices',
+    }, fetchImpl);
+
+    const [invoice] = await client.fetchInvoices();
+
+    expect(invoice.rejectionProcessed).toBe(false);
+    expect(invoice.rawPayload).toEqual({
+      idDemandePaiement: 987654,
+      motifRejet: 'ERR_DEST',
+    });
   });
 });
