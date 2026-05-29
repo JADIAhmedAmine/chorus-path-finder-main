@@ -245,8 +245,12 @@ describe('chorus extraction', () => {
     expect(result.fields.totalAmountHt).toBe(45903.52);
     expect(result.fields.totalVat).toBe(9180.7);
     expect(result.fields.totalAmountTtc).toBe(55084.22);
-    expect(result.warnings).toContain('Destinataire extrait mais non rapproché des références locales.');
-    expect(result.warnings).toContain('Service destinataire extrait mais non rapproché des références locales.');
+    expect(result.warnings).toContain(
+      `Destinataire absent de l'annuaire local. Le SIRET extrait (23440003400026) sera transmis tel quel à Chorus, qui le résoudra côté serveur. Vous pouvez aussi choisir un destinataire dans la liste.`
+    );
+    expect(result.warnings).toContain(
+      "Service destinataire non rapproché de l'annuaire local. Vous pouvez le laisser vide ou saisir le code manuellement avant la soumission."
+    );
   }, 10000);
 
   it('extracts important fields from Docling markdown output', async () => {

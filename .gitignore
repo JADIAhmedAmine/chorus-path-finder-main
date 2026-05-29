@@ -60,3 +60,12 @@ response.json
 # Generated Chorus annuaire data - too large for Git
 public/annuaire/*
 !public/annuaire/.gitkeep
+
+# InvoicePilot work-in-progress (not ready to be tracked)
+alembic/versions/20260522_0001_invoicepilot_core.py
+chorus_python/invoicepilot/
+chorus_python/providers/
+docs/architecture.md
+docs/invoicepilot-roadmap.md
+src/pages/Connectors.tsx
+tests/test_invoicepilot_core.py
