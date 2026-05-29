@@ -20,6 +20,8 @@ COPY chorus_python ./chorus_python
 COPY config ./config
 COPY scripts ./scripts
 COPY public ./public
+COPY tests ./tests
+COPY src/test ./src/test
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
     && chown -R appuser:appuser /app
