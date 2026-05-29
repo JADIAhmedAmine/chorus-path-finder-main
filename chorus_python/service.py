@@ -20,7 +20,31 @@ from .soumission import (
 DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = "DIVERS"
 DEFAULT_SUBMISSION_VAT_TYPE = "TVA_SUR_DEBIT"
 COMPLEMENTARY_ATTACHMENT_TYPE_ALIASES = {
-    "Bordereau de suivi de validation": "Bordereau de suivi",
+    "Attestation": "ATTESTATION",
+    "Attestation administrative": "ATTESTATION",
+    "Attestation ou certificat administratif": "ATTESTATION",
+    "Bon de commande": "BC",
+    "Bon de livraison": "BL",
+    "Bordereau de suivi": "BORDEREAU_SUIVI",
+    "Bordereau de suivi de validation": "BORDEREAU_SUIVI_VALIDATION",
+    "Décision d'admission": "DECISION_ADMISSION",
+    "Decision d'admission": "DECISION_ADMISSION",
+    "Décision de réception": "DECISION_RECEPTION",
+    "Decision de réception": "DECISION_RECEPTION",
+    "Devis": "DEVIS",
+    "Document annexe": "DIVERS",
+    "Duplicata Factur-X": "DUPLICATA_FACTUR-X",
+    "Échéancier": "ECHEANCIER",
+    "Echeancier": "ECHEANCIER",
+    "Facture PDF": "FACTURE_PDF",
+    "Facture XML": "FACTURE_XML",
+    "Ordre de service": "OS",
+    "Procès-verbal de service fait": "PVSF",
+    "Procès-verbal de service fait ou de réception": "PVSF",
+    "Relevé d'identité bancaire": "RIB",
+    "BON_COMMANDE": "BC",
+    "BON_LIVRAISON": "BL",
+    "DOCUMENT_ANNEXE": "DIVERS",
 }
 
 
@@ -30,6 +54,22 @@ def normalize_complementary_attachment_type(value: Any) -> str:
 
     attachment_type = value.strip()
     return COMPLEMENTARY_ATTACHMENT_TYPE_ALIASES.get(attachment_type, attachment_type)
+
+
+def resolve_complementary_attachment_type(client: ChorusClient, value: Any) -> str:
+    fallback_type = normalize_complementary_attachment_type(value)
+    resolver = getattr(client, "resolve_attachment_type_code", None)
+    if not callable(resolver):
+        return fallback_type
+
+    try:
+        return resolver(fallback_type, type_objet="FACTURE") or fallback_type
+    except Exception as exc:
+        print(
+            f"Warning: récupération des types de pièces jointes Chorus impossible, "
+            f"fallback sur {fallback_type}: {exc}"
+        )
+        return fallback_type
 
 
 def normalize_submission_vat_type(value: Any) -> str:
@@ -178,6 +218,7 @@ class ChorusSubmissionService:
                 file_name=str(main_file["name"]),
                 file_base64=str(main_file["base64"]),
                 mime_type=str(main_file.get("mimeType") or "application/pdf"),
+                operation_label="Upload de la pièce jointe principale",
             )
             existing_main_attachment = final_payload.get("pieceJointePrincipale")
             existing_designation = None
@@ -207,8 +248,9 @@ class ChorusSubmissionService:
             attachment_payload: dict[str, Any] = {
                 "pieceJointeComplementaireDesignation": designation,
             }
-            attachment_payload["pieceJointeComplementaireType"] = normalize_complementary_attachment_type(
-                attachment.get("type")
+            attachment_payload["pieceJointeComplementaireType"] = resolve_complementary_attachment_type(
+                self.client,
+                attachment.get("type"),
             )
 
             line_number = attachment.get("lineNumber")
@@ -223,6 +265,7 @@ class ChorusSubmissionService:
                 file_name=str(attachment["name"]),
                 file_base64=str(attachment["base64"]),
                 mime_type=str(attachment.get("mimeType") or "application/octet-stream"),
+                operation_label=f"Upload de la pièce jointe complémentaire ({designation})",
             )
             attachment_payload["pieceJointeComplementaireId"] = upload_result.piece_jointe_id
             existing_additional_attachments.append(attachment_payload)

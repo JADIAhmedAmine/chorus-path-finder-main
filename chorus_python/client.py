@@ -7,6 +7,7 @@ from decimal import Decimal
 import json
 from pathlib import Path
 from typing import Any
+import unicodedata
 
 import requests
 
@@ -171,6 +172,7 @@ class ChorusClient:
         self._access_token: str | None = None
         self._access_token_payload: dict[str, Any] | None = None
         self.api_calls: list[dict[str, Any]] = []
+        self._attachment_type_cache: dict[tuple[str, str], list[dict[str, Any]]] = {}
 
     def reset_api_calls(self) -> None:
         self.api_calls = []
@@ -370,6 +372,71 @@ class ChorusClient:
     def _should_retry_with_modern_upload_schema(self, body: Any) -> bool:
         raw_text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
         return all(keyword in raw_text for keyword in ("fichierFacture", "formatDepot", "nomFichier"))
+
+    @staticmethod
+    def _attachment_type_lookup(value: Any) -> str:
+        normalized = unicodedata.normalize("NFD", str(value or ""))
+        without_accents = "".join(
+            character
+            for character in normalized
+            if unicodedata.category(character) != "Mn"
+        )
+        return re.sub(r"[^a-z0-9]+", "", without_accents.lower())
+
+    def fetch_attachment_types(
+        self,
+        *,
+        type_objet: str = "FACTURE",
+        code_langue: str = "fr",
+    ) -> list[dict[str, Any]]:
+        cache_key = (type_objet, code_langue)
+        if cache_key in self._attachment_type_cache:
+            return self._attachment_type_cache[cache_key]
+
+        body = self._post_json(
+            "/transverses/v1/recuperer/typespj",
+            {
+                "codeLangue": code_langue,
+                "typeObjet": type_objet,
+            },
+            f"Récupération des types de pièces jointes ({type_objet})",
+        )
+        types = body.get("listeTypePieceJointe") if isinstance(body, dict) else None
+        result = [item for item in types if isinstance(item, dict)] if isinstance(types, list) else []
+        self._attachment_type_cache[cache_key] = result
+        return result
+
+    def resolve_attachment_type_code(
+        self,
+        attachment_type: str,
+        *,
+        type_objet: str = "FACTURE",
+        code_langue: str = "fr",
+    ) -> str:
+        requested = attachment_type.strip()
+        if not requested:
+            return requested
+
+        requested_lookup = self._attachment_type_lookup(requested)
+        requested_upper = requested.upper()
+
+        for item in self.fetch_attachment_types(type_objet=type_objet, code_langue=code_langue):
+            code = str(item.get("codeTypePieceJointe") or "").strip()
+            label = str(item.get("libelleTypePieceJointe") or "").strip()
+            type_id = str(item.get("idTypePieceJointe") or "").strip()
+
+            if (
+                code.upper() == requested_upper
+                or self._attachment_type_lookup(label) == requested_lookup
+                or (type_id and type_id == requested)
+            ):
+                # Chorus rejects pieceJointeComplementaireType when given the numeric
+                # idTypePieceJointe (codeRetour 20002 / GDP_MSG_11.044
+                # "La pièce jointe X de type Y n'existe pas"). Return the string code
+                # (codeTypePieceJointe, e.g. "DIVERS", "BC", "BL") instead.
+                return code or type_id or requested
+
+        return requested
 
     def fetch_tva_rates(self, code_langue: str = "FR") -> list[dict[str, Any]]:
         body = self._post_json(
@@ -595,6 +662,7 @@ class ChorusClient:
         file_name: str,
         file_base64: str,
         mime_type: str,
+        operation_label: str = "Upload de la pièce jointe",
     ) -> ChorusUploadAttachmentResult:
         legacy_payload: dict[str, Any] = {
             "pieceJointeExtension": detect_extension(Path(file_name)),
@@ -606,7 +674,7 @@ class ChorusClient:
         status_code, body = self._post_json_raw(
             "/transverses/v1/ajouter/fichier",
             legacy_payload,
-            "Upload de la pièce jointe principale",
+            operation_label,
         )
 
         if status_code >= 400 and self._should_retry_with_modern_upload_schema(body):
@@ -618,11 +686,11 @@ class ChorusClient:
             status_code, body = self._post_json_raw(
                 "/transverses/v1/ajouter/fichier",
                 modern_payload,
-                "Upload de la pièce jointe principale (fallback formatDepot)",
+                f"{operation_label} (fallback formatDepot)",
             )
 
         if status_code >= 400:
-            raise ChorusApiError(f"Upload de la pièce jointe principale échoué ({status_code}): {body}")
+            raise ChorusApiError(f"{operation_label} échoué ({status_code}): {body}")
 
         piece_jointe_id = find_first_integer(
             body,

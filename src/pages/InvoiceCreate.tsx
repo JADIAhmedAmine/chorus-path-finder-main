@@ -66,13 +66,24 @@ interface ComplementaryAttachmentDraft {
   liaisonId: string;
 }
 
-const DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = 'Document annexe';
+const DEFAULT_COMPLEMENTARY_ATTACHMENT_TYPE = 'DIVERS';
 const COMPLEMENTARY_ATTACHMENT_TYPES = [
-  { value: 'Bon de commande', label: 'Bon de commande' },
-  { value: 'Bon de livraison', label: 'Bon de livraison' },
-  { value: 'Bordereau de suivi', label: 'Bordereau de suivi' },
-  { value: 'Bordereau de suivi de validation', label: 'Bordereau de suivi de validation' },
-  { value: 'Document annexe', label: 'Document annexe' },
+  { value: 'DIVERS', label: 'Document annexe' },
+  { value: 'ATTESTATION', label: 'Attestation ou certificat administratif' },
+  { value: 'BC', label: 'Bon de commande' },
+  { value: 'BL', label: 'Bon de livraison' },
+  { value: 'BORDEREAU_SUIVI', label: 'Bordereau de suivi' },
+  { value: 'BORDEREAU_SUIVI_VALIDATION', label: 'Bordereau de suivi de validation' },
+  { value: 'DECISION_ADMISSION', label: 'Décision d\'admission' },
+  { value: 'DECISION_RECEPTION', label: 'Décision de réception' },
+  { value: 'DEVIS', label: 'Devis' },
+  { value: 'DUPLICATA_FACTUR-X', label: 'Duplicata Factur-X' },
+  { value: 'ECHEANCIER', label: 'Échéancier' },
+  { value: 'FACTURE_PDF', label: 'Facture PDF' },
+  { value: 'FACTURE_XML', label: 'Facture XML' },
+  { value: 'OS', label: 'Ordre de service' },
+  { value: 'PVSF', label: 'Procès-verbal de service fait' },
+  { value: 'RIB', label: 'Relevé d\'identité bancaire' },
 ] as const;
 const PAYMENT_MODE_OPTIONS: Array<{ value: ChorusPaymentMode; label: string }> = [
   { value: 'VIREMENT', label: 'Virement' },
