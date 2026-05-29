@@ -13,9 +13,8 @@ coverage
 __pycache__
 *.pyc
 *.pdf
+!src/test/data_test/*.pdf
 docs
-tests
-src/test
 public/annuaire
 public/test-data
 annuaire_out

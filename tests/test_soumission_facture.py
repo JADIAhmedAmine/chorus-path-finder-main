@@ -20,6 +20,7 @@ class FakeChorusClient:
         self.api_calls: list[dict[str, object]] = []
         self.uploaded_paths: list[Path] = []
         self.uploaded_content: list[dict[str, str]] = []
+        self.resolved_attachment_types: list[dict[str, str]] = []
         self.submitted_payload: dict[str, object] | None = None
         self.recycled_payload: dict[str, object] | None = None
         self.corrected_validator_payload: dict[str, object] | None = None
@@ -55,12 +56,20 @@ class FakeChorusClient:
             },
         )
 
-    def upload_attachment_content(self, *, file_name: str, file_base64: str, mime_type: str) -> ChorusUploadAttachmentResult:
+    def upload_attachment_content(
+        self,
+        *,
+        file_name: str,
+        file_base64: str,
+        mime_type: str,
+        operation_label: str = "Upload de la pièce jointe",
+    ) -> ChorusUploadAttachmentResult:
         self.uploaded_content.append(
             {
                 "file_name": file_name,
                 "file_base64": file_base64,
                 "mime_type": mime_type,
+                "operation_label": operation_label,
             }
         )
         return ChorusUploadAttachmentResult(
@@ -281,6 +290,7 @@ class SoumissionFactureTest(unittest.TestCase):
                 "file_name": "2026-003-00565 (3).pdf",
                 "file_base64": "JVBERi0xLjQK",
                 "mime_type": "application/pdf",
+                "operation_label": "Upload de la pièce jointe principale",
             }
         ])
         self.assertEqual(result["payload"]["modeDepot"], "DEPOT_PDF_API")
@@ -402,7 +412,76 @@ class SoumissionFactureTest(unittest.TestCase):
 
         self.assertEqual(
             result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
-            "Bordereau de suivi",
+            "18",
+        )
+        self.assertEqual(
+            fake_client.resolved_attachment_types[0],
+            {
+                "attachment_type": "BORDEREAU_SUIVI_VALIDATION",
+                "type_objet": "FACTURE",
+                "code_langue": "fr",
+            },
+        )
+        self.assertEqual(
+            fake_client.uploaded_content[0]["operation_label"],
+            "Upload de la pièce jointe complémentaire (bordereau-validation.pdf)",
+        )
+
+    def test_submit_prepared_payload_maps_delivery_note_attachment_type_to_code(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "ATTACHMENT-002",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "VIREMENT",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            attachments=[
+                {
+                    "name": "bon-livraison.pdf",
+                    "mimeType": "application/pdf",
+                    "base64": "JVBERi0xLjQK",
+                    "type": "Bon de livraison",
+                }
+            ],
+        )
+
+        self.assertEqual(
+            result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
+            "19",
         )
 
     def test_submit_prepared_payload_forces_vat_type_to_debit(self) -> None:

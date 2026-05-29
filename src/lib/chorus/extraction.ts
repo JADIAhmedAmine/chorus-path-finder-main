@@ -1832,6 +1832,12 @@ export async function extractInvoiceData(
   let serviceCandidates = references.publicServices as ServiceReference[];
   if (fields.publicCustomerId) {
     serviceCandidates = serviceCandidates.filter((item) => item.publicCustomerId === fields.publicCustomerId);
+  } else if (fields.publicCustomerSiret) {
+    // SIRET extracted from the document but not matched against the local annuaire:
+    // do NOT search services globally — that would auto-pick a same-label service from a
+    // different customer (e.g. "SERV INFORMATIQUE" exists for many entities) and silently
+    // overwrite the correct SIRET below.
+    serviceCandidates = [];
   }
 
   let publicService = explicitServiceCode
@@ -1844,7 +1850,7 @@ export async function extractInvoiceData(
     const matchedByLabel = serviceCandidates.find((item) => normalizeLookup(text).includes(normalizeLookup(item.label)));
     publicService = matchedByLabel;
   }
-  if (!publicService && explicitServiceCode) {
+  if (!publicService && explicitServiceCode && !fields.publicCustomerSiret) {
     publicService = (references.publicServices as ServiceReference[]).find((item) => item.codeServiceExecutant.toLowerCase() === explicitServiceCode.toLowerCase());
   }
   if (publicService) {
@@ -1853,7 +1859,7 @@ export async function extractInvoiceData(
     fields.publicServiceLabel = publicService.label;
     fieldConfidences.push(explicitServiceCode ? 0.95 : 0.78);
 
-    if (!fields.publicCustomerId) {
+    if (!fields.publicCustomerId && !fields.publicCustomerSiret) {
       const derivedCustomer = references.publicCustomers.find((item) => item.id === publicService?.publicCustomerId);
       if (derivedCustomer) {
         fields.publicCustomerId = derivedCustomer.id;
@@ -1880,11 +1886,15 @@ export async function extractInvoiceData(
   }
   if (!fields.publicCustomerId && !fields.publicCustomerSiret && !fields.publicCustomerName) {
     warnings.push('Destinataire public non reconnu dans le document.');
+  } else if (!fields.publicCustomerId && fields.publicCustomerSiret) {
+    warnings.push(
+      `Destinataire absent de l'annuaire local. Le SIRET extrait (${fields.publicCustomerSiret}) sera transmis tel quel à Chorus, qui le résoudra côté serveur. Vous pouvez aussi choisir un destinataire dans la liste.`
+    );
   } else if (!fields.publicCustomerId) {
-    warnings.push('Destinataire extrait mais non rapproché des références locales.');
+    warnings.push('Destinataire identifié mais non rapproché de l\'annuaire local. Vous pouvez le saisir manuellement avant la soumission.');
   }
   if ((fields.publicServiceCode || fields.publicServiceLabel) && !fields.publicServiceId) {
-    warnings.push('Service destinataire extrait mais non rapproché des références locales.');
+    warnings.push('Service destinataire non rapproché de l\'annuaire local. Vous pouvez le laisser vide ou saisir le code manuellement avant la soumission.');
   }
   if (!fields.currencyCode) {
     warnings.push('Devise non détectée automatiquement.');
