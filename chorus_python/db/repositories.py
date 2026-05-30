@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
+from uuid import uuid4
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from .entities import (
+    ChorusFluxDeposit,
     Invoice,
     InvoiceLine,
     PublicCustomer,
@@ -179,3 +181,68 @@ def list_recent_sync_runs(
     if entity:
         stmt = stmt.where(SyncRun.entity == entity)
     return list(session.scalars(stmt))
+
+
+def _truncate(value: Optional[str], max_length: int) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    return trimmed[:max_length]
+
+
+def record_flux_deposit(
+    session: Session,
+    *,
+    tenant_id: str,
+    nom_fichier: str,
+    format_flux: str,
+    syntaxe_flux: str,
+    avec_signature: bool,
+    id_utilisateur_courant: int,
+    status_local: str,
+    file_sha256: Optional[str] = None,
+    file_size: Optional[int] = None,
+    detected_file_type: Optional[str] = None,
+    root_element: Optional[str] = None,
+    namespace: Optional[str] = None,
+    http_status: Optional[int] = None,
+    code_retour: Optional[int] = None,
+    libelle: Optional[str] = None,
+    date_depot: Optional[str] = None,
+    numero_flux_depot: Optional[str] = None,
+    raw_response: Any = None,
+) -> ChorusFluxDeposit:
+    """Persiste une trace de dépôt de flux Chorus Pro (métadonnées only, sans contenu)."""
+    if isinstance(raw_response, dict):
+        normalized_raw: Optional[dict[str, Any]] = raw_response
+    elif raw_response is None:
+        normalized_raw = None
+    else:
+        normalized_raw = {"raw": raw_response}
+
+    deposit = ChorusFluxDeposit(
+        id=str(uuid4()),
+        tenant_id=tenant_id,
+        nom_fichier=(_truncate(nom_fichier, 255) or ""),
+        file_sha256=_truncate(file_sha256, 64),
+        file_size=(int(file_size) if isinstance(file_size, int) else None),
+        format_flux=(_truncate(format_flux, 64) or ""),
+        syntaxe_flux=(_truncate(syntaxe_flux, 64) or ""),
+        detected_file_type=_truncate(detected_file_type, 64),
+        root_element=_truncate(root_element, 128),
+        namespace=_truncate(namespace, 512),
+        avec_signature=bool(avec_signature),
+        id_utilisateur_courant=int(id_utilisateur_courant),
+        status_local=(_truncate(status_local, 32) or "ERROR"),
+        http_status=http_status,
+        code_retour=code_retour,
+        libelle=libelle,
+        date_depot=_truncate(date_depot, 32),
+        numero_flux_depot=_truncate(numero_flux_depot, 128),
+        raw_response=normalized_raw,
+    )
+    session.add(deposit)
+    session.flush()
+    return deposit
