@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { Search, Plus, Info, Building2, ClipboardList, RefreshCw, Loader2, Server, FileJson } from 'lucide-react';
+import { PageHeader } from '@/components/common/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import {
@@ -269,8 +270,12 @@ export default function References() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <h1 className="text-2xl font-semibold">Référentiels</h1>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Building2 className="h-3 w-3" /> Référentiels · Chorus</>}
+        title="Référentiels"
+        description="Clients publics et services destinataires synchronisés depuis Chorus Pro."
+      />
       {loading && (
         <p className="text-sm text-muted-foreground">Chargement des référentiels Chorus...</p>
       )}

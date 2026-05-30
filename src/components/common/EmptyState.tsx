@@ -9,22 +9,38 @@ interface EmptyStateProps {
   description?: string;
   action?: ReactNode;
   className?: string;
+  variant?: 'subtle' | 'card';
 }
 
-export function EmptyState({ icon: Icon = Inbox, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({
+  icon: Icon = Inbox,
+  title,
+  description,
+  action,
+  className,
+  variant = 'subtle',
+}: EmptyStateProps) {
   return (
     <div
       className={cn(
-        'flex flex-col items-center justify-center gap-2 rounded-md border border-dashed bg-muted/20 px-4 py-10 text-center animate-fade-in-up',
+        'flex flex-col items-center justify-center gap-3 px-6 py-12 text-center animate-fade-in-up',
+        variant === 'subtle'
+          ? 'rounded-xl border border-dashed bg-dotted'
+          : 'rounded-xl border bg-card shadow-soft',
         className,
       )}
     >
-      <div className="rounded-full bg-muted p-3 animate-scale-in">
-        <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+      <div className="relative animate-scale-in">
+        <div className="absolute inset-0 -m-2 rounded-full bg-primary/5 blur-xl" aria-hidden />
+        <div className="relative flex h-12 w-12 items-center justify-center rounded-full border bg-card shadow-soft">
+          <Icon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+        </div>
       </div>
-      <h3 className="text-sm font-medium">{title}</h3>
-      {description && <p className="max-w-md text-xs text-muted-foreground">{description}</p>}
-      {action && <div className="mt-2">{action}</div>}
+      <h3 className="text-[15px] font-semibold text-foreground">{title}</h3>
+      {description && (
+        <p className="max-w-md text-[13px] leading-6 text-muted-foreground">{description}</p>
+      )}
+      {action && <div className="mt-1">{action}</div>}
     </div>
   );
 }

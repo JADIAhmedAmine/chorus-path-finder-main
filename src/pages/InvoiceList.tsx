@@ -4,9 +4,24 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { CHORUS_INVOICE_STATUS_CODES, formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
-import { Search, Download, Plus, ChevronLeft, ChevronRight, Loader2, Server, ExternalLink } from 'lucide-react';
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Euro,
+  ExternalLink,
+  FileText,
+  Loader2,
+  MessageSquareWarning,
+  Plus,
+  Search,
+  Server,
+  SlidersHorizontal,
+  X,
+} from 'lucide-react';
 import {
   type SyncRunResult,
   useInvoicesQuery,
@@ -17,8 +32,15 @@ import {
 } from '@/lib/queries/db';
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
 import { SubmissionStateOverview } from '@/components/chorus/SubmissionStateOverview';
+import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
+import { PageHeader } from '@/components/common/PageHeader';
+import { KpiCard } from '@/components/common/KpiCard';
+import { ApiErrorCard } from '@/components/common/ApiErrorCard';
+import { EmptyState } from '@/components/common/EmptyState';
 import { saveChorusLiveInvoiceDetails } from '@/lib/chorus/liveInvoiceDetails';
 import { loadChorusConfig } from '@/lib/chorus/storage';
+import { isPaidChorusStatus, isRejectedChorusStatus } from '@/lib/chorus/actionableInvoices';
+import { cn } from '@/lib/utils';
 import type { Invoice } from '@/types';
 
 const PAGE_SIZE = 10;
@@ -78,12 +100,10 @@ function asNumber(value: unknown, fallback = 0): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
   }
-
   if (typeof value === 'string' && value.trim()) {
     const parsed = Number(value.replace(/\s/g, '').replace(',', '.'));
     return Number.isFinite(parsed) ? parsed : fallback;
   }
-
   return fallback;
 }
 
@@ -105,33 +125,20 @@ function countChorusSearchCriteria(form: ChorusInvoiceSearchForm): number {
 }
 
 function formatOptionalTableDate(value: string | undefined): string {
-  if (!value) {
-    return '-';
-  }
-
+  if (!value) return '—';
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime()) || parsed.getTime() === 0) {
-    return '-';
-  }
-
+  if (Number.isNaN(parsed.getTime()) || parsed.getTime() === 0) return '—';
   return formatDate(value);
 }
 
 function formatOptionalTableDateTime(value: string | undefined): string {
-  if (!value) {
-    return '-';
-  }
-
+  if (!value) return '—';
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime()) || parsed.getTime() === 0) {
-    return '-';
-  }
-
+  if (Number.isNaN(parsed.getTime()) || parsed.getTime() === 0) return '—';
   const hasTime = parsed.getHours() !== 0
     || parsed.getMinutes() !== 0
     || parsed.getSeconds() !== 0
     || parsed.getMilliseconds() !== 0;
-
   return hasTime ? formatDateTime(value) : formatDate(value);
 }
 
@@ -149,43 +156,29 @@ function includesNormalized(value: string | undefined, searchValue: string): boo
 }
 
 function toTimestamp(value: string | undefined): number | null {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = new Date(value).getTime();
-  return Number.isNaN(timestamp) ? null : timestamp;
+  if (!value) return null;
+  const ts = new Date(value).getTime();
+  return Number.isNaN(ts) ? null : ts;
 }
 
 function dateBoundaryTimestamp(value: string, endOfDay = false): number | null {
-  if (!value) {
-    return null;
-  }
-
+  if (!value) return null;
   const suffix = endOfDay ? 'T23:59:59.999' : 'T00:00:00.000';
   return toTimestamp(`${value}${value.includes('T') ? '' : suffix}`) ?? toTimestamp(value);
 }
 
 function matchesDateRange(value: string | undefined, from: string, to: string): boolean {
-  if (!from && !to) {
-    return true;
-  }
-
-  const timestamp = toTimestamp(value);
-  if (timestamp === null) {
-    return false;
-  }
-
-  const fromTimestamp = dateBoundaryTimestamp(from);
-  const toTimestampValue = dateBoundaryTimestamp(to, true);
-  return (fromTimestamp === null || timestamp >= fromTimestamp)
-    && (toTimestampValue === null || timestamp <= toTimestampValue);
+  if (!from && !to) return true;
+  const ts = toTimestamp(value);
+  if (ts === null) return false;
+  const fromTs = dateBoundaryTimestamp(from);
+  const toTs = dateBoundaryTimestamp(to, true);
+  return (fromTs === null || ts >= fromTs) && (toTs === null || ts <= toTs);
 }
 
 function matchesAmountRange(value: number, min: string, max: string): boolean {
   const minAmount = min ? asNumber(min, Number.NaN) : Number.NaN;
   const maxAmount = max ? asNumber(max, Number.NaN) : Number.NaN;
-
   return (!Number.isFinite(minAmount) || value >= minAmount)
     && (!Number.isFinite(maxAmount) || value <= maxAmount);
 }
@@ -213,6 +206,7 @@ export default function InvoiceList() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [chorusSearchForm, setChorusSearchForm] = useState<ChorusInvoiceSearchForm>(DEFAULT_CHORUS_INVOICE_SEARCH_FORM);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
@@ -280,11 +274,9 @@ export default function InvoiceList() {
     return nextFiltered.sort((left, right) => {
       const leftValue = getInvoiceSortValue(left, chorusSearchForm.triColonne);
       const rightValue = getInvoiceSortValue(right, chorusSearchForm.triColonne);
-
       if (typeof leftValue === 'number' && typeof rightValue === 'number') {
         return (leftValue - rightValue) * direction;
       }
-
       return String(leftValue).localeCompare(String(rightValue), 'fr', { numeric: true }) * direction;
     });
   }, [chorusSearchForm, customerById, search, supplierById, visibleInvoices]);
@@ -297,16 +289,21 @@ export default function InvoiceList() {
     [chorusSearchForm],
   );
 
-  useEffect(() => {
-    if (visibleInvoices.length === 0) {
-      return;
-    }
+  // KPIs computed from the full visible cache (not the filtered subset)
+  const kpis = useMemo(() => {
+    const total = visibleInvoices.length;
+    const totalTtc = visibleInvoices.reduce((s, i) => s + i.totalTtc, 0);
+    const paid = visibleInvoices.filter((i) => isPaidChorusStatus(i.statusChorus || i.statusInternal)).length;
+    const rejected = visibleInvoices.filter((i) => isRejectedChorusStatus(i.statusChorus || i.statusInternal)).length;
+    return { total, totalTtc, paid, rejected };
+  }, [visibleInvoices]);
 
+  useEffect(() => {
+    if (visibleInvoices.length === 0) return;
     const fetchedAt = lastSyncAt || new Date().toISOString();
     saveChorusLiveInvoiceDetails(visibleInvoices.map((invoice) => {
       const supplier = supplierById.get(invoice.supplierOrganizationId);
       const customer = customerById.get(invoice.publicCustomerId);
-
       return {
         id: invoice.id,
         invoice,
@@ -355,10 +352,7 @@ export default function InvoiceList() {
     key: K,
     value: ChorusInvoiceSearchForm[K],
   ) {
-    setChorusSearchForm((currentForm) => ({
-      ...currentForm,
-      [key]: value,
-    }));
+    setChorusSearchForm((currentForm) => ({ ...currentForm, [key]: value }));
   }
 
   function resetChorusSearchForm() {
@@ -391,230 +385,267 @@ export default function InvoiceList() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Factures</h1>
-          <p className="text-sm text-muted-foreground">
-            {loading
-              ? 'Chargement depuis la base locale...'
-              : lastSyncAt
-                ? `${filtered.length} facture(s) en cache DB · dernière sync ${formatDateTime(lastSyncAt)}`
-                : `${filtered.length} facture(s) en cache DB`}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={handleSyncInvoices} disabled={syncing || loading}>
-            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
-            Actualiser Chorus
-          </Button>
-          <Button variant="outline" onClick={exportCSV}>
-            <Download className="mr-2 h-4 w-4" /> Export CSV
-          </Button>
-          <Button asChild>
-            <Link to="/invoices/new"><Plus className="mr-2 h-4 w-4" /> Nouvelle facture</Link>
-          </Button>
-        </div>
-      </div>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={
+          <>
+            <FileText className="h-3 w-3" />
+            Émission · suivi
+          </>
+        }
+        title="Factures"
+        description="Toutes les factures émises et synchronisées depuis Chorus Pro. Filtre par statut, période, fournisseur ou destinataire."
+        meta={
+          loading
+            ? 'Chargement depuis la base locale…'
+            : lastSyncAt
+              ? <span className="inline-flex items-center gap-1.5"><span className="live-dot" />{filtered.length} facture{filtered.length > 1 ? 's' : ''} · dernière sync {formatDateTime(lastSyncAt)}</span>
+              : `${filtered.length} facture${filtered.length > 1 ? 's' : ''} en cache`
+        }
+        actions={
+          <>
+            <Button variant="outline" onClick={handleSyncInvoices} disabled={syncing || loading}>
+              {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+              Actualiser Chorus
+            </Button>
+            <Button variant="outline" onClick={exportCSV}>
+              <Download className="mr-2 h-4 w-4" /> Export CSV
+            </Button>
+            <Button asChild>
+              <Link to="/invoices/new"><Plus className="mr-2 h-4 w-4" /> Nouvelle facture</Link>
+            </Button>
+          </>
+        }
+      />
 
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ApiErrorCard
+          severity="error"
+          title="Synchronisation Chorus indisponible"
+          explanation="Les factures affichées proviennent du dernier cache local. Vérifie ta connexion ou la configuration PISTE."
+          technicalDetails={error}
+          onRetry={handleSyncInvoices}
+        />
       )}
+
+      {/* KPI strip */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 stagger-children">
+        <KpiCard
+          label="Total factures"
+          value={loading ? '—' : kpis.total.toLocaleString('fr-FR')}
+          hint="Cache Chorus synchronisé"
+          icon={FileText}
+          tone="primary"
+          loading={loading}
+        />
+        <KpiCard
+          label="Montant TTC cumulé"
+          value={loading ? '—' : formatCurrency(kpis.totalTtc)}
+          hint="Toutes factures confondues"
+          icon={Euro}
+          tone="info"
+          loading={loading}
+        />
+        <KpiCard
+          label="Payées"
+          value={loading ? '—' : kpis.paid.toLocaleString('fr-FR')}
+          hint={`${kpis.total > 0 ? Math.round((kpis.paid / kpis.total) * 100) : 0}% du total`}
+          icon={CheckCircle2}
+          tone="success"
+          loading={loading}
+        />
+        <KpiCard
+          label="Rejetées"
+          value={loading ? '—' : kpis.rejected.toLocaleString('fr-FR')}
+          hint="À analyser dans Rejets / refus"
+          icon={MessageSquareWarning}
+          tone="danger"
+          loading={loading}
+          href="/invoices/rejections"
+        />
+      </section>
 
       <SubmissionStateOverview />
 
       {syncing && <SyncRunProgress />}
+      {lastSyncRuns.length > 0 && <SyncRunSummary runs={lastSyncRuns} />}
 
-      {lastSyncRuns.length > 0 && (
-        <SyncRunSummary runs={lastSyncRuns} />
+      {/* Search bar + Advanced toggle */}
+      <Card className="card-surface">
+        <CardContent className="flex flex-wrap items-center gap-3 p-3">
+          <div className="relative min-w-[260px] flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Filtrer les résultats : numéro, fournisseur, client, statut, motif…"
+              className="pl-9 pr-9"
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                aria-label="Effacer"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <Button
+            variant={advancedOpen ? 'default' : 'outline'}
+            onClick={() => setAdvancedOpen((v) => !v)}
+            className="gap-1.5"
+          >
+            <SlidersHorizontal className="h-4 w-4" />
+            Filtres avancés
+            {activeChorusSearchCriteria > 0 && (
+              <Badge
+                variant="secondary"
+                className={cn(
+                  'ml-1 h-5 min-w-[20px] px-1.5 text-[10.5px] font-semibold',
+                  advancedOpen ? 'bg-white/20 text-primary-foreground' : 'bg-primary/15 text-primary',
+                )}
+              >
+                {activeChorusSearchCriteria}
+              </Badge>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Advanced filters */}
+      {advancedOpen && (
+        <Card className="card-elevated">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-1 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <CardTitle className="text-[15px]">Filtres avancés</CardTitle>
+                <p className="text-[12px] text-muted-foreground">Critères structurés sur le cache local.</p>
+              </div>
+              <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+                {activeChorusSearchCriteria > 0 ? `${activeChorusSearchCriteria} critère${activeChorusSearchCriteria > 1 ? 's' : ''} actif${activeChorusSearchCriteria > 1 ? 's' : ''}` : 'Aucun critère actif'}
+              </span>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <FieldWrap label="N° facture">
+                <Input value={chorusSearchForm.numeroFacture} onChange={(e) => updateChorusSearchField('numeroFacture', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Client public">
+                <Input value={chorusSearchForm.destinataire} onChange={(e) => updateChorusSearchField('destinataire', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Statut Chorus">
+                <Select
+                  value={chorusSearchForm.statutCourant || 'all'}
+                  onValueChange={(value) => updateChorusSearchField('statutCourant', value === 'all' ? '' : value)}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tous les statuts</SelectItem>
+                    {CHORUS_INVOICE_STATUS_CODES.map((status) => (
+                      <SelectItem key={status} value={status}>{status}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FieldWrap>
+              <FieldWrap label="Mode dépôt">
+                <Select value={chorusSearchForm.modeDepot} onValueChange={(value) => updateChorusSearchField('modeDepot', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CHORUS_MODE_DEPOT_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FieldWrap>
+              <FieldWrap label="Dépôt du">
+                <Input type="date" value={chorusSearchForm.periodeDateDepotDu} onChange={(e) => updateChorusSearchField('periodeDateDepotDu', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Dépôt au">
+                <Input type="date" value={chorusSearchForm.periodeDateDepotAu} onChange={(e) => updateChorusSearchField('periodeDateDepotAu', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Facture du">
+                <Input type="date" value={chorusSearchForm.periodeDateFactureDu} onChange={(e) => updateChorusSearchField('periodeDateFactureDu', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Facture au">
+                <Input type="date" value={chorusSearchForm.periodeDateFactureAu} onChange={(e) => updateChorusSearchField('periodeDateFactureAu', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="TTC min">
+                <Input inputMode="decimal" value={chorusSearchForm.montantTTCMin} onChange={(e) => updateChorusSearchField('montantTTCMin', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="TTC max">
+                <Input inputMode="decimal" value={chorusSearchForm.montantTTCMax} onChange={(e) => updateChorusSearchField('montantTTCMax', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Bon de commande">
+                <Input value={chorusSearchForm.numeroBonCommande} onChange={(e) => updateChorusSearchField('numeroBonCommande', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Marché">
+                <Input value={chorusSearchForm.numeroMarche} onChange={(e) => updateChorusSearchField('numeroMarche', e.target.value)} />
+              </FieldWrap>
+              <FieldWrap label="Tri">
+                <Select value={chorusSearchForm.triColonne} onValueChange={(value) => updateChorusSearchField('triColonne', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {CHORUS_TRI_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FieldWrap>
+              <FieldWrap label="Sens">
+                <Select value={chorusSearchForm.triSens} onValueChange={(value) => updateChorusSearchField('triSens', value as ChorusInvoiceSearchForm['triSens'])}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Descendant">Décroissant</SelectItem>
+                    <SelectItem value="Ascendant">Croissant</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FieldWrap>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+              <Button onClick={() => setPage(1)} disabled={loading}>
+                {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                Appliquer
+              </Button>
+              <Button variant="outline" onClick={resetChorusSearchForm} disabled={loading}>
+                <X className="mr-1.5 h-4 w-4" />
+                Réinitialiser
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <CardTitle className="text-base">Filtres du cache DB</CardTitle>
-            <span className="text-xs text-muted-foreground">
-              {activeChorusSearchCriteria > 0 ? `${activeChorusSearchCriteria} critère(s) actif(s)` : 'Aucun critère avancé'}
-            </span>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">N° facture</span>
-              <Input
-                value={chorusSearchForm.numeroFacture}
-                onChange={(event) => updateChorusSearchField('numeroFacture', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Client public</span>
-              <Input
-                value={chorusSearchForm.destinataire}
-                onChange={(event) => updateChorusSearchField('destinataire', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Statut Chorus</span>
-              <Select
-                value={chorusSearchForm.statutCourant || 'all'}
-                onValueChange={(value) => updateChorusSearchField('statutCourant', value === 'all' ? '' : value)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Tous les statuts</SelectItem>
-                  {CHORUS_INVOICE_STATUS_CODES.map((status) => (
-                    <SelectItem key={status} value={status}>{status}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Mode dépôt</span>
-              <Select
-                value={chorusSearchForm.modeDepot}
-                onValueChange={(value) => updateChorusSearchField('modeDepot', value)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CHORUS_MODE_DEPOT_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Dépôt du</span>
-              <Input
-                type="date"
-                value={chorusSearchForm.periodeDateDepotDu}
-                onChange={(event) => updateChorusSearchField('periodeDateDepotDu', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Dépôt au</span>
-              <Input
-                type="date"
-                value={chorusSearchForm.periodeDateDepotAu}
-                onChange={(event) => updateChorusSearchField('periodeDateDepotAu', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Facture du</span>
-              <Input
-                type="date"
-                value={chorusSearchForm.periodeDateFactureDu}
-                onChange={(event) => updateChorusSearchField('periodeDateFactureDu', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Facture au</span>
-              <Input
-                type="date"
-                value={chorusSearchForm.periodeDateFactureAu}
-                onChange={(event) => updateChorusSearchField('periodeDateFactureAu', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">TTC min</span>
-              <Input
-                inputMode="decimal"
-                value={chorusSearchForm.montantTTCMin}
-                onChange={(event) => updateChorusSearchField('montantTTCMin', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">TTC max</span>
-              <Input
-                inputMode="decimal"
-                value={chorusSearchForm.montantTTCMax}
-                onChange={(event) => updateChorusSearchField('montantTTCMax', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Bon de commande</span>
-              <Input
-                value={chorusSearchForm.numeroBonCommande}
-                onChange={(event) => updateChorusSearchField('numeroBonCommande', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Marché</span>
-              <Input
-                value={chorusSearchForm.numeroMarche}
-                onChange={(event) => updateChorusSearchField('numeroMarche', event.target.value)}
-              />
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Tri</span>
-              <Select
-                value={chorusSearchForm.triColonne}
-                onValueChange={(value) => updateChorusSearchField('triColonne', value)}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {CHORUS_TRI_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </label>
-            <label className="space-y-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Sens</span>
-              <Select
-                value={chorusSearchForm.triSens}
-                onValueChange={(value) => updateChorusSearchField('triSens', value as ChorusInvoiceSearchForm['triSens'])}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Descendant">Décroissant</SelectItem>
-                  <SelectItem value="Ascendant">Croissant</SelectItem>
-                </SelectContent>
-              </Select>
-            </label>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setPage(1)} disabled={loading}>
-              {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-              Appliquer
-            </Button>
-            <Button variant="outline" onClick={resetChorusSearchForm} disabled={loading}>
-              Réinitialiser critères
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Quick filter */}
-      <Card>
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap gap-3 items-center">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Filtrer les résultats chargés : numéro, fournisseur, client, statut..." className="pl-9" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Table */}
-      <Card>
+      {/* Result table */}
+      <Card className="card-elevated overflow-hidden">
         <CardContent className="p-0">
+          <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-2.5 text-[12px] text-muted-foreground">
+            <span>
+              <span className="font-semibold text-foreground">{filtered.length}</span> résultat{filtered.length > 1 ? 's' : ''}
+              {filtered.length !== visibleInvoices.length && ` sur ${visibleInvoices.length}`}
+            </span>
+            {totalPages > 1 && (
+              <span>
+                Page <span className="font-semibold text-foreground">{safePage}</span> / {totalPages}
+              </span>
+            )}
+          </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-[13px]">
               <thead>
-                <tr className="border-b bg-muted/30">
-                  <th className="text-left p-3 font-medium">N° Facture</th>
-                  <th className="text-left p-3 font-medium">Fournisseur</th>
-                  <th className="text-left p-3 font-medium hidden lg:table-cell">Client public</th>
-                  <th className="text-left p-3 font-medium hidden md:table-cell">Date facture</th>
-                  <th className="text-left p-3 font-medium hidden md:table-cell">Dépôt / heure statut</th>
-                  <th className="text-right p-3 font-medium">Montant TTC</th>
-                  <th className="text-left p-3 font-medium hidden md:table-cell">Format</th>
-                  <th className="text-left p-3 font-medium">Statut</th>
-                  <th className="text-left p-3 font-medium hidden lg:table-cell">MAJ</th>
+                <tr className="border-b bg-muted/20 text-left">
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">N° Facture</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Fournisseur</th>
+                  <th className="hidden px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground lg:table-cell">Client public</th>
+                  <th className="hidden px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground md:table-cell">Date facture</th>
+                  <th className="hidden px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground md:table-cell">Dépôt / heure</th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">TTC</th>
+                  <th className="hidden px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground md:table-cell">Format</th>
+                  <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Statut</th>
+                  <th className="hidden px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground lg:table-cell">MAJ</th>
+                  <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">PJ</th>
                 </tr>
               </thead>
               <tbody>
@@ -624,48 +655,77 @@ export default function InvoiceList() {
                   return (
                     <tr
                       key={inv.id}
-                      className="border-b hover:bg-muted/20 transition-colors"
+                      className="border-b border-border/70 transition-colors last:border-0 hover:bg-primary/[0.025]"
                     >
-                      <td className="p-3">
+                      <td className="px-4 py-2.5">
                         <Link
                           to={`/invoices/chorus/${encodeURIComponent(inv.id)}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
+                          className="group inline-flex items-center gap-1 font-medium text-primary hover:text-primary-hover"
                         >
                           {inv.supplierInvoiceNumber}
-                          <ExternalLink className="h-3.5 w-3.5" />
+                          <ExternalLink className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
                         </Link>
                       </td>
-                      <td className="p-3">
-                        <div>{supplier?.legalName}</div>
-                        <div className="text-xs text-muted-foreground">{supplier?.siret}</div>
+                      <td className="px-4 py-2.5">
+                        <div className="font-medium text-foreground">{supplier?.legalName || '—'}</div>
+                        <div className="text-[11.5px] text-muted-foreground font-mono">{supplier?.siret || '—'}</div>
                       </td>
-                      <td className="p-3 hidden lg:table-cell">{customer?.legalName}</td>
-                      <td className="p-3 hidden md:table-cell">{formatOptionalTableDate(inv.invoiceDate)}</td>
-                      <td className="p-3 hidden md:table-cell">{formatOptionalTableDateTime(inv.submittedAt)}</td>
-                      <td className="p-3 text-right font-medium">{formatCurrency(inv.totalTtc)}</td>
-                      <td className="p-3 hidden md:table-cell">
-                        <span className="text-xs px-2 py-0.5 rounded bg-muted">{inv.sourceFormat}</span>
+                      <td className="hidden px-4 py-2.5 lg:table-cell">{customer?.legalName || '—'}</td>
+                      <td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">{formatOptionalTableDate(inv.invoiceDate)}</td>
+                      <td className="hidden px-4 py-2.5 text-muted-foreground md:table-cell">{formatOptionalTableDateTime(inv.submittedAt)}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold tabular-nums">{formatCurrency(inv.totalTtc)}</td>
+                      <td className="hidden px-4 py-2.5 md:table-cell">
+                        <span className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-[10.5px] text-muted-foreground">
+                          {inv.sourceFormat}
+                        </span>
                       </td>
-                      <td className="p-3">
+                      <td className="px-4 py-2.5">
                         <div className="space-y-1">
                           <ChorusStatusPill value={inv.statusChorus || inv.statusInternal} />
                           {isRejectedInvoice(inv) && inv.statusReasonLabel && (
-                            <p className="max-w-[260px] text-xs text-destructive">
+                            <p className="max-w-[260px] truncate text-[11px] text-destructive" title={inv.statusReasonLabel}>
                               {inv.statusReasonLabel}
                             </p>
                           )}
                         </div>
                       </td>
-                      <td className="p-3 text-xs text-muted-foreground hidden lg:table-cell">{formatDate(inv.updatedAt)}</td>
+                      <td className="hidden px-4 py-2.5 text-[11.5px] text-muted-foreground lg:table-cell">{formatDate(inv.updatedAt)}</td>
+                      <td className="px-4 py-2.5 text-right">
+                        <InvoiceDownloadMenu invoice={inv} compact />
+                      </td>
                     </tr>
                   );
                 })}
-                {paginated.length === 0 && (
+                {paginated.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-muted-foreground">
-                      {loading ? 'Chargement des factures...' : 'Aucune facture dans le cache local'}
+                    <td colSpan={10} className="p-0">
+                      <EmptyState
+                        icon={FileText}
+                        title={visibleInvoices.length === 0 ? 'Aucune facture en cache' : 'Aucun résultat'}
+                        description={
+                          visibleInvoices.length === 0
+                            ? 'Lance une synchronisation Chorus pour récupérer les factures émises.'
+                            : 'Ajuste tes filtres pour trouver ce que tu cherches.'
+                        }
+                        action={
+                          visibleInvoices.length === 0 ? (
+                            <Button onClick={handleSyncInvoices} disabled={syncing}>
+                              {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+                              Synchroniser
+                            </Button>
+                          ) : undefined
+                        }
+                      />
+                    </td>
+                  </tr>
+                )}
+                {loading && (
+                  <tr>
+                    <td colSpan={10} className="p-12 text-center text-muted-foreground">
+                      <Loader2 className="mx-auto h-5 w-5 animate-spin" />
+                      <p className="mt-2 text-sm">Chargement des factures…</p>
                     </td>
                   </tr>
                 )}
@@ -673,13 +733,15 @@ export default function InvoiceList() {
             </table>
           </div>
           {totalPages > 1 && (
-            <div className="flex items-center justify-between px-4 py-3 border-t">
-              <span className="text-sm text-muted-foreground">Page {safePage} / {totalPages}</span>
+            <div className="flex items-center justify-between border-t bg-muted/20 px-4 py-2.5">
+              <span className="text-[12px] text-muted-foreground">
+                Page <span className="font-semibold text-foreground">{safePage}</span> / {totalPages}
+              </span>
               <div className="flex gap-1">
-                <Button variant="outline" size="sm" disabled={safePage === 1} onClick={() => setPage(p => p - 1)}>
+                <Button variant="outline" size="sm" disabled={safePage === 1} onClick={() => setPage((p) => p - 1)}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <Button variant="outline" size="sm" disabled={safePage === totalPages} onClick={() => setPage(p => p + 1)}>
+                <Button variant="outline" size="sm" disabled={safePage === totalPages} onClick={() => setPage((p) => p + 1)}>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
               </div>
@@ -691,11 +753,27 @@ export default function InvoiceList() {
   );
 }
 
+function FieldWrap({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="space-y-1.5">
+      <span className="block text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      {children}
+    </label>
+  );
+}
+
 function ChorusStatusPill({ value }: { value: string }) {
   const config = getChorusRawStatusConfig(value);
-
   return (
-    <span className={`inline-flex max-w-[220px] items-center rounded px-2 py-1 text-xs font-medium ${config.bgClass} ${config.textClass}`}>
+    <span
+      className={cn(
+        'inline-flex max-w-[220px] items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
+        config.bgClass,
+        config.textClass,
+      )}
+    >
       <span className="mr-1.5 h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: config.color }} />
       <span className="truncate">{config.label}</span>
     </span>

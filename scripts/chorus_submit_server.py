@@ -91,7 +91,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import uvicorn
-from fastapi import Body, Depends, FastAPI, Request
+from fastapi import Body, Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
@@ -100,6 +100,12 @@ from chorus_python import ChorusSubmissionService, load_chorus_settings
 from chorus_python.annuaire import build_annuaire_files_from_api_response, relative_to_repo
 from chorus_python.audit import append_audit_event
 from chorus_python.auth import get_current_auth_user, require_auth, require_submit_permission, router as auth_router
+from chorus_python.chorus_flux_client import (
+    ALLOWED_SYNTAXES_FLUX,
+    ChorusFluxError,
+    deposer_flux_facture,
+    is_syntaxe_flux_supported,
+)
 from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.errors import normalize_chorus_error
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
@@ -127,6 +133,7 @@ except Exception as _db_import_error:  # noqa: BLE001
 HOST = os.environ.get("CHORUS_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHORUS_PORT", "8008"))
 SUBMIT_PATH = "/api/chorus/submit"
+FLUX_DEPOSER_PATH = "/api/chorus/flux/deposer"
 RECYCLE_PATH = "/api/chorus/recycle"
 CORRECT_VALIDATOR_PATH = "/api/chorus/validator/correct"
 RECEPTION_CONSULT_PATH = "/api/reception/consult"
@@ -2878,6 +2885,215 @@ def handle_correct_validator(
         )
 
 
+FLUX_ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".xml", ".pdf"})
+
+
+def _flux_status_local(http_status: int, code_retour: int | None) -> str:
+    """Traduit (http_status, codeRetour) Chorus en statut local métier."""
+    if http_status in (HTTPStatus.OK, HTTPStatus.ACCEPTED):
+        if code_retour == 0:
+            return "ACCEPTED"
+        return "REJECTED"
+    return "ERROR"
+
+
+def _flux_file_extension(filename: str | None) -> str:
+    if not filename:
+        return ""
+    return os.path.splitext(filename)[1].lower()
+
+
+@app.post(FLUX_DEPOSER_PATH)
+async def handle_flux_deposer(
+    request: Request,
+    file: UploadFile = File(...),
+    syntaxe_flux: str = Form(...),
+    avec_signature: bool = Form(False),
+    id_utilisateur_courant: int = Form(0),
+    environment: str | None = Form(None),
+    auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    started_at = perf_counter()
+    filename = (file.filename or "").strip()
+    extension = _flux_file_extension(filename)
+    normalized_syntaxe = (syntaxe_flux or "").strip()
+
+    # 1) Validations locales (n'appellent jamais Chorus).
+    if extension not in FLUX_ALLOWED_EXTENSIONS:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "success": False,
+                "status_local": "ERROR",
+                "error": "Seuls les fichiers .xml et .pdf sont acceptés pour le dépôt de flux.",
+            },
+        )
+
+    if not is_syntaxe_flux_supported(normalized_syntaxe):
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "success": False,
+                "status_local": "ERROR",
+                "error": (
+                    "syntaxeFlux non supportée. Valeurs autorisées: "
+                    + ", ".join(sorted(ALLOWED_SYNTAXES_FLUX))
+                    + "."
+                ),
+            },
+        )
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            {
+                "success": False,
+                "status_local": "ERROR",
+                "error": "Le fichier de flux est vide.",
+            },
+        )
+
+    environment_override = environment.strip().lower() if isinstance(environment, str) and environment.strip() else None
+    logger.debug(
+        "Dépôt de flux start: fichier=%s, taille=%s octets, syntaxe=%s, signature=%s, env=%s",
+        filename,
+        len(file_bytes),
+        normalized_syntaxe,
+        avec_signature,
+        environment_override or "default",
+    )
+
+    try:
+        settings = load_chorus_settings(environment_override=environment_override)
+        settings.validate_for_api_access()
+
+        # 2) Réutilise la logique de token/credentials existante.
+        client = ChorusClient(settings)
+        if settings.api_key.strip():
+            access_token = settings.api_key.strip()
+        else:
+            token_body = client.fetch_oauth_token_payload()
+            access_token = token_body.get("access_token")
+            if not isinstance(access_token, str) or not access_token.strip():
+                raise ChorusFluxError("Réponse OAuth2 invalide: access_token absent.")
+
+        result = await deposer_flux_facture(
+            piste_base_url=settings.base_url,
+            access_token=access_token,
+            cpro_account_base64=settings.cpro_account,
+            file_bytes=file_bytes,
+            filename=filename,
+            syntaxe_flux=normalized_syntaxe,
+            id_utilisateur_courant=int(id_utilisateur_courant),
+            avec_signature=bool(avec_signature),
+            timeout_seconds=settings.timeout_seconds,
+        )
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        duration_ms = round((perf_counter() - started_at) * 1000)
+        logger.debug("Dépôt de flux error: duration=%s ms, error=%s", duration_ms, message)
+        _safe_append_flux_audit(
+            request,
+            user=auth_user,
+            filename=filename,
+            syntaxe_flux=normalized_syntaxe,
+            status_local="ERROR",
+            http_status=None,
+            result=None,
+            error_message=message,
+        )
+        return _json_response(
+            HTTPStatus.BAD_GATEWAY,
+            {
+                "success": False,
+                "status_local": "ERROR",
+                "error": message,
+            },
+        )
+
+    http_status = int(result.get("http_status") or 0)
+    code_retour = result.get("codeRetour")
+    status_local = _flux_status_local(http_status, code_retour)
+    success = status_local == "ACCEPTED"
+
+    duration_ms = round((perf_counter() - started_at) * 1000)
+    logger.debug(
+        "Dépôt de flux done: statut=%s, http=%s, codeRetour=%s, numeroFluxDepot=%s, duration=%s ms",
+        status_local,
+        http_status,
+        code_retour,
+        result.get("numeroFluxDepot"),
+        duration_ms,
+    )
+
+    _safe_append_flux_audit(
+        request,
+        user=auth_user,
+        filename=filename,
+        syntaxe_flux=normalized_syntaxe,
+        status_local=status_local,
+        http_status=http_status,
+        result=result,
+        error_message=None,
+    )
+
+    response_payload = {
+        "success": success,
+        "http_status": http_status,
+        "status_local": status_local,
+        "codeRetour": code_retour,
+        "libelle": result.get("libelle"),
+        "dateDepot": result.get("dateDepot"),
+        "numeroFluxDepot": result.get("numeroFluxDepot"),
+        "syntaxeFlux": result.get("syntaxeFlux"),
+        "raw": result.get("raw"),
+    }
+
+    # Statut local métier; on conserve un HTTP 200 lorsque Chorus a répondu
+    # (ACCEPTED/REJECTED), 502 lorsque l'appel Chorus n'a pas abouti.
+    local_http_status = HTTPStatus.OK if status_local != "ERROR" else HTTPStatus.BAD_GATEWAY
+    return _json_response(local_http_status, response_payload)
+
+
+def _safe_append_flux_audit(
+    request: Request,
+    *,
+    user: dict[str, Any],
+    filename: str,
+    syntaxe_flux: str,
+    status_local: str,
+    http_status: int | None,
+    result: dict[str, Any] | None,
+    error_message: str | None,
+) -> None:
+    """Journalise le dépôt de flux sans jamais inclure le contenu du fichier."""
+    try:
+        append_audit_event(
+            {
+                "action": "invoice.flux.deposit",
+                "status": "success" if status_local == "ACCEPTED" else "failed",
+                "email": user.get("email") if isinstance(user, dict) else None,
+                "roleCode": user.get("roleCode") if isinstance(user, dict) else None,
+                "ip": request.client.host if request.client else None,
+                "fields": _compact_audit_fields(
+                    {
+                        "nomFichier": _audit_text(filename, max_length=160),
+                        "syntaxeFlux": _audit_text(syntaxe_flux, max_length=64),
+                        "statusLocal": status_local,
+                        "httpStatus": http_status,
+                        "codeRetour": result.get("codeRetour") if isinstance(result, dict) else None,
+                        "libelle": _audit_text(result.get("libelle")) if isinstance(result, dict) else None,
+                        "numeroFluxDepot": _audit_text(result.get("numeroFluxDepot")) if isinstance(result, dict) else None,
+                        "error": _audit_text(error_message),
+                    }
+                ),
+            }
+        )
+    except Exception:  # noqa: BLE001 - l'audit ne doit jamais casser la requête
+        logger.debug("Audit du dépôt de flux ignoré (erreur non bloquante).")
+
+
 def main() -> int:
     logging.basicConfig(level=os.environ.get("CHORUS_LOG_LEVEL", "INFO").upper())
     print(f"Python executable: {sys.executable}")
@@ -2885,6 +3101,7 @@ def main() -> int:
     print(f"FastAPI listening on http://{HOST}:{PORT}")
     print(f"  - OAuth token: {OAUTH_TOKEN_PATH}")
     print(f"  - Submit:      {SUBMIT_PATH}")
+    print(f"  - Flux dépôt:  {FLUX_DEPOSER_PATH}")
     print(f"  - Recycle:     {RECYCLE_PATH}")
     print(f"  - Validator:   {CORRECT_VALIDATOR_PATH}")
     print(f"  - Reception:   {RECEPTION_CONSULT_PATH}")

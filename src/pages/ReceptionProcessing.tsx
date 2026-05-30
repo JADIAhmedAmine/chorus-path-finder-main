@@ -48,6 +48,8 @@ import { InvoiceDetailDrawer } from '@/components/chorus/InvoiceDetailDrawer';
 import { BulkProgress } from '@/components/common/BulkProgress';
 import { EmptyState } from '@/components/common/EmptyState';
 import { SkeletonKpiGrid, SkeletonTable } from '@/components/common/LoadingSkeleton';
+import { PageHeader } from '@/components/common/PageHeader';
+import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import type {
   ReceptionBulkResultError,
   ReceptionConsultError,
@@ -1339,37 +1341,28 @@ export default function ReceptionProcessing() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <header className="space-y-1">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Inbox className="h-5 w-5 text-primary" />
-            <h1 className="text-2xl font-semibold">Factures</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" asChild>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Inbox className="h-3 w-3" /> Réception · cockpit</>}
+        title="Factures reçues"
+        description="Traitement des factures reçues : analyse, complément ou validation. La page lit le cache local — le bouton Actualiser synchronise Chorus."
+        actions={
+          <>
+            <Button variant="outline" asChild>
               <Link to="/invoices/reception/processed">
                 <CheckCircle2 className="mr-2 h-4 w-4" />
                 Factures traitées
               </Link>
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleRefresh()}
-              disabled={busy}
-            >
+            <Button onClick={() => void handleRefresh()} disabled={busy}>
               {busy
                 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 : <RefreshCw className="mr-2 h-4 w-4" />}
               Actualiser
             </Button>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          La page lit le cache PostgreSQL. Le bouton Actualiser lance la mise à jour Chorus.
-        </p>
-      </header>
+          </>
+        }
+      />
 
       <BulkConsultCard
         bulkInput={bulkInput}
@@ -1468,44 +1461,37 @@ export function ProcessedReceptionInvoices() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <header className="space-y-1">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-success" />
-            <h1 className="text-2xl font-semibold">Factures traitées</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" size="sm" asChild>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><CheckCircle2 className="h-3 w-3" /> Réception · traitées</>}
+        title="Factures traitées"
+        description="Factures acceptées par l’action de traitement côté valideur. Actualiser Chorus pour synchroniser les statuts."
+        actions={
+          <>
+            <Button variant="outline" asChild>
               <Link to="/invoices/reception">
                 <Inbox className="mr-2 h-4 w-4" />
                 Factures reçues
               </Link>
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void handleRefreshFromChorus()}
-              disabled={busy}
-            >
+            <Button onClick={() => void handleRefreshFromChorus()} disabled={busy}>
               {busy
                 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 : <RefreshCw className="mr-2 h-4 w-4" />}
               Actualiser Chorus
             </Button>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Les factures acceptées par l’action de traitement côté valideur sont rangées ici.
-          Le bouton Actualiser Chorus synchronise les statuts depuis Chorus pour garantir un affichage à jour.
-        </p>
-        {chorusSyncError && (
-          <Alert variant="destructive" className="mt-2">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>{chorusSyncError}</AlertDescription>
-          </Alert>
-        )}
-      </header>
+          </>
+        }
+      />
+      {chorusSyncError && (
+        <ApiErrorCard
+          severity="error"
+          title="Synchronisation Chorus indisponible"
+          explanation="Les statuts affichés peuvent dater du dernier cache local."
+          technicalDetails={chorusSyncError}
+          onRetry={() => void handleRefreshFromChorus()}
+        />
+      )}
 
       <Card>
         <CardHeader className="pb-2">
