@@ -385,3 +385,48 @@ class SyncRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), default=None
     )
+
+
+# ---------------------------------------------------------------------------
+# Chorus Pro "Dépôt de flux" deposits (deposer/flux audit trail)
+# ---------------------------------------------------------------------------
+
+
+class ChorusFluxDeposit(Base):
+    """Trace d'un dépôt de flux Chorus Pro (`/v1/deposer/flux`).
+
+    Indépendant de la table ``invoices`` (dépôt unitaire) : ce module dépose
+    un fichier de flux structuré (XML / PDF-A3) et conserve la réponse Chorus.
+    """
+
+    __tablename__ = "chorus_flux_deposits"
+    __table_args__ = (
+        Index("ix_chorus_flux_deposits_tenant_created", "tenant_id", "created_at"),
+        Index("ix_chorus_flux_deposits_tenant_status", "tenant_id", "status_local"),
+        Index("ix_chorus_flux_deposits_numero", "numero_flux_depot"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    nom_fichier: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_sha256: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    file_size: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    format_flux: Mapped[str] = mapped_column(String(64), nullable=False)
+    syntaxe_flux: Mapped[str] = mapped_column(String(64), nullable=False)
+    detected_file_type: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    root_element: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    namespace: Mapped[Optional[str]] = mapped_column(String(512), default=None)
+    avec_signature: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    id_utilisateur_courant: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    http_status: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    code_retour: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    libelle: Mapped[Optional[str]] = mapped_column(Text, default=None)
+    date_depot: Mapped[Optional[str]] = mapped_column(String(32), default=None)
+    numero_flux_depot: Mapped[Optional[str]] = mapped_column(String(128), default=None)
+    raw_response: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, default=None)
+    status_local: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, init=False
+    )
