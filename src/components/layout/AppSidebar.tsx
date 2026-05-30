@@ -1,8 +1,9 @@
+import { useMemo } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
   ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox, CheckCircle2,
-  Zap, Scale, MessageSquareWarning, Bell,
+  Zap, Scale, MessageSquareWarning, Bell, UploadCloud,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -11,11 +12,14 @@ import {
 } from '@/components/ui/sidebar';
 import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
 import { loadAuthSession } from '@/lib/auth/session';
+import { loadChorusConfig } from '@/lib/chorus/storage';
+import { cn } from '@/lib/utils';
 
 interface SidebarNavItem {
   title: string;
   url: string;
   icon: LucideIcon;
+  badge?: string;
 }
 
 const mainItems: SidebarNavItem[] = [
@@ -34,11 +38,11 @@ const emissionItems: SidebarNavItem[] = [
   { title: 'Rejets / refus', url: '/invoices/rejections', icon: MessageSquareWarning },
   { title: 'Émissions à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle émission', url: '/invoices/new', icon: Upload },
+  { title: 'Dépôt de flux', url: '/invoices/flux', icon: UploadCloud },
 ];
 
 const invoiceItems: SidebarNavItem[] = [...receptionItems, ...emissionItems];
 
-const cguItem: SidebarNavItem = { title: 'CGU', url: '/cgu', icon: Scale };
 const refItems: SidebarNavItem[] = [
   { title: 'Clients publics', url: '/references/customers', icon: Building2 },
   { title: 'Services destinataires', url: '/references/services', icon: ClipboardList },
@@ -55,12 +59,17 @@ export function AppSidebar() {
   const collapsed = state === 'collapsed';
   const location = useLocation();
   const session = loadAuthSession();
+  const config = useMemo(() => loadChorusConfig(), []);
+  const env = (config?.environment ?? 'qualif').toString().toLowerCase();
+  const isProd = env === 'production' || env === 'prod';
+
   const adminItems: SidebarNavItem[] = session?.roleCode === 'ADMINISTRATEUR'
     ? [
         { title: 'Monitoring', url: '/monitoring', icon: Activity },
         ...baseAdminItems,
       ]
     : baseAdminItems;
+
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
     if (path === '/invoices') {
@@ -95,40 +104,108 @@ export function AppSidebar() {
   };
 
   const renderGroup = (label: string, items: SidebarNavItem[]) => (
-    <SidebarGroup>
-      <SidebarGroupLabel>{label}</SidebarGroupLabel>
+    <SidebarGroup className="px-2">
+      {!collapsed && (
+        <SidebarGroupLabel className="px-2 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-sidebar-foreground/45">
+          {label}
+        </SidebarGroupLabel>
+      )}
       <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => (
-            <SidebarMenuItem key={item.url}>
-              <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                <Link to={item.url} className="flex items-center gap-2">
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span>{item.title}</span>}
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
+        <SidebarMenu className="gap-0.5">
+          {items.map((item) => {
+            const active = isActive(item.url);
+            return (
+              <SidebarMenuItem key={item.url}>
+                <SidebarMenuButton
+                  asChild
+                  isActive={active}
+                  tooltip={collapsed ? item.title : undefined}
+                  className={cn(
+                    'group/nav relative h-9 rounded-lg px-2.5 text-[13.5px] text-sidebar-foreground/80',
+                    'hover:bg-sidebar-accent/70 hover:text-white',
+                    'data-[active=true]:bg-sidebar-accent data-[active=true]:text-white data-[active=true]:shadow-[inset_0_1px_0_0_hsl(var(--sidebar-border))]',
+                  )}
+                >
+                  <Link to={item.url} className="flex items-center gap-2.5">
+                    <span
+                      aria-hidden
+                      className={cn(
+                        'absolute left-0 top-1/2 h-5 w-[2.5px] -translate-y-1/2 rounded-r-full bg-primary opacity-0 transition-opacity duration-200',
+                        active && 'opacity-100',
+                      )}
+                    />
+                    <item.icon
+                      className={cn(
+                        'h-[16.5px] w-[16.5px] shrink-0 transition-colors',
+                        active ? 'text-white' : 'text-sidebar-foreground/55 group-hover/nav:text-white/90',
+                      )}
+                    />
+                    {!collapsed && <span className="truncate">{item.title}</span>}
+                    {!collapsed && item.badge && (
+                      <span className="ml-auto rounded-full bg-primary/15 px-1.5 py-0.5 text-[10.5px] font-semibold text-primary-foreground/90 ring-1 ring-primary/30">
+                        {item.badge}
+                      </span>
+                    )}
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            );
+          })}
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
   );
 
   return (
-    <Sidebar collapsible="icon">
-      <div className="flex h-16 items-center gap-3 px-4 border-b border-sidebar-border">
-        <AppSymbol className="h-10 w-10 rounded-lg shadow-sm ring-1 ring-sidebar-border/60 transition-transform hover:scale-105" />
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      {/* Brand */}
+      <div className={cn(
+        'flex h-16 items-center gap-3 border-b border-sidebar-border px-4',
+        collapsed && 'justify-center px-0',
+      )}>
+        <AppSymbol className="h-10 w-10 shrink-0 rounded-xl bg-white/5 ring-1 ring-white/10 transition-transform hover:scale-105" />
         {!collapsed && (
-          <span className="font-semibold text-sidebar-primary text-base tracking-tight">{APP_NAME}</span>
+          <div className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate text-[15px] font-semibold tracking-tight text-white">{APP_NAME}</span>
+            <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-sidebar-foreground/55">
+              <span
+                className={cn(
+                  'inline-block h-1.5 w-1.5 rounded-full',
+                  isProd ? 'bg-success' : 'bg-warning',
+                )}
+              />
+              {isProd ? 'Production' : 'Sandbox'}
+            </span>
+          </div>
         )}
       </div>
-      <SidebarContent>
+
+      <SidebarContent className="gap-1 py-3">
         {renderGroup('Principal', mainItems)}
         {renderGroup('Réception', receptionItems)}
         {renderGroup('Émission', emissionItems)}
         {renderGroup('Référentiels', refItems)}
         {renderGroup('Administration', adminItems)}
       </SidebarContent>
+
+      {/* Footer — user mini-card */}
+      {session && !collapsed && (
+        <div className="mt-auto border-t border-sidebar-border p-3">
+          <div className="flex items-center gap-2.5 rounded-lg bg-sidebar-accent/40 p-2 ring-1 ring-sidebar-border/60">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-gradient-to-br from-primary/80 to-[hsl(262_83%_58%)/_0.8] text-[12px] font-semibold text-white">
+              {(session.firstName?.[0] ?? 'U').toUpperCase()}{(session.lastName?.[0] ?? '').toUpperCase()}
+            </div>
+            <div className="min-w-0 leading-tight">
+              <p className="truncate text-[12.5px] font-medium text-white">
+                {session.firstName} {session.lastName}
+              </p>
+              <p className="truncate text-[10.5px] capitalize text-sidebar-foreground/60">
+                {(session.roleCode ?? 'gestionnaire').toLowerCase()}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </Sidebar>
   );
 }

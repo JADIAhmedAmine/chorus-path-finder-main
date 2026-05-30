@@ -19,7 +19,8 @@ import type {
   ChorusEnvironment,
   ChorusTechnicalContextResolutionResult,
 } from '@/types/chorus';
-import { BookOpen, Loader2, PlugZap } from 'lucide-react';
+import { BookOpen, Loader2, PlugZap, Settings as SettingsIcon } from 'lucide-react';
+import { PageHeader } from '@/components/common/PageHeader';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
 
@@ -287,11 +288,12 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="max-w-5xl space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">Paramètres</h1>
-        <p className="text-sm text-muted-foreground">Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro</p>
-      </div>
+    <div className="max-w-5xl space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><SettingsIcon className="h-3 w-3" /> Configuration</>}
+        title="Paramètres"
+        description="Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro."
+      />
 
       <Card>
         <CardHeader>

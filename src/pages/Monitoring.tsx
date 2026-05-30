@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Activity, Loader2, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/common/PageHeader';
+import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { authenticatedFetch, loadAuthSession } from '@/lib/auth/session';
 
 interface AuditEvent {
@@ -221,50 +222,56 @@ export default function Monitoring() {
 
   if (!isAdmin) {
     return (
-      <div className="max-w-5xl space-y-6 animate-fade-in">
-        <div>
-          <h1 className="text-2xl font-semibold">Monitoring</h1>
-          <p className="text-sm text-muted-foreground">Historique des actions Chorus sur les factures.</p>
-        </div>
-        <Alert variant="destructive">
-          <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>Accès réservé</AlertTitle>
-          <AlertDescription>Cette page est réservée aux administrateurs.</AlertDescription>
-        </Alert>
+      <div className="max-w-5xl space-y-7 animate-fade-in">
+        <PageHeader
+          eyebrow={<><Activity className="h-3 w-3" /> Système · audit</>}
+          title="Monitoring"
+          description="Historique des actions Chorus sur les factures."
+        />
+        <ApiErrorCard
+          severity="warning"
+          title="Accès réservé"
+          explanation="Cette page est réservée aux administrateurs du workspace."
+        />
       </div>
     );
   }
 
   return (
-    <div className="max-w-6xl space-y-6 animate-fade-in">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Monitoring</h1>
-          <p className="text-sm text-muted-foreground">Historique concis des soumissions, recyclages et traitements de rejet.</p>
-        </div>
-        <div className="flex flex-col gap-2 md:w-[360px]">
-          <Label htmlFor="monitoring-email">Filtrer par email</Label>
-          <div className="flex gap-2">
-            <Input
-              id="monitoring-email"
-              type="email"
-              value={emailFilter}
-              placeholder="utilisateur@gigalis.fr"
-              onChange={(event) => setEmailFilter(event.target.value)}
-            />
-            <Button variant="outline" onClick={() => void loadEvents()} disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            </Button>
+    <div className="max-w-6xl space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Activity className="h-3 w-3" /> Système · audit</>}
+        title="Monitoring"
+        description="Historique concis des soumissions, recyclages et traitements de rejet."
+        actions={
+          <div className="flex w-full flex-col gap-2 md:w-[360px]">
+            <Label htmlFor="monitoring-email" className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              Filtrer par email
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="monitoring-email"
+                type="email"
+                value={emailFilter}
+                placeholder="utilisateur@gigalis.fr"
+                onChange={(event) => setEmailFilter(event.target.value)}
+              />
+              <Button variant="outline" onClick={() => void loadEvents()} disabled={loading}>
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              </Button>
+            </div>
           </div>
-        </div>
-      </div>
+        }
+      />
 
       {error && (
-        <Alert variant="destructive">
-          <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>Historique indisponible</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ApiErrorCard
+          severity="error"
+          title="Historique indisponible"
+          explanation="Impossible de charger l'historique d'audit."
+          technicalDetails={error}
+          onRetry={() => void loadEvents()}
+        />
       )}
 
       <Card>

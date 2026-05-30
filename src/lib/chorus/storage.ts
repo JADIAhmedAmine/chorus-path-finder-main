@@ -297,10 +297,21 @@ export function loadChorusConfig(): ChorusConfig {
 
   try {
     const parsed = JSON.parse(raw) as Partial<ChorusConfig>;
-    const merged = mergeConfigWithFallback(fallback, parsed);
-    const environmentAligned = merged.environment === fallback.environment
-      ? merged
-      : applyEnvironmentPreset(merged, fallback.environment);
+    // Force env from .env.local to win over any stored value.
+    // Drop the stored environment + env-scoped fields so the preset is reapplied cleanly.
+    const sanitized: Partial<ChorusConfig> = { ...parsed };
+    delete (sanitized as { environment?: unknown }).environment;
+    delete (sanitized as { tokenUrl?: unknown }).tokenUrl;
+    delete (sanitized as { apiBaseUrl?: unknown }).apiBaseUrl;
+    delete (sanitized as { userAccountPath?: unknown }).userAccountPath;
+    delete (sanitized as { userConnectionsPath?: unknown }).userConnectionsPath;
+    delete (sanitized as { submissionSupplierId?: unknown }).submissionSupplierId;
+    delete (sanitized as { submissionCurrentUserId?: unknown }).submissionCurrentUserId;
+    delete (sanitized as { submissionSupplierServiceId?: unknown }).submissionSupplierServiceId;
+    delete (sanitized as { submissionBankAccountCode?: unknown }).submissionBankAccountCode;
+
+    const merged = mergeConfigWithFallback(fallback, sanitized);
+    const environmentAligned = applyEnvironmentPreset(merged, fallback.environment);
 
     return normalizeChorusConfig({
       ...environmentAligned,

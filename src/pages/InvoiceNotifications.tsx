@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChorusStatusBadge } from '@/components/chorus/ChorusStatusBadge';
 import { EmptyState } from '@/components/common/EmptyState';
+import { PageHeader } from '@/components/common/PageHeader';
 import { SkeletonTable } from '@/components/common/LoadingSkeleton';
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
 import { getStatusHistory } from '@/data/mock-data';
@@ -499,35 +500,29 @@ export default function InvoiceNotificationsPage() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <Bell className="h-7 w-7 text-primary" />
-            <div>
-              <h1 className="text-2xl font-semibold">
-                {scope === 'emission' ? 'Notifications d’émission' : 'Notifications de réception'}
-              </h1>
-              <p className="max-w-4xl text-sm text-muted-foreground">
-                {scope === 'emission'
-                  ? 'Ici on suit les factures émises dont Chorus a remonté un changement de statut côté destinataire. La page est en lecture seule : on observe le retour, puis on ouvre la fiche complète si besoin.'
-                  : 'Ici on suit les factures reçues dont le statut Chorus a évolué (rejets, refus, suspensions, paiements, prises en compte…). La page est en lecture seule : ouvrir la fiche pour agir.'}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2">
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Bell className="h-3 w-3" /> {scope === 'emission' ? 'Émission' : 'Réception'} · notifications</>}
+        title={scope === 'emission' ? 'Notifications d’émission' : 'Notifications de réception'}
+        description={
+          scope === 'emission'
+            ? 'Suis les factures émises dont Chorus a remonté un changement de statut côté destinataire. Lecture seule — ouvre la fiche pour agir.'
+            : 'Suis les factures reçues dont le statut Chorus a évolué (rejets, refus, suspensions, paiements, prises en compte…). Lecture seule — ouvre la fiche pour agir.'
+        }
+        meta={
+          <div className="flex flex-wrap gap-1.5">
             <Badge variant="secondary">{scope === 'emission' ? 'Émission' : 'Réception'}</Badge>
             <Badge variant="outline">Lecture seule</Badge>
-            <Badge variant="outline">Basé sur le statut Chorus et l’historique disponible</Badge>
+            <Badge variant="outline">Basé sur le statut Chorus</Badge>
           </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
+        }
+        actions={
           <Button variant="outline" onClick={() => void handleRefresh()} disabled={syncing}>
             {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Actualiser Chorus
           </Button>
-        </div>
-      </header>
+        }
+      />
 
       <div className="inline-flex rounded-md border bg-muted/30 p-1">
         {([

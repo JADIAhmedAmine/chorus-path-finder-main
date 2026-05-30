@@ -2,11 +2,12 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { getInvoices, getPublicCustomers, getSuppliers } from '@/data/mock-data';
 import { useAsyncResource } from '@/hooks/use-async-resource';
 import { formatCurrency, formatDateTime } from '@/lib/status-utils';
-import { Eye } from 'lucide-react';
+import { Archive, Eye } from 'lucide-react';
+import { PageHeader } from '@/components/common/PageHeader';
+import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 
 export default function Archives() {
   const { data, loading, error } = useAsyncResource(
@@ -41,18 +42,20 @@ export default function Archives() {
   );
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">Archives</h1>
-        <p className="text-sm text-muted-foreground">
-          {loading ? 'Chargement des archives...' : `${archived.length} facture(s) archivée(s)`}
-        </p>
-      </div>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Archive className="h-3 w-3" /> Émission · archive</>}
+        title="Archives"
+        description="Factures émises archivées : consultation rapide et téléchargement."
+        meta={loading ? 'Chargement des archives…' : `${archived.length} facture${archived.length > 1 ? 's' : ''} archivée${archived.length > 1 ? 's' : ''}`}
+      />
 
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ApiErrorCard
+          severity="error"
+          title="Lecture des archives impossible"
+          technicalDetails={error}
+        />
       )}
 
       <Card>

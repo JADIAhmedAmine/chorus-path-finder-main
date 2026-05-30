@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Upload, FileText, X, CheckCircle, Loader2, Sparkles, TriangleAlert, Eye, FolderOpen, Send } from 'lucide-react';
+import { PageHeader } from '@/components/common/PageHeader';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { ChorusApiReturnSummaryPanel } from '@/components/common/ChorusApiReturnSummaryPanel';
@@ -1635,45 +1636,56 @@ export default function InvoiceCreate() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 animate-fade-in">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Nouvelle facture</h1>
-          <p className="text-sm text-muted-foreground">Déposez une facture, vérifiez l’essentiel, puis soumettez-la à Chorus.</p>
-        </div>
-        {SHOW_DEV_TOOLS && (
-          <div className="flex items-center gap-2">
+    <div className="max-w-4xl mx-auto space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Send className="h-3 w-3" /> Émission · soumission</>}
+        title="Nouvelle facture"
+        description="Déposez une facture, vérifiez l’essentiel, puis soumettez-la à Chorus Pro."
+        actions={
+          SHOW_DEV_TOOLS ? (
             <Badge variant={chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'default' : 'secondary'}>
               {chorusConfig.mode === 'direct' && chorusConfig.enabled ? 'Chorus direct' : 'Mode mock'}
             </Badge>
-          </div>
-        )}
-      </div>
+          ) : undefined
+        }
+      />
 
-      <Card>
+      <Card className="card-elevated">
         <CardHeader><CardTitle className="text-base">Document principal</CardTitle></CardHeader>
         <CardContent>
           {mainFile ? (
-            <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/30">
+            <div className="flex items-center justify-between rounded-xl border bg-card p-4 shadow-soft">
               <div className="flex items-center gap-3">
-                <FileText className="h-8 w-8 text-accent" />
+                <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <FileText className="h-5 w-5" />
+                </div>
                 <div>
-                  <div className="font-medium">{mainFile.name}</div>
-                  <div className="text-xs text-muted-foreground">{(mainFile.size / 1024).toFixed(0)} Ko</div>
+                  <div className="font-semibold text-foreground">{mainFile.name}</div>
+                  <div className="font-mono text-[11.5px] text-muted-foreground">{(mainFile.size / 1024).toFixed(0)} Ko · prêt à soumettre</div>
                 </div>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => setMainFile(null)}><X className="h-4 w-4" /></Button>
+              <Button variant="ghost" size="sm" onClick={() => setMainFile(null)}>
+                <X className="h-4 w-4" />
+              </Button>
             </div>
           ) : (
             <div
-              className="border-2 border-dashed rounded-lg p-12 text-center cursor-pointer hover:border-accent/50 transition-colors"
+              className="group relative cursor-pointer overflow-hidden rounded-xl border-2 border-dashed bg-dotted p-12 text-center transition-all hover:border-primary/40 hover:bg-primary/[0.02]"
               onDragOver={e => e.preventDefault()}
               onDrop={handleMainDrop}
               onClick={() => document.getElementById('main-upload')?.click()}
             >
-              <Upload className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
-              <p className="font-medium">Glissez-déposez votre facture ici</p>
-              <p className="text-sm text-muted-foreground mt-1">PDF, XML ou Factur-X · 50 Mo max</p>
+              <div className="relative mx-auto mb-4 flex h-14 w-14 items-center justify-center">
+                <div className="absolute inset-0 -m-1 rounded-full bg-primary/15 opacity-0 blur-lg transition-opacity group-hover:opacity-100" />
+                <div className="relative flex h-14 w-14 items-center justify-center rounded-full border bg-card shadow-soft transition-transform group-hover:scale-105">
+                  <Upload className="h-6 w-6 text-primary" />
+                </div>
+              </div>
+              <p className="text-[15px] font-semibold text-foreground">Glissez-déposez votre facture ici</p>
+              <p className="mt-1 text-[12.5px] text-muted-foreground">PDF, XML ou Factur-X · 50 Mo max</p>
+              <p className="mt-3 inline-flex items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground shadow-soft">
+                <span className="font-mono">⌘O</span> ou clic pour parcourir
+              </p>
               <input id="main-upload" type="file" className="hidden" accept=".pdf,.xml" onChange={e => { if (e.target.files?.[0]) setMainFile(e.target.files[0]); }} />
             </div>
           )}

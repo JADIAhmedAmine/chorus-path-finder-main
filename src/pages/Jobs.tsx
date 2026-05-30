@@ -1,12 +1,14 @@
 import { useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { JobStatusBadge } from '@/components/common/JobStatusBadge';
+import { PageHeader } from '@/components/common/PageHeader';
+import { ApiErrorCard } from '@/components/common/ApiErrorCard';
+import { EmptyState } from '@/components/common/EmptyState';
 import { getAsyncJobs, getInvoices } from '@/data/mock-data';
 import { useAsyncResource } from '@/hooks/use-async-resource';
 import { formatDateTime } from '@/lib/status-utils';
-import { RotateCcw, X, FileText } from 'lucide-react';
+import { RotateCcw, Server, Settings2, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 export default function Jobs() {
@@ -28,64 +30,69 @@ export default function Jobs() {
   );
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">Jobs techniques</h1>
-        <p className="text-sm text-muted-foreground">Suivi des tâches asynchrones et gestion des retries</p>
-      </div>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><Settings2 className="h-3 w-3" /> Système · jobs</>}
+        title="Jobs techniques"
+        description="Suivi des tâches asynchrones et gestion des retries Chorus."
+      />
 
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ApiErrorCard severity="error" title="Lecture impossible" technicalDetails={error} />
       )}
 
-      <Card>
+      <Card className="card-elevated overflow-hidden">
         <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/30">
-                <th className="text-left p-3 font-medium">Type</th>
-                <th className="text-left p-3 font-medium">Facture</th>
-                <th className="text-left p-3 font-medium">Statut</th>
-                <th className="text-right p-3 font-medium">Tentatives</th>
-                <th className="text-left p-3 font-medium">Prochaine</th>
-                <th className="text-left p-3 font-medium">Dernière erreur</th>
-                <th className="text-left p-3 font-medium">MAJ</th>
-                <th className="text-left p-3 font-medium">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map(job => {
-                const inv = data.invoices.find(i => i.id === job.invoiceId);
-                return (
-                  <tr key={job.id} className="border-b">
-                    <td className="p-3 font-mono text-xs">{job.jobType}</td>
-                    <td className="p-3">{inv ? inv.supplierInvoiceNumber : <span className="text-muted-foreground">Batch</span>}</td>
-                    <td className="p-3"><JobStatusBadge status={job.status} /></td>
-                    <td className="p-3 text-right">{job.attemptCount}/{job.maxAttempts}</td>
-                    <td className="p-3 text-xs text-muted-foreground">{job.nextAttemptAt ? formatDateTime(job.nextAttemptAt) : '-'}</td>
-                    <td className="p-3 text-xs text-destructive max-w-[200px] truncate">{job.lastErrorMessage || '-'}</td>
-                    <td className="p-3 text-xs text-muted-foreground">{formatDateTime(job.updatedAt)}</td>
-                    <td className="p-3">
-                      <div className="flex gap-1">
-                        {(job.status === 'FAILED' || job.status === 'DEAD') && (
-                          <Button variant="ghost" size="sm" onClick={() => toast({ title: 'Retry lancé', description: `Job ${job.id} relancé.` })}>
-                            <RotateCcw className="h-4 w-4" />
-                          </Button>
-                        )}
-                        {job.status !== 'DONE' && job.status !== 'DEAD' && (
-                          <Button variant="ghost" size="sm" onClick={() => toast({ title: 'Job annulé', description: `Job ${job.id} annulé.` })}>
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    </td>
+          {sorted.length === 0 && !error ? (
+            <EmptyState icon={Server} title="Aucun job en file" description="Les jobs asynchrones (retry de soumission, sync différée…) apparaîtront ici." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-[13px]">
+                <thead>
+                  <tr className="border-b bg-muted/20 text-left">
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Type</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Facture</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Statut</th>
+                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Tentatives</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Prochaine</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Dernière erreur</th>
+                    <th className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">MAJ</th>
+                    <th className="px-4 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Actions</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {sorted.map((job) => {
+                    const inv = data.invoices.find((i) => i.id === job.invoiceId);
+                    return (
+                      <tr key={job.id} className="border-b border-border/70 transition-colors last:border-0 hover:bg-primary/[0.025]">
+                        <td className="px-4 py-2.5 font-mono text-[11.5px]">{job.jobType}</td>
+                        <td className="px-4 py-2.5">{inv ? inv.supplierInvoiceNumber : <span className="text-muted-foreground italic">Batch</span>}</td>
+                        <td className="px-4 py-2.5"><JobStatusBadge status={job.status} /></td>
+                        <td className="px-4 py-2.5 text-right tabular-nums">{job.attemptCount}/{job.maxAttempts}</td>
+                        <td className="px-4 py-2.5 text-[11.5px] text-muted-foreground">{job.nextAttemptAt ? formatDateTime(job.nextAttemptAt) : '—'}</td>
+                        <td className="max-w-[220px] truncate px-4 py-2.5 text-[11.5px] text-destructive">{job.lastErrorMessage || '—'}</td>
+                        <td className="px-4 py-2.5 text-[11.5px] text-muted-foreground">{formatDateTime(job.updatedAt)}</td>
+                        <td className="px-4 py-2.5 text-right">
+                          <div className="flex justify-end gap-1">
+                            {(job.status === 'FAILED' || job.status === 'DEAD') && (
+                              <Button variant="outline" size="sm" className="h-7 px-2" onClick={() => toast({ title: 'Retry lancé', description: `Job ${job.id} relancé.` })}>
+                                <RotateCcw className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                            {job.status !== 'DONE' && job.status !== 'DEAD' && (
+                              <Button variant="ghost" size="sm" className="h-7 px-2 text-muted-foreground hover:text-destructive" onClick={() => toast({ title: 'Job annulé', description: `Job ${job.id} annulé.` })}>
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

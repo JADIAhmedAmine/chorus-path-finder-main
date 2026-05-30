@@ -18,6 +18,7 @@ import References from "./pages/References";
 import SettingsPage from "./pages/SettingsPage";
 import Monitoring from "./pages/Monitoring";
 import ChorusPilotPage from "./pages/ChorusPilotPage";
+import FluxDepositPage from "./pages/FluxDepositPage";
 import CGUPage from "./pages/CGUPage";
 import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
 import ReceptionProcessing, { ProcessedReceptionInvoices } from "./pages/ReceptionProcessing";
@@ -131,6 +132,7 @@ const App = () => (
             <Route path="/invoices/to-process" element={<RequireAuth><AppLayout><InvoicesToProcess /></AppLayout></RequireAuth>} />
             <Route path="/reception" element={<RequireAuth><Navigate to="/invoices/reception" replace /></RequireAuth>} />
             <Route path="/invoices/new" element={<RequireAuth><AppLayout><InvoiceCreate /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/flux" element={<RequireAuth><AppLayout><FluxDepositPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/chorus/:id" element={<RequireAuth><AppLayout><ChorusInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/references/customers" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />

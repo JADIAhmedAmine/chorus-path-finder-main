@@ -13,10 +13,11 @@ import {
   Plus,
   RefreshCw,
   Send,
+  Sparkles,
 } from 'lucide-react';
 import {
   Bar,
-  BarChart,
+  CartesianGrid,
   Cell,
   ComposedChart,
   Legend,
@@ -28,10 +29,13 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { KpiCard } from '@/components/common/KpiCard';
+import { PageHeader } from '@/components/common/PageHeader';
+import { EmptyState } from '@/components/common/EmptyState';
+import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
 import {
   getInvoiceChorusStatus,
@@ -49,6 +53,7 @@ import {
 } from '@/lib/queries/db';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import type { Invoice } from '@/types';
+import { cn } from '@/lib/utils';
 
 function parseConfiguredSupplierId(value: string): number | undefined {
   const parsed = Number(value);
@@ -88,6 +93,21 @@ function invoiceActivityDate(invoice: Invoice): string {
 
 function invoiceDisplayNumber(invoice: Invoice): string {
   return invoice.supplierInvoiceNumber || invoice.chorusInvoiceNumber || invoice.id;
+}
+
+/** Returns a 12-bucket sparkline of monthly counts matching a predicate. */
+function makeSparkline(invoices: Invoice[], predicate: (i: Invoice) => boolean, buckets = 12): number[] {
+  const now = new Date();
+  const out = Array<number>(buckets).fill(0);
+  for (const invoice of invoices) {
+    if (!predicate(invoice)) continue;
+    const ts = new Date(invoiceActivityDate(invoice));
+    if (!Number.isFinite(ts.getTime())) continue;
+    const diffMonths = (now.getFullYear() - ts.getFullYear()) * 12 + (now.getMonth() - ts.getMonth());
+    if (diffMonths < 0 || diffMonths >= buckets) continue;
+    out[buckets - 1 - diffMonths] += 1;
+  }
+  return out;
 }
 
 export default function Dashboard() {
@@ -138,50 +158,33 @@ export default function Dashboard() {
     }
   }
 
-  const stats = useMemo(() => {
-    const correctionCount = invoices.filter((invoice) => isActionableInvoice(invoice)).length;
-    const totalTtc = invoices.reduce((sum, invoice) => sum + invoice.totalTtc, 0);
-    const averageTtc = invoices.length > 0 ? totalTtc / invoices.length : 0;
-    const paidCount = invoices.filter((invoice) => isPaidChorusStatus(getInvoiceChorusStatus(invoice))).length;
-
-    return [
-      {
-        label: 'Total factures',
-        value: invoices.length,
-        hint: 'Cache DB Chorus',
-        icon: FileText,
-        tone: 'text-foreground',
-      },
-      {
-        label: 'Montant TTC cumulé',
-        value: formatCurrency(totalTtc),
-        hint: 'Toutes factures synchronisées',
-        icon: Euro,
-        tone: 'text-sky-700',
-      },
-      {
-        label: 'Montant moyen',
-        value: formatCurrency(averageTtc),
-        hint: 'Par facture',
-        icon: Send,
-        tone: 'text-primary',
-      },
-      {
-        label: 'Paiement / payées',
-        value: paidCount,
-        hint: 'Statuts paiement Chorus',
-        icon: CheckCircle2,
-        tone: 'text-emerald-700',
-      },
-      {
-        label: 'Émissions à traiter',
-        value: correctionCount,
-        hint: 'Hors rejets/refus',
-        icon: AlertTriangle,
-        tone: 'text-amber-600',
-      },
-    ];
+  const totals = useMemo(() => {
+    const total = invoices.length;
+    const paid = invoices.filter((i) => isPaidChorusStatus(getInvoiceChorusStatus(i))).length;
+    const rejected = invoices.filter((i) => isRejectedChorusStatus(getInvoiceChorusStatus(i)));
+    const suspended = invoices.filter((i) => isSuspendedStatus(getInvoiceChorusStatus(i))).length;
+    const actionable = invoices.filter((i) => isActionableInvoice(i));
+    const totalTtc = invoices.reduce((s, i) => s + i.totalTtc, 0);
+    const successRate = total > 0 ? Math.round((paid / total) * 100) : 0;
+    return {
+      total,
+      paid,
+      rejected: rejected.length,
+      rejectedAmount: rejected.reduce((s, i) => s + i.totalTtc, 0),
+      suspended,
+      actionable: actionable.length,
+      actionableAmount: actionable.reduce((s, i) => s + i.totalTtc, 0),
+      totalTtc,
+      successRate,
+    };
   }, [invoices]);
+
+  const sparklines = useMemo(() => ({
+    total: makeSparkline(invoices, () => true),
+    paid: makeSparkline(invoices, (i) => isPaidChorusStatus(getInvoiceChorusStatus(i))),
+    rejected: makeSparkline(invoices, (i) => isRejectedChorusStatus(getInvoiceChorusStatus(i))),
+    suspended: makeSparkline(invoices, (i) => isSuspendedStatus(getInvoiceChorusStatus(i))),
+  }), [invoices]);
 
   const operationalStats = useMemo(() => {
     const receptionInvoices = invoices.filter(isReceptionCached);
@@ -260,13 +263,6 @@ export default function Dashboard() {
     color: item.config.color,
   })), [topStatuses]);
 
-  const amountPieData = useMemo(() => topStatuses.map((item) => ({
-    name: item.config.label,
-    value: item.amount,
-    count: item.count,
-    color: item.config.color,
-  })), [topStatuses]);
-
   const topCustomers = useMemo(() => {
     const buckets = new Map<string, { count: number; amount: number; label: string }>();
     for (const invoice of invoices) {
@@ -294,7 +290,7 @@ export default function Dashboard() {
       .sort((left, right) =>
         new Date(invoiceActivityDate(right)).getTime() - new Date(invoiceActivityDate(left)).getTime(),
       )
-      .slice(0, 5),
+      .slice(0, 6),
     [invoices],
   );
 
@@ -321,6 +317,48 @@ export default function Dashboard() {
         amount: value.amount,
       }));
   }, [invoices]);
+
+  const alerts = useMemo(() => {
+    const items: Array<{
+      id: string;
+      tone: 'danger' | 'warning' | 'info';
+      title: string;
+      description: string;
+      href: string;
+      cta: string;
+    }> = [];
+    if (totals.rejected > 0) {
+      items.push({
+        id: 'rejected',
+        tone: 'danger',
+        title: `${totals.rejected} facture${totals.rejected > 1 ? 's' : ''} refusée${totals.rejected > 1 ? 's' : ''}`,
+        description: `${formatCurrency(totals.rejectedAmount)} à analyser et corriger.`,
+        href: '/invoices/rejections',
+        cta: 'Analyser',
+      });
+    }
+    if (totals.suspended > 0) {
+      items.push({
+        id: 'suspended',
+        tone: 'warning',
+        title: `${totals.suspended} facture${totals.suspended > 1 ? 's' : ''} suspendue${totals.suspended > 1 ? 's' : ''}`,
+        description: 'Complément attendu pour reprendre le workflow Chorus.',
+        href: '/invoices/reception',
+        cta: 'Compléter',
+      });
+    }
+    if (totals.actionable > 0) {
+      items.push({
+        id: 'actionable',
+        tone: 'info',
+        title: `${totals.actionable} émission${totals.actionable > 1 ? 's' : ''} à traiter`,
+        description: `${formatCurrency(totals.actionableAmount)} hors rejets/refus.`,
+        href: '/invoices/to-process',
+        cta: 'Traiter',
+      });
+    }
+    return items;
+  }, [totals]);
 
   const featureCards = [
     {
@@ -354,222 +392,383 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="max-w-3xl space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-2xl font-semibold">Tableau de bord</h1>
-            <Badge variant="outline">Chorus Pilot</Badge>
-          </div>
-          <p className="text-sm leading-6 text-muted-foreground">
-            Vue simple pour savoir où aller : réception des factures, suivi des émissions,
-            rejets/refus et nouvelles soumissions. Les actions métier restent dans les pages dédiées.
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {loading
-              ? 'Chargement depuis la base locale...'
-              : lastSyncAt
-                ? `Dernière sync Chorus : ${formatDateTime(lastSyncAt)}`
-                : 'Données depuis le cache local.'}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={handleRefresh} disabled={syncing || loading}>
-            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            Actualiser Chorus
-          </Button>
-          <Button asChild>
-            <Link to="/invoices/new">
-              <Plus className="mr-2 h-4 w-4" />
-              Nouvelle émission
-            </Link>
-          </Button>
-        </div>
-      </header>
+    <div className="space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={
+          <>
+            <Sparkles className="h-3 w-3" />
+            Chorus Pilot · cockpit
+          </>
+        }
+        title="Tableau de bord"
+        description="Vue unifiée : réception des factures, suivi des émissions, rejets/refus et nouvelles soumissions. Les actions métier restent dans les pages dédiées."
+        meta={
+          loading
+            ? 'Chargement depuis la base locale…'
+            : lastSyncAt
+              ? <span className="inline-flex items-center gap-1.5"><span className="live-dot" />Dernière sync Chorus : {formatDateTime(lastSyncAt)}</span>
+              : 'Données depuis le cache local.'
+        }
+        actions={
+          <>
+            <Button variant="outline" onClick={handleRefresh} disabled={syncing || loading}>
+              {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Actualiser Chorus
+            </Button>
+            <Button asChild>
+              <Link to="/invoices/new">
+                <Plus className="mr-2 h-4 w-4" />
+                Nouvelle émission
+              </Link>
+            </Button>
+          </>
+        }
+      />
 
       {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
+        <ApiErrorCard
+          severity="error"
+          title="Synchronisation Chorus indisponible"
+          explanation="Les données affichées proviennent du dernier cache local. Vérifie ta connexion ou la configuration PISTE."
+          suggestion="Ouvre les paramètres pour contrôler les clés API et l'environnement (sandbox ou production)."
+          technicalDetails={error}
+          onRetry={handleRefresh}
+        />
       )}
 
       {syncing && <SyncRunProgress />}
       {lastSyncRuns.length > 0 && <SyncRunSummary runs={lastSyncRuns} />}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
-        {stats.map((stat) => (
-          <Card key={stat.label}>
-            <CardContent className="pt-6">
-              <div className="flex items-start justify-between gap-4">
+      {/* KPI strip */}
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5 stagger-children">
+        <KpiCard
+          label="Total factures"
+          value={loading ? '—' : totals.total.toLocaleString('fr-FR')}
+          hint="Cache Chorus synchronisé"
+          icon={FileText}
+          tone="primary"
+          sparkline={sparklines.total}
+          loading={loading}
+          href="/invoices"
+        />
+        <KpiCard
+          label="Montant TTC cumulé"
+          value={loading ? '—' : formatCurrency(totals.totalTtc)}
+          hint="Toutes factures confondues"
+          icon={Euro}
+          tone="info"
+          loading={loading}
+        />
+        <KpiCard
+          label="Taux de succès"
+          value={loading ? '—' : `${totals.successRate}%`}
+          hint={`${totals.paid} factures payées`}
+          icon={CheckCircle2}
+          tone="success"
+          sparkline={sparklines.paid}
+          loading={loading}
+        />
+        <KpiCard
+          label="Rejets / refus"
+          value={loading ? '—' : totals.rejected.toLocaleString('fr-FR')}
+          hint={formatCurrency(totals.rejectedAmount)}
+          icon={MessageSquareWarning}
+          tone="danger"
+          sparkline={sparklines.rejected}
+          loading={loading}
+          href="/invoices/rejections"
+        />
+        <KpiCard
+          label="Suspendues"
+          value={loading ? '—' : totals.suspended.toLocaleString('fr-FR')}
+          hint="Complément attendu"
+          icon={AlertTriangle}
+          tone="warning"
+          sparkline={sparklines.suspended}
+          loading={loading}
+          href="/invoices/reception"
+        />
+      </section>
+
+      {/* Alerts + Activity */}
+      {(alerts.length > 0 || recentActivity.length > 0) && (
+        <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+          <Card className="card-elevated">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-muted-foreground">{stat.label}</p>
-                  <p className={`mt-2 text-3xl font-semibold tabular-nums ${stat.tone}`}>
-                    {loading ? '...' : stat.value}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">{loading ? 'Chargement...' : stat.hint}</p>
+                  <CardTitle className="text-[15px]">Alertes à traiter</CardTitle>
+                  <CardDescription className="text-[12.5px]">Les actions prioritaires détectées dans Chorus.</CardDescription>
                 </div>
-                <stat.icon className={`h-7 w-7 ${stat.tone}`} />
+                {alerts.length > 0 && (
+                  <Badge variant="outline" className="border-destructive/30 bg-destructive-soft text-destructive">
+                    {alerts.length} alerte{alerts.length > 1 ? 's' : ''}
+                  </Badge>
+                )}
               </div>
+            </CardHeader>
+            <CardContent>
+              {alerts.length === 0 ? (
+                <EmptyState
+                  icon={CheckCircle2}
+                  title="Aucune alerte active"
+                  description="Toutes les factures Chorus sont à jour. Continue comme ça."
+                />
+              ) : (
+                <div className="space-y-2.5">
+                  {alerts.map((alert) => {
+                    const toneStyles =
+                      alert.tone === 'danger'
+                        ? 'border-destructive/25 bg-destructive-soft/60'
+                        : alert.tone === 'warning'
+                          ? 'border-warning/25 bg-warning-soft/60'
+                          : 'border-info/25 bg-info-soft/60';
+                    const iconColor =
+                      alert.tone === 'danger' ? 'text-destructive' : alert.tone === 'warning' ? 'text-warning' : 'text-info';
+                    return (
+                      <Link
+                        key={alert.id}
+                        to={alert.href}
+                        className={cn(
+                          'group flex items-start gap-3 rounded-xl border p-3.5 transition-all hover:-translate-y-px hover:shadow-soft',
+                          toneStyles,
+                        )}
+                      >
+                        <div className={cn('mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-card shadow-soft', iconColor)}>
+                          <AlertTriangle className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[13.5px] font-semibold text-foreground">{alert.title}</p>
+                          <p className="mt-0.5 text-[12.5px] leading-5 text-muted-foreground">{alert.description}</p>
+                        </div>
+                        <span className="ml-2 inline-flex shrink-0 items-center gap-1 self-center rounded-md border bg-card px-2 py-1 text-[12px] font-medium text-foreground shadow-soft transition-colors group-hover:bg-primary group-hover:text-primary-foreground">
+                          {alert.cta}
+                          <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
+                        </span>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
-        ))}
-      </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Répartition par statut Chorus</CardTitle>
-            <CardDescription>Volume de factures par statut.</CardDescription>
+          <Card className="card-elevated">
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-[15px]">Activité récente</CardTitle>
+                  <CardDescription className="text-[12.5px]">Les derniers mouvements Chorus synchronisés.</CardDescription>
+                </div>
+                <Clock3 className="h-4 w-4 text-muted-foreground" />
+              </div>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {recentActivity.length === 0 ? (
+                <EmptyState icon={Clock3} title="Aucune activité récente" description="Lance une synchronisation Chorus pour récupérer les derniers événements." />
+              ) : (
+                <ol className="-mt-1 space-y-0.5">
+                  {recentActivity.map((invoice) => {
+                    const status = getInvoiceChorusStatus(invoice) || 'INCONNU';
+                    const config = getChorusRawStatusConfig(status);
+                    return (
+                      <li key={invoice.id}>
+                        <Link
+                          to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`}
+                          className="group flex items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-muted/50"
+                        >
+                          <span
+                            className="mt-0.5 h-2 w-2 shrink-0 rounded-full ring-4 ring-card"
+                            style={{ backgroundColor: config.color }}
+                            aria-hidden
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[13px] font-medium text-foreground">
+                              {invoiceDisplayNumber(invoice)}
+                            </p>
+                            <p className="truncate text-[11.5px] text-muted-foreground">
+                              {config.label} · {formatCurrency(invoice.totalTtc)}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {formatDate(invoiceActivityDate(invoice))}
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
+      {/* Charts row */}
+      <section className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
+        <Card className="card-elevated">
+          <CardHeader className="pb-2">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <CardTitle className="text-[15px]">Évolution mensuelle</CardTitle>
+                <CardDescription className="text-[12.5px]">Volume de factures et valeur TTC synchronisée par mois.</CardDescription>
+              </div>
+              <div className="flex items-center gap-3 text-[11.5px] text-muted-foreground">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm bg-chart-1" /> Factures
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-sm bg-chart-3" /> Montant TTC
+                </span>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {monthlyActivity.length > 0 ? (
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={monthlyActivity} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="barFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.95} />
+                        <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0.55} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis
+                      dataKey="month"
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      yAxisId="left"
+                      allowDecimals={false}
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      width={86}
+                      stroke="hsl(var(--muted-foreground))"
+                      fontSize={11}
+                      tickLine={false}
+                      axisLine={false}
+                      tickFormatter={(value) => formatCurrency(Number(value))}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'hsl(var(--muted) / 0.4)' }}
+                      contentStyle={{
+                        borderRadius: 10,
+                        border: '1px solid hsl(var(--border))',
+                        boxShadow: 'var(--shadow-lifted)',
+                        fontSize: 12,
+                      }}
+                      formatter={(value, name, item) => {
+                        const isAmount = item?.dataKey === 'amount' || name === 'Montant TTC';
+                        return isAmount
+                          ? [formatCurrency(Number(value)), 'Montant TTC']
+                          : [`${value} facture(s)`, 'Factures'];
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
+                    <Bar yAxisId="left" dataKey="count" name="Factures" fill="url(#barFill)" radius={[6, 6, 0, 0]} />
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="amount"
+                      name="Montant TTC"
+                      stroke="hsl(var(--chart-3))"
+                      strokeWidth={2.5}
+                      dot={{ r: 3, strokeWidth: 0, fill: 'hsl(var(--chart-3))' }}
+                      activeDot={{ r: 5, strokeWidth: 0 }}
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            ) : (
+              <EmptyState
+                icon={FileText}
+                title="Pas encore d'historique"
+                description="Lance une synchronisation Chorus pour faire apparaître la courbe d'évolution."
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="card-elevated">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-[15px]">Répartition par statut Chorus</CardTitle>
+            <CardDescription className="text-[12.5px]">Top 5 des statuts en volume.</CardDescription>
           </CardHeader>
           <CardContent>
             {statusPieData.length > 0 ? (
-              <>
-                <div className="h-[240px]">
+              <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-[180px_1fr]">
+                <div className="relative h-[180px]">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={statusPieData} cx="50%" cy="50%" innerRadius={58} outerRadius={92} dataKey="value" stroke="none">
+                      <Pie
+                        data={statusPieData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={56}
+                        outerRadius={82}
+                        dataKey="value"
+                        stroke="hsl(var(--card))"
+                        strokeWidth={3}
+                        paddingAngle={2}
+                      >
                         {statusPieData.map((item) => (
                           <Cell key={item.name} fill={item.color} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value) => [`${value} facture(s)`, 'Factures']} />
+                      <Tooltip
+                        contentStyle={{
+                          borderRadius: 10,
+                          border: '1px solid hsl(var(--border))',
+                          boxShadow: 'var(--shadow-lifted)',
+                          fontSize: 12,
+                        }}
+                        formatter={(value) => [`${value} facture(s)`, 'Factures']}
+                      />
                     </PieChart>
                   </ResponsiveContainer>
-                </div>
-                <div className="mt-2 flex flex-wrap justify-center gap-3 text-xs">
-                  {statusPieData.map((item) => (
-                    <div key={item.name} className="flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                      {item.name} ({item.value})
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="rounded-md border bg-muted/20 p-4 text-sm text-muted-foreground">
-                Aucun statut Chorus chargé.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Montant TTC par statut Chorus</CardTitle>
-            <CardDescription>Poids financier par statut.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {amountPieData.length > 0 ? (
-              <>
-                <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={amountPieData} cx="50%" cy="50%" innerRadius={58} outerRadius={92} dataKey="value" stroke="none">
-                        {amountPieData.map((item) => (
-                          <Cell key={item.name} fill={item.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => [formatCurrency(Number(value)), 'Montant TTC']} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-2 flex flex-wrap justify-center gap-3 text-xs">
-                  {amountPieData.map((item) => (
-                    <div key={item.name} className="flex items-center gap-1.5">
-                      <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                      {item.name} ({formatCurrency(item.value)})
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <p className="rounded-md border bg-muted/20 p-4 text-sm text-muted-foreground">
-                Aucun montant Chorus chargé.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Top 5 destinataires par montant</CardTitle>
-            <CardDescription>Les clients publics les plus représentés.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {topCustomers.map((customer) => {
-                const maxAmount = topCustomers[0]?.amount ?? 0;
-                const ratio = maxAmount > 0 ? Math.max(4, Math.min(100, (customer.amount / maxAmount) * 100)) : 0;
-                return (
-                  <div key={customer.id} className="space-y-1">
-                    <div className="flex items-center justify-between gap-3 text-sm">
-                      <span className="truncate" title={customer.label}>{customer.label}</span>
-                      <span className="shrink-0 font-medium">{formatCurrency(customer.amount)}</span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full bg-primary" style={{ width: `${ratio}%` }} />
-                    </div>
-                    <div className="text-xs text-muted-foreground">{customer.count} facture(s)</div>
+                  <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-2xl font-semibold tabular-nums">{totals.total.toLocaleString('fr-FR')}</span>
+                    <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Factures</span>
                   </div>
-                );
-              })}
-              {topCustomers.length === 0 && (
-                <p className="rounded-md border bg-muted/20 p-4 text-sm text-muted-foreground">
-                  Aucun destinataire dans le cache.
-                </p>
-              )}
-            </div>
+                </div>
+                <ul className="space-y-2 text-[12.5px]">
+                  {statusPieData.map((item) => {
+                    const pct = totals.total > 0 ? Math.round((item.value / totals.total) * 100) : 0;
+                    return (
+                      <li key={item.name} className="flex items-center gap-2.5">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
+                        <span className="min-w-0 flex-1 truncate text-foreground">{item.name}</span>
+                        <span className="shrink-0 tabular-nums text-muted-foreground">{item.value}</span>
+                        <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground/80">{pct}%</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ) : (
+              <EmptyState icon={FileText} title="Aucun statut Chorus chargé" />
+            )}
           </CardContent>
         </Card>
-      </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Évolution mensuelle (nombre + montant TTC)</CardTitle>
-          <CardDescription>Volume de factures et valeur TTC synchronisée par mois.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {monthlyActivity.length > 0 ? (
-            <div className="h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={monthlyActivity}>
-                  <XAxis dataKey="month" />
-                  <YAxis yAxisId="left" allowDecimals={false} />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    width={100}
-                    tickFormatter={(value) => formatCurrency(Number(value))}
-                  />
-                  <Tooltip
-                    formatter={(value, name, item) => {
-                      const isAmount = item?.dataKey === 'amount' || name === 'Montant TTC';
-                      return isAmount
-                        ? [formatCurrency(Number(value)), 'Montant TTC']
-                        : [`${value} facture(s)`, 'Factures'];
-                    }}
-                  />
-                  <Legend />
-                  <Bar yAxisId="left" dataKey="count" name="Factures" fill="hsl(220, 60%, 60%)" radius={[4, 4, 0, 0]} />
-                  <Line yAxisId="right" type="monotone" dataKey="amount" name="Montant TTC" stroke="hsl(160, 70%, 35%)" strokeWidth={2} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <p className="rounded-md border bg-muted/20 p-4 text-sm text-muted-foreground">
-              Aucune donnée mensuelle exploitable.
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Statistiques utiles</CardTitle>
-            <CardDescription>
-              Les chiffres utiles pour savoir quoi traiter, quoi analyser et ce qui est déjà fait.
-            </CardDescription>
+      {/* Operational stats + Top customers */}
+      <section className="grid gap-5 xl:grid-cols-[1.15fr_0.85fr]">
+        <Card className="card-elevated">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[15px]">Statistiques utiles</CardTitle>
+            <CardDescription className="text-[12.5px]">Chiffres opérationnels pour savoir quoi traiter, analyser, ou suivre.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -577,124 +776,125 @@ export default function Dashboard() {
                 <Link
                   key={stat.label}
                   to={stat.href}
-                  className="rounded-md border bg-muted/20 p-3 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className="group rounded-xl border bg-card p-3.5 transition-all hover:-translate-y-px hover:border-primary/40 hover:shadow-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">{stat.label}</p>
-                  <p className="mt-2 text-2xl font-semibold tabular-nums">{loading ? '...' : stat.value}</p>
-                  <p className="mt-1 min-h-[36px] text-xs leading-5 text-muted-foreground">
-                    {loading ? 'Chargement...' : stat.description}
+                  <p className="text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {stat.label}
                   </p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums text-foreground">
+                    {loading ? '—' : stat.value}
+                  </p>
+                  <p className="mt-1.5 min-h-[36px] text-[12px] leading-5 text-muted-foreground">
+                    {loading ? 'Chargement…' : stat.description}
+                  </p>
+                  <span className="mt-2 inline-flex items-center text-[11.5px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100">
+                    Ouvrir <ArrowRight className="ml-1 h-3 w-3" />
+                  </span>
                 </Link>
               ))}
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Statuts & activité</CardTitle>
-            <CardDescription>Un résumé court des derniers mouvements Chorus.</CardDescription>
+        <Card className="card-elevated">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[15px]">Top destinataires</CardTitle>
+            <CardDescription className="text-[12.5px]">Clients publics avec le plus de volume facturé.</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Euro className="h-4 w-4 text-primary" />
-                Statuts principaux
-              </div>
-              <div className="space-y-2">
-                {topStatuses.map((item) => (
-                  <div key={item.status} className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2 text-sm">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: item.config.color }} />
-                        <span className="truncate">{item.config.label}</span>
+          <CardContent>
+            {topCustomers.length === 0 ? (
+              <EmptyState icon={Inbox} title="Aucun destinataire" />
+            ) : (
+              <div className="space-y-3.5">
+                {topCustomers.map((customer, idx) => {
+                  const max = topCustomers[0]?.amount ?? 0;
+                  const ratio = max > 0 ? Math.max(6, Math.min(100, (customer.amount / max) * 100)) : 0;
+                  return (
+                    <div key={customer.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-3 text-[13px]">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-muted text-[10.5px] font-semibold text-muted-foreground">
+                            {idx + 1}
+                          </span>
+                          <span className="truncate font-medium text-foreground" title={customer.label}>{customer.label}</span>
+                        </span>
+                        <span className="shrink-0 tabular-nums font-semibold">{formatCurrency(customer.amount)}</span>
                       </div>
-                      <p className="mt-0.5 text-xs text-muted-foreground">{formatCurrency(item.amount)}</p>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-gradient-to-r from-primary to-[hsl(262_83%_58%)]"
+                          style={{ width: `${ratio}%` }}
+                        />
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">{customer.count} facture{customer.count > 1 ? 's' : ''}</div>
                     </div>
-                    <span className="shrink-0 font-semibold tabular-nums">{item.count}</span>
-                  </div>
-                ))}
-                {topStatuses.length === 0 && (
-                  <p className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-                    Aucun statut Chorus chargé.
-                  </p>
-                )}
+                  );
+                })}
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Clock3 className="h-4 w-4 text-primary" />
-                Dernières activités
-              </div>
-              <div className="space-y-2">
-                {recentActivity.map((invoice) => (
-                  <Link
-                    key={invoice.id}
-                    to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`}
-                    className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2 text-sm transition-colors hover:bg-muted/40"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate font-medium">{invoiceDisplayNumber(invoice)}</p>
-                      <p className="text-xs text-muted-foreground">{getInvoiceChorusStatus(invoice) || 'Statut inconnu'}</p>
-                    </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {formatDate(invoiceActivityDate(invoice))}
-                    </span>
-                  </Link>
-                ))}
-                {recentActivity.length === 0 && (
-                  <p className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
-                    Aucune activité récente.
-                  </p>
-                )}
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
-      </div>
+      </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Fonctionnalités principales</CardTitle>
-          <CardDescription>
-            La réception et l’émission sont séparées pour éviter les confusions entre factures reçues,
-            rejets d’émission et actions de correction.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {featureCards.map((feature) => (
-              <Link
-                key={feature.href}
-                to={feature.href}
-                className="group rounded-md border bg-card p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <feature.icon className="h-5 w-5 text-primary" />
-                  <Badge variant="secondary">{feature.badge}</Badge>
-                </div>
-                <h2 className="mt-4 text-sm font-semibold">{feature.title}</h2>
-                <p className="mt-2 min-h-[54px] text-sm leading-6 text-muted-foreground">
-                  {feature.description}
-                </p>
-                <span className="mt-3 inline-flex items-center text-sm font-medium text-primary">
-                  Ouvrir
-                  <ArrowRight className="ml-1 h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
-                </span>
-              </Link>
-            ))}
+      {/* Feature cards (navigation) */}
+      <section>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-[15px] font-semibold text-foreground">Fonctionnalités principales</h2>
+            <p className="text-[12.5px] text-muted-foreground">
+              Réception et émission séparées pour éviter toute confusion entre factures reçues, rejets et actions de correction.
+            </p>
           </div>
-        </CardContent>
-      </Card>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {featureCards.map((feature) => (
+            <Link
+              key={feature.href}
+              to={feature.href}
+              className="group relative overflow-hidden rounded-xl border bg-card p-5 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-gradient-to-br from-primary/10 to-transparent blur-2xl transition-opacity group-hover:opacity-100" />
+              <div className="relative flex items-start justify-between gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <feature.icon className="h-5 w-5" />
+                </div>
+                <Badge variant="secondary" className="font-medium">{feature.badge}</Badge>
+              </div>
+              <h3 className="relative mt-4 text-[14.5px] font-semibold text-foreground">{feature.title}</h3>
+              <p className="relative mt-1.5 min-h-[54px] text-[12.5px] leading-5 text-muted-foreground">
+                {feature.description}
+              </p>
+              <span className="relative mt-3 inline-flex items-center text-[12.5px] font-medium text-primary">
+                Ouvrir
+                <ArrowRight className="ml-1 h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
+              </span>
+            </Link>
+          ))}
+        </div>
+      </section>
 
+      {/* Empty global state */}
       {!loading && invoices.length === 0 && !error && (
-        <Card>
-          <CardContent className="flex items-center gap-3 py-6 text-sm text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4" />
-            Aucune facture en cache local. Lance une synchronisation Chorus pour alimenter les vues.
-          </CardContent>
-        </Card>
+        <EmptyState
+          variant="card"
+          icon={Inbox}
+          title="Aucune facture en cache local"
+          description="Lance une synchronisation Chorus pour alimenter les vues, ou crée une nouvelle émission de facture."
+          action={
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={handleRefresh} disabled={syncing}>
+                {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                Synchroniser
+              </Button>
+              <Button asChild>
+                <Link to="/invoices/new">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Nouvelle émission
+                </Link>
+              </Button>
+            </div>
+          }
+        />
       )}
     </div>
   );
