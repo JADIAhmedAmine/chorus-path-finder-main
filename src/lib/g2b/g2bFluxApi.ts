@@ -73,6 +73,8 @@ export interface G2BDepositResult {
   checksumMode: string | null;
   fileSha256: string | null;
   message: string | null;
+  errorCode: string | null;
+  suggestedFix: string | null;
   businessValidation?: G2BBusinessValidation;
   recommendation?: G2BRecommendation;
   explanation?: G2BErrorExplanation | null;
@@ -181,7 +183,9 @@ export async function depositG2BFlux(config: ChorusConfig, file: File, codeInter
     checksum: asString(r.checksum),
     checksumMode: asString(r.checksumMode),
     fileSha256: asString(r.fileSha256),
-    message: asString(r.message),
+    message: asString(r.message) ?? asString(r.friendly_message),
+    errorCode: asString(r.error_code),
+    suggestedFix: asString(r.suggested_fix),
     businessValidation: isRecord(r.businessValidation) ? (r.businessValidation as unknown as G2BBusinessValidation) : undefined,
     recommendation: isRecord(r.recommendation) ? (r.recommendation as unknown as G2BRecommendation) : undefined,
     explanation: isRecord(r.explanation) ? (r.explanation as unknown as G2BErrorExplanation) : null,

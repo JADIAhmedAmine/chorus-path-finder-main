@@ -23,6 +23,7 @@ from .chorus_flux_business_validator import validate_flux_business_rules
 from .chorus_flux_detector import detect_flux_file, file_extension as _file_extension
 from .chorus_flux_routes import _resolve_settings_and_token, _safe_append_flux_audit
 from .g2b_config import KNOWN_CODE_INTERFACES, load_g2b_settings, load_g2b_supplier_config
+from .g2b_diagnostics import build_piste_auth_error, config_diagnostic, is_auth_http_status, piste_config_status
 from .g2b_error_explainer import explain_g2b_error
 from .g2b_flux_client import (
     G2BFluxError,
@@ -90,27 +91,59 @@ def _issue_public(issue: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
+@router.get("/config/diagnostic")
+async def handle_g2b_config_diagnostic(_auth_user: dict[str, Any] = Depends(require_submit_permission)) -> JSONResponse:
+    """Vue de configuration sûre (jamais de secret) pour diagnostiquer l'env."""
+    return _json(HTTPStatus.OK, config_diagnostic())
+
+
 @router.get("/health")
 async def handle_g2b_health(_auth_user: dict[str, Any] = Depends(require_submit_permission)) -> JSONResponse:
-    settings_ok = True
-    flux_available: bool | None = None
+    """Teste config + acquisition du token + healthchecks Annuaire/Flux.
+
+    Renvoie un statut par service (auth_ok / available / message) sans secret.
+    """
+    g2b = load_g2b_settings()
+    annuaire_enabled = bool(g2b.get("annuaire_enabled"))
+    flux = {"enabled": True, "auth_ok": False, "available": False, "message": None}
+    annuaire = {"enabled": annuaire_enabled, "auth_ok": False, "available": False, "message": None}
+
+    # 1) Acquisition du token PISTE (partagé par les deux APIs).
+    token = None
+    cpro = None
     try:
         chorus_settings, token = _resolve_settings_and_token(None)
-        g2b = load_g2b_settings()
-        health = await g2b_flux_healthcheck(g2b["flux_base_url"], token, chorus_settings.cpro_account)
-        flux_available = bool(health.get("available"))
+        cpro = chorus_settings.cpro_account
     except Exception as error:  # noqa: BLE001
-        logger.debug("G2B health: %s", error)
-        settings_ok = False
-    return _json(HTTPStatus.OK, {
-        "success": True,
-        "services": {
-            # Annuaire/Raccordement: clients prévus dans les phases suivantes.
-            "annuaire": {"configured": True, "available": None},
-            "flux": {"configured": settings_ok, "available": flux_available},
-            "raccordement": {"configured": True, "available": None},
-        },
-    })
+        logger.debug("G2B health auth: %s", error)
+        flux["message"] = "Authentification PISTE échouée."
+        annuaire["message"] = "Authentification PISTE échouée." if annuaire_enabled else "Annuaire désactivé (G2B_ANNUAIRE_ENABLED=false)."
+        return _json(HTTPStatus.OK, {"success": True, "piste": piste_config_status(), "flux": flux, "annuaire": annuaire})
+
+    flux["auth_ok"] = True
+    annuaire["auth_ok"] = True
+
+    # 2) Healthcheck Flux.
+    try:
+        health = await g2b_flux_healthcheck(g2b["flux_base_url"], token, cpro)
+        flux["available"] = bool(health.get("available"))
+        flux["message"] = None if flux["available"] else f"Healthcheck Flux HTTP {health.get('http_status')}."
+    except Exception as error:  # noqa: BLE001
+        flux["message"] = f"Flux indisponible : {error}"
+
+    # 3) Healthcheck Annuaire (si activé).
+    if annuaire_enabled:
+        try:
+            from .g2b_annuaire_client import annuaire_healthcheck
+            health = await annuaire_healthcheck(g2b["annuaire_base_url"], token, cpro)
+            annuaire["available"] = bool(health.get("available"))
+            annuaire["message"] = None if annuaire["available"] else f"Healthcheck Annuaire HTTP {health.get('http_status')}."
+        except Exception as error:  # noqa: BLE001
+            annuaire["message"] = f"Annuaire indisponible : {error}"
+    else:
+        annuaire["message"] = "Annuaire désactivé (G2B_ANNUAIRE_ENABLED=false)."
+
+    return _json(HTTPStatus.OK, {"success": True, "piste": piste_config_status(), "flux": flux, "annuaire": annuaire})
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +251,15 @@ async def handle_g2b_deposit(
             "fileSha256": file_sha256, "codeInterface": code,
         })
 
-    # 4) Dépôt G2B.
+    # 4) Authentification PISTE (erreur structurée si échec).
     try:
         chorus_settings, token = _resolve_settings_and_token(None)
+    except Exception as error:  # noqa: BLE001
+        logger.debug("G2B deposit auth: %s", error)
+        return _json(HTTPStatus.BAD_GATEWAY, {**build_piste_auth_error("g2b_flux"), "statusLocal": "ERROR"})
+
+    # 5) Dépôt G2B.
+    try:
         g2b = load_g2b_settings()
         result = await deposit_g2b_flux(
             g2b["flux_base_url"], token, chorus_settings.cpro_account,
@@ -235,6 +274,8 @@ async def handle_g2b_deposit(
         })
 
     http_status = int(result.get("http_status") or 0)
+    if is_auth_http_status(http_status):
+        return _json(HTTPStatus.BAD_GATEWAY, {**build_piste_auth_error("g2b_flux"), "statusLocal": "ERROR"})
     uid_flux = result.get("uidFlux")
     success = http_status in (HTTPStatus.OK, HTTPStatus.CREATED, HTTPStatus.ACCEPTED) and bool(uid_flux)
     if success:
@@ -289,16 +330,31 @@ def _status_payload(result: dict[str, Any]) -> dict[str, Any]:
         if statut == "IRRECEVABLE":
             payload["explanation"] = explain_g2b_error(result.get("raw"), remote_status="IRRECEVABLE")
         return payload
+    if is_auth_http_status(http_status):
+        return {**build_piste_auth_error("g2b_flux"), "status": None}
     return {"success": False, "status": None, "error": f"Statut G2B indisponible (HTTP {http_status}).",
             "explanation": explain_g2b_error(result.get("raw"), http_status=http_status)}
 
 
-@router.get("/flux/{uid_flux}/status")
-async def handle_g2b_status(uid_flux: str, _auth_user: dict[str, Any] = Depends(require_submit_permission)) -> JSONResponse:
+def _resolve_g2b_or_auth_error() -> tuple[Any, str, str] | JSONResponse:
+    """Renvoie (settings, token, cpro) ou une réponse PISTE_AUTH_FAILED structurée."""
     try:
         chorus_settings, token = _resolve_settings_and_token(None)
+        return chorus_settings, token, chorus_settings.cpro_account
+    except Exception as error:  # noqa: BLE001
+        logger.debug("G2B auth: %s", error)
+        return _json(HTTPStatus.BAD_GATEWAY, build_piste_auth_error("g2b_flux"))
+
+
+@router.get("/flux/{uid_flux}/status")
+async def handle_g2b_status(uid_flux: str, _auth_user: dict[str, Any] = Depends(require_submit_permission)) -> JSONResponse:
+    ctx = _resolve_g2b_or_auth_error()
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    _settings, token, cpro = ctx
+    try:
         g2b = load_g2b_settings()
-        result = await get_g2b_flux_status(g2b["flux_base_url"], token, chorus_settings.cpro_account, uid_flux)
+        result = await get_g2b_flux_status(g2b["flux_base_url"], token, cpro, uid_flux)
     except G2BFluxError as error:
         return _json(HTTPStatus.BAD_GATEWAY, {"success": False, "error": str(error)})
     return _json(HTTPStatus.OK, _status_payload(result))
@@ -306,10 +362,13 @@ async def handle_g2b_status(uid_flux: str, _auth_user: dict[str, Any] = Depends(
 
 @router.post("/flux/{uid_flux}/poll")
 async def handle_g2b_poll(uid_flux: str, _auth_user: dict[str, Any] = Depends(require_submit_permission)) -> JSONResponse:
+    ctx = _resolve_g2b_or_auth_error()
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    _settings, token, cpro = ctx
     try:
-        chorus_settings, token = _resolve_settings_and_token(None)
         g2b = load_g2b_settings()
-        result = await poll_g2b_flux_status(g2b["flux_base_url"], token, chorus_settings.cpro_account, uid_flux)
+        result = await poll_g2b_flux_status(g2b["flux_base_url"], token, cpro, uid_flux)
     except G2BFluxError as error:
         return _json(HTTPStatus.BAD_GATEWAY, {"success": False, "error": str(error)})
     payload = _status_payload(result)
