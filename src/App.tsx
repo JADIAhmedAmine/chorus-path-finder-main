@@ -19,6 +19,8 @@ import SettingsPage from "./pages/SettingsPage";
 import Monitoring from "./pages/Monitoring";
 import ChorusPilotPage from "./pages/ChorusPilotPage";
 import FluxDepositPage from "./pages/FluxDepositPage";
+import PdfToFluxPage from "./pages/PdfToFluxPage";
+import G2BFluxDepositPage from "./pages/G2BFluxDepositPage";
 import CGUPage from "./pages/CGUPage";
 import ReceptionInvoiceDetail from "./pages/ReceptionInvoiceDetail";
 import ReceptionProcessing, { ProcessedReceptionInvoices } from "./pages/ReceptionProcessing";
@@ -133,6 +135,8 @@ const App = () => (
             <Route path="/reception" element={<RequireAuth><Navigate to="/invoices/reception" replace /></RequireAuth>} />
             <Route path="/invoices/new" element={<RequireAuth><AppLayout><InvoiceCreate /></AppLayout></RequireAuth>} />
             <Route path="/invoices/flux" element={<RequireAuth><AppLayout><FluxDepositPage /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/pdf-to-flux" element={<RequireAuth><AppLayout><PdfToFluxPage /></AppLayout></RequireAuth>} />
+            <Route path="/invoices/g2b-flux" element={<RequireAuth><AppLayout><G2BFluxDepositPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/chorus/:id" element={<RequireAuth><AppLayout><ChorusInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/references/customers" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />

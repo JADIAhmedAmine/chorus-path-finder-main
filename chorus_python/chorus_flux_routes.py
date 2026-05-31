@@ -33,6 +33,15 @@ from .chorus_flux_client import (
     recuperer_format_flux,
     recuperer_syntaxe_flux,
 )
+import re
+
+from .chorus_flux_business_validator import (
+    extract_recipient_identifier,
+    load_supplier_config,
+    validate_flux_business_rules,
+)
+from .g2b_annuaire_client import validate_recipient as _g2b_validate_recipient
+from .g2b_config import load_g2b_settings, load_g2b_supplier_config
 from .chorus_flux_detector import (
     FLUX_FORMAT_GUIDE,
     SEVERITY_BLOCKING,
@@ -40,6 +49,7 @@ from .chorus_flux_detector import (
     detect_flux_file,
     evaluate_flux_compatibility,
     explain_chorus_flux_error,
+    extract_flux_metadata,
     file_extension as _detector_file_extension,
 )
 from .client import ChorusClient
@@ -215,6 +225,37 @@ def _persist_fields(
     }
 
 
+async def _try_annuaire_lookup(
+    file_bytes: bytes | None = None,
+    filename: str = "",
+    detected: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Construit un lookup annuaire (SIRET -> {active}) pour le débiteur via l'API
+    G2B Annuaire. Best-effort et désactivé par défaut (G2B_ANNUAIRE_ENABLED) :
+    retourne None si indisponible/désactivé, auquel cas la validation métier
+    renvoie l'avertissement « annuaire non disponible ».
+    """
+    if file_bytes is None:
+        return None
+    try:
+        g2b = load_g2b_settings()
+        if not g2b.get("annuaire_enabled"):
+            return None
+        siret = extract_recipient_identifier(file_bytes, filename, detected)
+        if not siret or len(re.sub(r"\D", "", siret)) != 14:
+            return None
+        settings, access_token = _resolve_settings_and_token(None)
+        result = await _g2b_validate_recipient(
+            g2b["annuaire_base_url"], access_token, settings.cpro_account, siret,
+        )
+        if not result.get("success"):
+            return None
+        return {siret: {"active": bool(result.get("recipient", {}).get("active"))}}
+    except Exception as error:  # noqa: BLE001 - best-effort, ne casse jamais le dépôt
+        logger.debug("Lookup annuaire ignoré: %s", error)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -336,6 +377,7 @@ async def handle_flux_detect(
         )
 
     detected = detect_flux_file(file_bytes, filename)
+    metadata = extract_flux_metadata(file_bytes, filename, detected)
 
     normalized_format = (format_flux or "").strip() or None
     normalized_syntaxe = (syntaxe_flux or "").strip() or None
@@ -352,6 +394,7 @@ async def handle_flux_detect(
             "filename": filename,
             "extension": _detector_file_extension(filename),
             "detected": detected,
+            "metadata": metadata,
             "compatibility": compatibility,
         },
     )
@@ -455,6 +498,68 @@ async def handle_flux_deposer(
                 "error": warning_message,
                 "detected": detected,
                 "compatibility": compatibility,
+                "formatFlux": normalized_format,
+                "syntaxeFlux": normalized_syntaxe,
+            },
+        )
+
+    # 2bis) Pré-contrôle métier (identifiants, adresses, structure fournisseur).
+    #       Bloque les rejets Chorus « métier » avant l'appel réseau.
+    business = validate_flux_business_rules(
+        file_bytes,
+        filename,
+        detected=detected,
+        format_flux=normalized_format,
+        syntaxe_flux=normalized_syntaxe,
+        annuaire_lookup=await _try_annuaire_lookup(file_bytes, filename, detected),
+        supplier_config=load_supplier_config(),
+    )["business_validation"]
+    bv_severity = business["severity"]
+    # BLOCKING (identifiant/adresse manquants, fournisseur non autorisé…) :
+    # jamais forçable. WARNING : informatif, ne bloque pas le dépôt.
+    business_blocked = bv_severity == SEVERITY_BLOCKING
+    if business_blocked:
+        _safe_append_flux_audit(
+            request,
+            user=auth_user,
+            fields={
+                "status": "failed",
+                "nomFichier": _audit_text(filename, max_length=160),
+                "formatFlux": _audit_text(normalized_format, max_length=64),
+                "syntaxeFlux": _audit_text(normalized_syntaxe, max_length=64),
+                "detectedFileType": detected.get("detected_file_type"),
+                "statusLocal": "BLOCKED_BUSINESS_VALIDATION",
+                "severity": bv_severity,
+            },
+        )
+        await _persist_flux_deposit(
+            _persist_fields(
+                filename=filename,
+                file_sha256=file_sha256,
+                file_size=file_size,
+                format_flux=normalized_format,
+                syntaxe_flux=normalized_syntaxe,
+                avec_signature=avec_signature,
+                id_utilisateur_courant=id_utilisateur_courant,
+                detected=detected,
+                status_local="BLOCKED_BUSINESS_VALIDATION",
+                http_status=None,
+                code_retour=None,
+                libelle=None,
+                date_depot=None,
+                numero_flux_depot=None,
+                raw_response={"blocked": True, "business_validation": business},
+            )
+        )
+        return _json_response(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            {
+                "success": False,
+                "status_local": "BLOCKED_BUSINESS_VALIDATION",
+                "message": "Le flux est techniquement compatible mais les données métier sont incomplètes ou non reconnues.",
+                "detected": detected,
+                "compatibility": compatibility,
+                "business_validation": business,
                 "formatFlux": normalized_format,
                 "syntaxeFlux": normalized_syntaxe,
             },
@@ -629,6 +734,7 @@ async def handle_flux_deposer(
         "syntaxeFlux": result.get("syntaxeFlux"),
         "detected": detected,
         "compatibility": compatibility,
+        "business_validation": business,
         "explanation": explanation,
         "persisted": persisted_id is not None,
         "raw": result.get("raw"),
@@ -638,3 +744,105 @@ async def handle_flux_deposer(
     # Chorus n'a pas abouti (ERROR).
     local_http_status = HTTPStatus.OK if status_local != "ERROR" else HTTPStatus.BAD_GATEWAY
     return _json_response(local_http_status, response_payload)
+
+
+# ---------------------------------------------------------------------------
+# Pré-contrôle métier (sans appel Chorus)
+# ---------------------------------------------------------------------------
+@router.post("/business-validate")
+async def handle_flux_business_validate(
+    file: UploadFile = File(...),
+    format_flux: str | None = Form(None),
+    syntaxe_flux: str | None = Form(None),
+    _auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    """Détection + métadonnées + validation métier, sans appeler Chorus."""
+    filename = (file.filename or "").strip()
+    file_bytes = await file.read()
+    if not file_bytes:
+        return _json_response(HTTPStatus.BAD_REQUEST, {"success": False, "error": "Le fichier est vide."})
+
+    detected = detect_flux_file(file_bytes, filename)
+    metadata = extract_flux_metadata(file_bytes, filename, detected)
+    business = validate_flux_business_rules(
+        file_bytes,
+        filename,
+        detected=detected,
+        format_flux=(format_flux or "").strip() or None,
+        syntaxe_flux=(syntaxe_flux or "").strip() or None,
+        annuaire_lookup=await _try_annuaire_lookup(file_bytes, filename, detected),
+        supplier_config=load_supplier_config(),
+    )["business_validation"]
+
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "success": True,
+            "filename": filename,
+            "detected": detected,
+            "metadata": metadata,
+            "business_validation": business,
+        },
+    )
+
+
+@router.post("/prepare-correction")
+async def handle_flux_prepare_correction(
+    file: UploadFile = File(...),
+    supplier_identifier: str | None = Form(None),
+    supplier_address: str | None = Form(None),
+    customer_identifier: str | None = Form(None),
+    customer_address: str | None = Form(None),
+    _auth_user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    """Propose un plan de correction (sans muter le fichier ni déposer)."""
+    filename = (file.filename or "").strip()
+    file_bytes = await file.read()
+    if not file_bytes:
+        return _json_response(HTTPStatus.BAD_REQUEST, {"success": False, "error": "Le fichier est vide."})
+
+    detected = detect_flux_file(file_bytes, filename)
+    config = load_supplier_config()
+    business = validate_flux_business_rules(
+        file_bytes, filename, detected=detected, annuaire_lookup=_try_annuaire_lookup(), supplier_config=config,
+    )["business_validation"]
+    checks = business.get("checks", {})
+    extracted = business.get("extracted", {})
+    default_supplier = config.get("default_supplier_siret")
+
+    address_template = {"StreetName": "", "PostalZone": "", "CityName": "", "Country": "FR"}
+    suggestions: list[dict[str, Any]] = []
+
+    if not checks.get("supplier_identifier_known", False):
+        suggestions.append({
+            "field": "AccountingSupplierParty.Party.PartyIdentification.ID",
+            "current": extracted.get("supplier_identifier"),
+            "suggested": (supplier_identifier or "").strip() or default_supplier,
+            "reason": "Utilisez l'identifiant SIRET de la structure fournisseur rattachée au compte technique.",
+        })
+    if not checks.get("supplier_address_present", False):
+        suggestions.append({
+            "field": "AccountingSupplierParty.Party.PostalAddress",
+            "current": extracted.get("supplier_address"),
+            "suggested": (supplier_address or "").strip() or address_template,
+            "reason": "L'adresse fournisseur est obligatoire (au moins une ligne d'adresse).",
+        })
+    if not checks.get("customer_identifier_present", False) or not checks.get("customer_identifier_known", False):
+        suggestions.append({
+            "field": "AccountingCustomerParty.Party.PartyIdentification.ID",
+            "current": extracted.get("customer_identifier"),
+            "suggested": (customer_identifier or "").strip() or None,
+            "reason": "Vérifiez que le SIRET destinataire existe dans l'annuaire Chorus.",
+        })
+    if not checks.get("customer_address_present", False):
+        suggestions.append({
+            "field": "AccountingCustomerParty.Party.PostalAddress",
+            "current": extracted.get("customer_address"),
+            "suggested": (customer_address or "").strip() or address_template,
+            "reason": "L'adresse du débiteur/client est obligatoire.",
+        })
+
+    return _json_response(
+        HTTPStatus.OK,
+        {"success": True, "filename": filename, "suggestions": suggestions, "business_validation": business},
+    )

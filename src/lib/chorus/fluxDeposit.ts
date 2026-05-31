@@ -1,12 +1,16 @@
 import { authHeaders } from '@/lib/auth/session';
 import { resolveChorusBridgeUrl } from '@/lib/chorus/backendAutomation';
 import {
+  mapBusinessValidation,
   mapCompatibility,
   mapDetected,
   mapExplanation,
+  mapMetadata,
+  type FluxBusinessValidation,
   type FluxCompatibility,
   type FluxDetected,
   type FluxErrorExplanation,
+  type FluxMetadata,
 } from '@/lib/chorus/fluxDetection';
 import type { ChorusConfig } from '@/types/chorus';
 
@@ -15,8 +19,14 @@ export const CHORUS_FLUX_SYNTAXES_PATH = '/api/chorus/flux/syntaxes';
 export const CHORUS_FLUX_DETECT_PATH = '/api/chorus/flux/detect';
 export const CHORUS_FLUX_DEPOSER_PATH = '/api/chorus/flux/deposer';
 export const CHORUS_FLUX_GUIDE_PATH = '/api/chorus/flux/guide';
+export const CHORUS_FLUX_BUSINESS_VALIDATE_PATH = '/api/chorus/flux/business-validate';
 
-export type ChorusFluxStatusLocal = 'ACCEPTED' | 'REJECTED' | 'ERROR' | 'BLOCKED_LOCAL_VALIDATION';
+export type ChorusFluxStatusLocal =
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'ERROR'
+  | 'BLOCKED_LOCAL_VALIDATION'
+  | 'BLOCKED_BUSINESS_VALIDATION';
 
 export interface ChorusFluxFormatsResult {
   success: boolean;
@@ -40,7 +50,16 @@ export interface ChorusFluxDetectResult {
   filename: string;
   extension: string;
   detected: FluxDetected | null;
+  metadata: FluxMetadata | null;
   compatibility: FluxCompatibility | null;
+}
+
+export interface ChorusFluxBusinessResult {
+  success: boolean;
+  filename: string;
+  detected: FluxDetected | null;
+  metadata: FluxMetadata | null;
+  businessValidation: FluxBusinessValidation | null;
 }
 
 export interface ChorusFluxGuideEntry {
@@ -80,7 +99,9 @@ export interface ChorusFluxDepositResult {
   syntaxeFlux: string | null;
   detected: FluxDetected | null;
   compatibility: FluxCompatibility | null;
+  businessValidation: FluxBusinessValidation | null;
   explanation: FluxErrorExplanation | null;
+  message: string | null;
   persisted: boolean;
   raw: unknown;
   error?: string;
@@ -105,7 +126,9 @@ function asStringList(value: unknown): string[] {
 }
 
 function asStatusLocal(value: unknown): ChorusFluxStatusLocal {
-  return value === 'ACCEPTED' || value === 'REJECTED' || value === 'BLOCKED_LOCAL_VALIDATION' ? value : 'ERROR';
+  return value === 'ACCEPTED' || value === 'REJECTED' || value === 'BLOCKED_LOCAL_VALIDATION' || value === 'BLOCKED_BUSINESS_VALIDATION'
+    ? value
+    : 'ERROR';
 }
 
 async function parseResponseBody(response: Response): Promise<unknown> {
@@ -215,6 +238,7 @@ export async function detectChorusFlux(
     filename: asString(record.filename) ?? file.name,
     extension: asString(record.extension) ?? '',
     detected: mapDetected(record.detected),
+    metadata: mapMetadata(record.metadata),
     compatibility: mapCompatibility(record.compatibility),
   };
 }
@@ -282,9 +306,45 @@ export async function depositChorusFlux(
     syntaxeFlux: asString(record.syntaxeFlux),
     detected: mapDetected(record.detected),
     compatibility: mapCompatibility(record.compatibility),
+    businessValidation: mapBusinessValidation(record.business_validation),
     explanation: mapExplanation(record.explanation),
+    message: asString(record.message),
     persisted: record.persisted === true,
     raw: record.raw ?? body,
     error: asString(record.error) ?? undefined,
+  };
+}
+
+/** Pré-contrôle métier (détection + métadonnées + validation métier), sans dépôt. */
+export async function businessValidateChorusFlux(
+  config: ChorusConfig,
+  file: File,
+  formatFlux?: string,
+  syntaxeFlux?: string,
+  fetchImpl: typeof fetch = getDefaultFetchImpl(),
+): Promise<ChorusFluxBusinessResult> {
+  const url = resolveChorusBridgeUrl(config, CHORUS_FLUX_BUSINESS_VALIDATE_PATH);
+  const formData = new FormData();
+  formData.append('file', file, file.name);
+  if (formatFlux) formData.append('format_flux', formatFlux);
+  if (syntaxeFlux) formData.append('syntaxe_flux', syntaxeFlux);
+
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { method: 'POST', headers: authHeaders(), body: formData });
+  } catch (error) {
+    throw new Error(`Pré-contrôle métier impossible : ${error instanceof Error ? error.message : 'erreur réseau'}.`);
+  }
+  const body = await parseResponseBody(response);
+  const record = isRecord(body) ? body : {};
+  if (!response.ok || record.success !== true) {
+    throw new Error(asString(record.error) ?? `Pré-contrôle métier impossible (${response.status}).`);
+  }
+  return {
+    success: true,
+    filename: asString(record.filename) ?? file.name,
+    detected: mapDetected(record.detected),
+    metadata: mapMetadata(record.metadata),
+    businessValidation: mapBusinessValidation(record.business_validation),
   };
 }

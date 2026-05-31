@@ -17,9 +17,32 @@ from chorus_python.auth import require_submit_permission  # noqa: E402
 from chorus_python.config import ChorusSettings  # noqa: E402
 
 
+# UBL « métier complet » : identifiants + adresses fournisseur/débiteur + totaux,
+# afin que la validation métier ne bloque pas (sévérité OK/WARNING) et que le
+# dépôt atteigne l'appel Chorus mocké.
 UBL_XML = (
     b'<?xml version="1.0"?>'
-    b'<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"><ID>1</ID></Invoice>'
+    b'<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"'
+    b' xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"'
+    b' xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">'
+    b"<cbc:ID>INV-1</cbc:ID><cbc:IssueDate>2026-05-26</cbc:IssueDate>"
+    b"<cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>"
+    b"<cac:AccountingSupplierParty><cac:Party>"
+    b"<cac:PartyIdentification><cbc:ID>32242033407300</cbc:ID></cac:PartyIdentification>"
+    b"<cac:PartyName><cbc:Name>ACME</cbc:Name></cac:PartyName>"
+    b"<cac:PostalAddress><cbc:StreetName>1 rue X</cbc:StreetName><cbc:CityName>Paris</cbc:CityName>"
+    b"<cbc:PostalZone>75001</cbc:PostalZone><cac:Country><cbc:IdentificationCode>FR</cbc:IdentificationCode></cac:Country>"
+    b"</cac:PostalAddress></cac:Party></cac:AccountingSupplierParty>"
+    b"<cac:AccountingCustomerParty><cac:Party>"
+    b"<cac:PartyIdentification><cbc:ID>11000201100044</cbc:ID></cac:PartyIdentification>"
+    b"<cac:PartyName><cbc:Name>MAIRIE</cbc:Name></cac:PartyName>"
+    b"<cac:PostalAddress><cbc:StreetName>2 av Y</cbc:StreetName><cbc:CityName>Lyon</cbc:CityName>"
+    b"<cbc:PostalZone>69001</cbc:PostalZone><cac:Country><cbc:IdentificationCode>FR</cbc:IdentificationCode></cac:Country>"
+    b"</cac:PostalAddress></cac:Party></cac:AccountingCustomerParty>"
+    b'<cac:TaxTotal><cbc:TaxAmount currencyID="EUR">20.00</cbc:TaxAmount></cac:TaxTotal>'
+    b"<cac:LegalMonetaryTotal><cbc:TaxExclusiveAmount currencyID=\"EUR\">100.00</cbc:TaxExclusiveAmount>"
+    b'<cbc:TaxInclusiveAmount currencyID="EUR">120.00</cbc:TaxInclusiveAmount></cac:LegalMonetaryTotal>'
+    b"</Invoice>"
 )
 PIVOT_XML = b'<?xml version="1.0"?><CPPFacturePivot><x/></CPPFacturePivot>'
 
@@ -39,8 +62,15 @@ class FluxRoutesTests(unittest.TestCase):
             "formats": routes.recuperer_format_flux,
             "syntaxes": routes.recuperer_syntaxe_flux,
             "deposer": routes.deposer_flux_facture,
+            "supplier_config": routes.load_supplier_config,
         }
         routes.load_chorus_settings = _fake_settings
+        # Config métier déterministe (indépendante de .env.local) : allowlists vides
+        # + DP activé => le UBL « métier complet » passe en sévérité WARNING (non bloquant).
+        routes.load_supplier_config = lambda env=None: {
+            "allowed_supplier_sirets": [], "allowed_supplier_internal_ids": [],
+            "default_supplier_siret": None, "supplier_dp_enabled": True, "strict": False,
+        }
         self.client = TestClient(server.app)
 
     def tearDown(self) -> None:
@@ -49,6 +79,7 @@ class FluxRoutesTests(unittest.TestCase):
         routes.recuperer_format_flux = self._orig["formats"]
         routes.recuperer_syntaxe_flux = self._orig["syntaxes"]
         routes.deposer_flux_facture = self._orig["deposer"]
+        routes.load_supplier_config = self._orig["supplier_config"]
 
     def _set_syntaxes(self, syntaxes):
         async def _fake(format_flux, **kw):
