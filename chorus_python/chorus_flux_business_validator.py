@@ -84,6 +84,20 @@ def _parse_id_list(env: dict[str, str], *keys: str) -> list[str]:
     return []
 
 
+def _union_id_list(env: dict[str, str], *keys: str) -> list[str]:
+    """Union (dédupliquée, chiffres) de TOUTES les clés renseignées."""
+    seen: list[str] = []
+    for key in keys:
+        raw = env.get(key)
+        if not raw:
+            continue
+        for part in re.split(r"[,;\s]+", raw):
+            digits = _digits(part)
+            if digits and digits not in seen:
+                seen.append(digits)
+    return seen
+
+
 def load_supplier_config(env: dict[str, str] | None = None) -> dict[str, Any]:
     """Lit la configuration fournisseur en distinguant SIRET et IDs internes Chorus.
 
@@ -91,17 +105,26 @@ def load_supplier_config(env: dict[str, str] | None = None) -> dict[str, Any]:
     identifiant métier (généralement un SIRET). Il ne doit JAMAIS être comparé à
     un identifiant interne Chorus (ligne du portail).
 
-    - SIRET autorisés : ``CHORUS_ALLOWED_SUPPLIER_SIRETS`` (repli rétro-compatible
-      sur ``CHORUS_ALLOWED_SUPPLIER_IDENTIFIERS``) ;
-    - IDs internes Chorus : ``CHORUS_ALLOWED_SUPPLIER_INTERNAL_IDS`` (repli sur
-      l'ancien ``CHORUS_ALLOWED_SUPPLIER_IDS``) — jamais utilisés pour valider le
-      champ XML PartyIdentification.ID.
+    On lit l'UNION des familles de clés historiques (Chorus) et G2B, afin que la
+    configuration fonctionne quel que soit le mode utilisé :
+
+    - SIRET autorisés : ``CHORUS_ALLOWED_SUPPLIER_SIRETS`` ∪ ``G2B_ALLOWED_SUPPLIER_SIRETS``
+      (+ repli rétro-compatible ``CHORUS_ALLOWED_SUPPLIER_IDENTIFIERS``) ;
+    - IDs internes Chorus (affichage/traçabilité uniquement, jamais pour valider
+      le SIRET du XML) : ``CHORUS_SUPPLIER_INTERNAL_IDS`` ∪ ``G2B_SUPPLIER_INTERNAL_IDS``
+      (+ repli ``CHORUS_ALLOWED_SUPPLIER_INTERNAL_IDS`` / ``CHORUS_ALLOWED_SUPPLIER_IDS``).
     """
     env = env if env is not None else load_env_values()
-    sirets = _parse_id_list(env, "CHORUS_ALLOWED_SUPPLIER_SIRETS", "CHORUS_ALLOWED_SUPPLIER_IDENTIFIERS")
-    internal_ids = _parse_id_list(env, "CHORUS_ALLOWED_SUPPLIER_INTERNAL_IDS", "CHORUS_ALLOWED_SUPPLIER_IDS")
+    sirets = _union_id_list(
+        env, "CHORUS_ALLOWED_SUPPLIER_SIRETS", "G2B_ALLOWED_SUPPLIER_SIRETS", "CHORUS_ALLOWED_SUPPLIER_IDENTIFIERS"
+    )
+    internal_ids = _union_id_list(
+        env, "CHORUS_SUPPLIER_INTERNAL_IDS", "G2B_SUPPLIER_INTERNAL_IDS",
+        "CHORUS_ALLOWED_SUPPLIER_INTERNAL_IDS", "CHORUS_ALLOWED_SUPPLIER_IDS",
+    )
     default = (
         env.get("CHORUS_DEFAULT_SUPPLIER_SIRET")
+        or env.get("G2B_DEFAULT_SUPPLIER_SIRET")
         or env.get("CHORUS_DEFAULT_SUPPLIER_IDENTIFIER")
         or env.get("CHORUS_DEFAULT_SUPPLIER_ID")
         or None
@@ -110,8 +133,8 @@ def load_supplier_config(env: dict[str, str] | None = None) -> dict[str, Any]:
         "allowed_supplier_sirets": sirets,
         "allowed_supplier_internal_ids": internal_ids,
         "default_supplier_siret": (_digits(default) or None) if default else None,
-        "supplier_dp_enabled": _as_bool(env.get("CHORUS_SUPPLIER_DP_ENABLED"), default=False),
-        "strict": _as_bool(env.get("CHORUS_STRICT_BUSINESS_VALIDATION"), default=False),
+        "supplier_dp_enabled": _as_bool(env.get("CHORUS_SUPPLIER_DP_ENABLED")) or _as_bool(env.get("G2B_SUPPLIER_DP_ENABLED")),
+        "strict": _as_bool(env.get("CHORUS_STRICT_BUSINESS_VALIDATION")) or _as_bool(env.get("G2B_STRICT_BUSINESS_VALIDATION")),
     }
 
 
@@ -401,22 +424,25 @@ def validate_flux_business_rules(
              "L'identifiant fournisseur extrait n'a pas le format SIRET attendu.", supplier_id)
     elif allowed_sirets:
         if not supplier_id_known:
-            msg = "Le SIRET fournisseur du XML n'est pas configuré dans CHORUS_ALLOWED_SUPPLIER_SIRETS."
+            msg = "Le SIRET fournisseur du XML n'est pas dans la liste autorisée (CHORUS_ALLOWED_SUPPLIER_SIRETS / G2B_ALLOWED_SUPPLIER_SIRETS)."
+            fix = f"Ajoutez {supplier_digits} dans CHORUS_ALLOWED_SUPPLIER_SIRETS ou G2B_ALLOWED_SUPPLIER_SIRETS selon le mode utilisé."
             if strict:
-                err("SUPPLIER_SIRET_NOT_ALLOWED", supplier_field, msg, supplier_id)
+                err("SUPPLIER_SIRET_NOT_ALLOWED", supplier_field, msg, supplier_id, suggested_fix=fix)
             else:
-                warn("SUPPLIER_SIRET_NOT_ALLOWED", supplier_field, msg, supplier_id)
+                warn("SUPPLIER_SIRET_NOT_ALLOWED", supplier_field, msg, supplier_id, suggested_fix=fix)
     elif allowed_internal_ids:
         # Seul un ID interne Chorus est configuré : il ne peut PAS valider un SIRET.
         warn("SUPPLIER_SIRET_NOT_CONFIGURED", supplier_field,
-             "Une valeur interne Chorus est configurée, mais le XML contient un SIRET. "
-             "Configurez CHORUS_ALLOWED_SUPPLIER_SIRETS pour valider ce champ.", supplier_id)
+             "Un ID interne Chorus est configuré, mais il ne permet pas de valider le SIRET fournisseur du XML.",
+             supplier_id,
+             suggested_fix=f"Ajoutez {supplier_digits} dans CHORUS_ALLOWED_SUPPLIER_SIRETS ou G2B_ALLOWED_SUPPLIER_SIRETS selon le mode utilisé.")
     else:
-        msg = "Impossible de confirmer le SIRET fournisseur (CHORUS_ALLOWED_SUPPLIER_SIRETS non configuré)."
+        msg = "Impossible de confirmer le SIRET fournisseur (allowlist non configurée)."
+        fix = f"Ajoutez {supplier_digits} dans CHORUS_ALLOWED_SUPPLIER_SIRETS ou G2B_ALLOWED_SUPPLIER_SIRETS selon le mode utilisé."
         if strict:
-            err("SUPPLIER_SIRET_NOT_CONFIGURED", supplier_field, msg, supplier_id)
+            err("SUPPLIER_SIRET_NOT_CONFIGURED", supplier_field, msg, supplier_id, suggested_fix=fix)
         else:
-            warn("SUPPLIER_SIRET_NOT_CONFIGURED", supplier_field, msg, supplier_id)
+            warn("SUPPLIER_SIRET_NOT_CONFIGURED", supplier_field, msg, supplier_id, suggested_fix=fix)
 
     # Fournisseur — application « Demandes de paiement »
     if not dp_enabled:

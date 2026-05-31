@@ -42,6 +42,8 @@ export default function G2BFluxDepositPage() {
   const { toast } = useToast();
   const config = useMemo(() => loadChorusConfig(), []);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Garde anti-état périmé : ignore les réponses asynchrones d'un fichier précédent.
+  const seqRef = useRef(0);
 
   const [file, setFile] = useState<File | null>(null);
   const [detect, setDetect] = useState<G2BDetectResult | null>(null);
@@ -63,6 +65,7 @@ export default function G2BFluxDepositPage() {
   };
 
   const handleFile = async (selected: File | null) => {
+    const seq = ++seqRef.current;  // invalide les réponses asynchrones précédentes
     reset();
     setFile(selected);
     setCodeInterface('');
@@ -70,21 +73,23 @@ export default function G2BFluxDepositPage() {
     setDetecting(true);
     try {
       const result = await detectG2BFlux(config, selected);
+      if (seqRef.current !== seq) return;
       setDetect(result);
       if (result.recommendation.recommendedCodeInterface) setCodeInterface(result.recommendation.recommendedCodeInterface);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Détection impossible.');
+      if (seqRef.current === seq) setError(caught instanceof Error ? caught.message : 'Détection impossible.');
     } finally {
-      setDetecting(false);
+      if (seqRef.current === seq) setDetecting(false);
     }
+    if (seqRef.current !== seq) return;
     setValidating(true);
     try {
       const result = await businessValidateG2BFlux(config, selected);
-      setBusiness(result.businessValidation);
+      if (seqRef.current === seq) setBusiness(result.businessValidation);
     } catch {
-      setBusiness(null);
+      if (seqRef.current === seq) setBusiness(null);
     } finally {
-      setValidating(false);
+      if (seqRef.current === seq) setValidating(false);
     }
   };
 
@@ -241,7 +246,8 @@ export default function G2BFluxDepositPage() {
                 )}
                 {deposit && deposit.statusLocal !== 'SUBMITTED' && (
                   <div className="rounded-lg border border-warning/40 bg-warning/10 p-3 text-xs leading-5 text-warning">
-                    {deposit.message ?? deposit.explanation?.friendlyMessage ?? deposit.error}
+                    <p>{deposit.message ?? deposit.explanation?.friendlyMessage ?? deposit.error}</p>
+                    {deposit.suggestedFix && <p className="mt-1 opacity-80">Correction : {deposit.suggestedFix}</p>}
                   </div>
                 )}
               </CardContent>

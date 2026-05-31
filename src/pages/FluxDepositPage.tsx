@@ -97,6 +97,8 @@ export default function FluxDepositPage() {
   // préréglage transmis depuis « PDF facture → flux »).
   const pendingSyntaxeRef = useRef<string | null>(null);
   const presetAppliedRef = useRef(false);
+  // Garde anti-état périmé : ignore les réponses asynchrones d'un fichier précédent.
+  const fileSeqRef = useRef(0);
 
   const [file, setFile] = useState<File | null>(null);
   const [formats, setFormats] = useState<string[]>([]);
@@ -200,39 +202,44 @@ export default function FluxDepositPage() {
 
   // 3bis) Pré-contrôle métier (identifiants/adresses) — sans appeler Chorus.
   const runBusinessValidation = useCallback(async (selected: File): Promise<FluxBusinessValidation | null> => {
+    const seq = fileSeqRef.current;
     setBusinessValidating(true);
     setRecipient(null);
     try {
       const response = await businessValidateChorusFlux(config, selected);
+      if (fileSeqRef.current !== seq) return null;
       setBusinessValidation(response.businessValidation);
       return response.businessValidation;
     } catch {
-      setBusinessValidation(null);
+      if (fileSeqRef.current === seq) setBusinessValidation(null);
       return null;
     } finally {
-      setBusinessValidating(false);
+      if (fileSeqRef.current === seq) setBusinessValidating(false);
     }
   }, [config]);
 
   // 3) Fichier choisi -> détecter le type réel + lancer le pré-contrôle métier.
   const runDetection = useCallback(async (selected: File) => {
+    const seq = fileSeqRef.current;
     setDetecting(true);
     setDetectError(null);
     setDetected(null);
     setMetadata(null);
     try {
       const response = await detectChorusFlux(config, selected);
+      if (fileSeqRef.current !== seq) return;
       setDetected(response.detected);
       setMetadata(response.metadata);
     } catch (caught) {
-      setDetectError(caught instanceof Error ? caught.message : 'Erreur lors de la détection du fichier.');
+      if (fileSeqRef.current === seq) setDetectError(caught instanceof Error ? caught.message : 'Erreur lors de la détection du fichier.');
     } finally {
-      setDetecting(false);
+      if (fileSeqRef.current === seq) setDetecting(false);
     }
-    void runBusinessValidation(selected);
+    if (fileSeqRef.current === seq) void runBusinessValidation(selected);
   }, [config, runBusinessValidation]);
 
   const handleFileChange = (selected: File | null) => {
+    fileSeqRef.current += 1;  // invalide les réponses asynchrones du fichier précédent
     setResult(null);
     setError(null);
     setAcknowledgeRisk(false);

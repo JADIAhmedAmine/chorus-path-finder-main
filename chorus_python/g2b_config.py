@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .chorus_flux_business_validator import _as_bool, _digits, _parse_id_list
+from .chorus_flux_business_validator import _as_bool, load_supplier_config
 from .config import load_env_values
 
 # URLs sandbox officielles (surchargées par env pour la production).
@@ -48,23 +48,15 @@ def load_g2b_settings(env: dict[str, str] | None = None) -> dict[str, Any]:
 
 
 def load_g2b_supplier_config(env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Config fournisseur G2B (SIRET autorisés, IDs internes, DP, modes stricts).
+    """Config fournisseur G2B = config commune (union Chorus + G2B) + drapeaux stricts G2B.
 
     Le SIRET du XML (PartyIdentification.ID) n'est JAMAIS comparé à un ID interne.
-    Repli rétro-compatible sur les variables CHORUS_* si les G2B_* sont absentes.
+    La lecture de l'allowlist SIRET (union des clés Chorus et G2B) est centralisée
+    dans ``load_supplier_config`` afin que les deux modes partagent la même source.
     """
     env = env if env is not None else load_env_values()
-    sirets = _parse_id_list(env, "G2B_ALLOWED_SUPPLIER_SIRETS", "CHORUS_ALLOWED_SUPPLIER_SIRETS", "CHORUS_ALLOWED_SUPPLIER_IDENTIFIERS")
-    internal_ids = _parse_id_list(env, "G2B_SUPPLIER_INTERNAL_IDS", "CHORUS_ALLOWED_SUPPLIER_INTERNAL_IDS", "CHORUS_ALLOWED_SUPPLIER_IDS")
-    default = env.get("G2B_DEFAULT_SUPPLIER_SIRET") or env.get("CHORUS_DEFAULT_SUPPLIER_SIRET") or None
-    strict_business = _as_bool(env.get("G2B_STRICT_BUSINESS_VALIDATION"), default=_as_bool(env.get("CHORUS_STRICT_BUSINESS_VALIDATION"), default=False))
-    return {
-        "allowed_supplier_sirets": sirets,
-        "allowed_supplier_internal_ids": internal_ids,
-        "default_supplier_siret": (_digits(default) or None) if default else None,
-        "supplier_dp_enabled": _as_bool(env.get("G2B_SUPPLIER_DP_ENABLED"), default=_as_bool(env.get("CHORUS_SUPPLIER_DP_ENABLED"), default=False)),
-        "strict": strict_business,
-        "strict_annuaire": _as_bool(env.get("G2B_STRICT_ANNUAIRE_VALIDATION"), default=False),
-        "strict_service_code": _as_bool(env.get("G2B_STRICT_SERVICE_CODE_VALIDATION"), default=False),
-        "strict_engagement": _as_bool(env.get("G2B_STRICT_ENGAGEMENT_VALIDATION"), default=False),
-    }
+    base = load_supplier_config(env)
+    base["strict_annuaire"] = _as_bool(env.get("G2B_STRICT_ANNUAIRE_VALIDATION"), default=False)
+    base["strict_service_code"] = _as_bool(env.get("G2B_STRICT_SERVICE_CODE_VALIDATION"), default=False)
+    base["strict_engagement"] = _as_bool(env.get("G2B_STRICT_ENGAGEMENT_VALIDATION"), default=False)
+    return base

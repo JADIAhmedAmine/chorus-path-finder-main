@@ -71,7 +71,10 @@ export async function validateG2BRecipient(
   const body = await parseBody(response);
   const record = isRecord(body) ? body : {};
   if (!response.ok || record.success !== true) {
-    throw new Error(asString(record.error) ?? `Validation du destinataire impossible (${response.status}).`);
+    if (asString(record.error_code) === 'PISTE_AUTH_FAILED') {
+      throw new Error('Validation annuaire indisponible : authentification PISTE ou habilitation API G2B à vérifier.');
+    }
+    throw new Error(asString(record.friendly_message) ?? asString(record.error) ?? `Validation du destinataire impossible (${response.status}).`);
   }
   const recipientRaw = isRecord(record.recipient) ? record.recipient : {};
   const validationRaw = isRecord(record.validation) ? record.validation : {};
