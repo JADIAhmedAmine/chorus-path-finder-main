@@ -18,6 +18,7 @@ d'entités externes.
 from __future__ import annotations
 
 import os
+import re
 import xml.etree.ElementTree as ET
 from io import BytesIO
 from typing import Any
@@ -361,6 +362,369 @@ def detect_flux_file(file_bytes: bytes, filename: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Métadonnées « grand public » (vue d'inspection du fichier déposé)
+#
+# Objectif : donner plus de visibilité à l'utilisateur sans déposer le fichier.
+# On extrait, en best-effort et sans journaliser le contenu :
+#   - document : taille, version PDF, pages, PDF/A, pièces jointes, propriétés ;
+#   - xml      : racine, namespace, encodage du XML structuré (fichier ou embarqué) ;
+#   - invoice  : en-tête de facture (numéro, dates, devise, parties, totaux).
+# La source de vérité des formats/syntaxes reste l'API Chorus ; ces métadonnées
+# sont purement informatives.
+# ---------------------------------------------------------------------------
+_XML_DECL_ENCODING_RE = re.compile(rb"<\?xml[^>]*encoding=['\"]([^'\"]+)['\"]", re.IGNORECASE)
+_DATE_COMPACT_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})")
+_DATE_PDF_RE = re.compile(r"(\d{4})(\d{2})(\d{2})")
+
+
+def _local_of(tag: Any) -> str:
+    if isinstance(tag, str):
+        if tag.startswith("{"):
+            return tag.partition("}")[2]
+        return tag
+    return ""
+
+
+def _iter_descendants(element: ET.Element, local_name: str):
+    for node in element.iter():
+        if node is not element and _local_of(node.tag) == local_name:
+            yield node
+
+
+def _first_descendant(element: ET.Element | None, local_name: str) -> ET.Element | None:
+    if element is None:
+        return None
+    return next(_iter_descendants(element, local_name), None)
+
+
+def _first_child(element: ET.Element | None, local_name: str) -> ET.Element | None:
+    if element is None:
+        return None
+    for child in list(element):
+        if _local_of(child.tag) == local_name:
+            return child
+    return None
+
+
+def _text_of(element: ET.Element | None) -> str | None:
+    if element is None:
+        return None
+    text = (element.text or "").strip()
+    return text or None
+
+
+def parse_xml_tree(xml_bytes: bytes) -> ET.Element | None:
+    """Parse complet (racine + enfants) avec durcissement defusedxml si dispo."""
+    try:
+        from defusedxml.ElementTree import fromstring as _fromstring  # type: ignore
+    except Exception:  # noqa: BLE001
+        _fromstring = None
+    try:
+        if _fromstring is not None:
+            return _fromstring(xml_bytes)
+        return ET.fromstring(xml_bytes)  # noqa: S314 - pas de résolution d'entités par défaut
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _clean_meta(value: Any, *, max_length: int = 300) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    return text[:max_length]
+
+
+def _normalize_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = value.strip()
+    compact = _DATE_COMPACT_RE.match(text)
+    if compact:
+        return f"{compact.group(1)}-{compact.group(2)}-{compact.group(3)}"
+    return text[:10] if len(text) >= 10 and text[4] == "-" else text
+
+
+def _normalize_amount(value: str | None) -> float | None:
+    if not value:
+        return None
+    text = value.strip().replace(" ", "").replace(" ", "")
+    if "," in text and "." not in text:
+        text = text.replace(",", ".")
+    try:
+        return round(float(text), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_pdf_date(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return value.strftime("%Y-%m-%d")  # datetime renvoyé par pypdf
+    except Exception:  # noqa: BLE001
+        pass
+    match = _DATE_PDF_RE.search(str(value))
+    if match:
+        return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    return _clean_meta(value, max_length=40)
+
+
+def _pdf_document_metadata(file_bytes: bytes) -> dict[str, Any]:
+    info: dict[str, Any] = {
+        "pdf_version": None,
+        "page_count": None,
+        "pdf_a": None,
+        "title": None,
+        "author": None,
+        "producer": None,
+        "creator": None,
+        "subject": None,
+        "created": None,
+        "modified": None,
+        "attachments": [],
+    }
+    header = file_bytes[:16]
+    if header[:5] == b"%PDF-":
+        version = header[5:8].decode("ascii", "ignore").strip()
+        info["pdf_version"] = version or None
+
+    try:
+        from pypdf import PdfReader  # type: ignore
+
+        reader = PdfReader(BytesIO(file_bytes))
+        try:
+            info["page_count"] = len(reader.pages)
+        except Exception:  # noqa: BLE001
+            pass
+
+        meta = getattr(reader, "metadata", None)
+        if meta is not None:
+            info["title"] = _clean_meta(getattr(meta, "title", None))
+            info["author"] = _clean_meta(getattr(meta, "author", None))
+            info["producer"] = _clean_meta(getattr(meta, "producer", None))
+            info["creator"] = _clean_meta(getattr(meta, "creator", None))
+            info["subject"] = _clean_meta(getattr(meta, "subject", None))
+            try:
+                created = meta.creation_date
+            except Exception:  # noqa: BLE001
+                created = getattr(meta, "creation_date_raw", None)
+            try:
+                modified = meta.modification_date
+            except Exception:  # noqa: BLE001
+                modified = getattr(meta, "modification_date_raw", None)
+            info["created"] = _format_pdf_date(created)
+            info["modified"] = _format_pdf_date(modified)
+
+        attachments = getattr(reader, "attachments", {}) or {}
+        for name, payloads in attachments.items():
+            size: int | None = None
+            try:
+                if payloads:
+                    size = len(bytes(payloads[0]))
+            except Exception:  # noqa: BLE001
+                size = None
+            info["attachments"].append({"name": str(name), "size_bytes": size})
+
+        try:
+            xmp = reader.xmp_metadata
+            part = getattr(xmp, "pdfaid_part", None) if xmp is not None else None
+            conformance = getattr(xmp, "pdfaid_conformance", None) if xmp is not None else None
+            if part:
+                info["pdf_a"] = f"PDF/A-{part}{(conformance or '').upper()}"
+        except Exception:  # noqa: BLE001
+            pass
+    except Exception:  # noqa: BLE001
+        pass
+    return info
+
+
+def _extract_ubl_invoice(root: ET.Element) -> dict[str, Any]:
+    def party_fields(party: ET.Element | None) -> tuple[str | None, str | None]:
+        if party is None:
+            return None, None
+        name = _text_of(_first_descendant(party, "RegistrationName"))
+        if not name:
+            party_name = _first_descendant(party, "PartyName")
+            name = _text_of(_first_child(party_name, "Name"))
+        ident = _text_of(_first_descendant(party, "CompanyID"))
+        if not ident:
+            identification = _first_descendant(party, "PartyIdentification")
+            ident = _text_of(_first_child(identification, "ID"))
+        return name, ident
+
+    seller_name, seller_id = party_fields(_first_descendant(root, "AccountingSupplierParty"))
+    buyer_name, buyer_id = party_fields(_first_descendant(root, "AccountingCustomerParty"))
+    monetary = _first_descendant(root, "LegalMonetaryTotal")
+    tax_total = _first_descendant(root, "TaxTotal")
+    return {
+        "invoice_number": _text_of(_first_child(root, "ID")),
+        "issue_date": _normalize_date(_text_of(_first_child(root, "IssueDate"))),
+        "due_date": _normalize_date(_text_of(_first_child(root, "DueDate"))),
+        "currency": _text_of(_first_child(root, "DocumentCurrencyCode")),
+        "seller_name": seller_name,
+        "seller_id": seller_id,
+        "buyer_name": buyer_name,
+        "buyer_id": buyer_id,
+        "total_ht": _normalize_amount(_text_of(_first_descendant(monetary, "TaxExclusiveAmount"))),
+        "total_tva": _normalize_amount(_text_of(_first_child(tax_total, "TaxAmount"))),
+        "total_ttc": _normalize_amount(_text_of(_first_descendant(monetary, "TaxInclusiveAmount"))),
+    }
+
+
+def _extract_cii_invoice(root: ET.Element) -> dict[str, Any]:
+    def party_fields(party: ET.Element | None) -> tuple[str | None, str | None]:
+        if party is None:
+            return None, None
+        name = _text_of(_first_child(party, "Name"))
+        legal = _first_descendant(party, "SpecifiedLegalOrganization")
+        ident = _text_of(_first_child(legal, "ID")) if legal is not None else None
+        if not ident:
+            ident = _text_of(_first_descendant(party, "GlobalID"))
+        return name, ident
+
+    document = _first_descendant(root, "ExchangedDocument")
+    issue = _first_descendant(document, "IssueDateTime") if document is not None else None
+    seller_name, seller_id = party_fields(_first_descendant(root, "SellerTradeParty"))
+    buyer_name, buyer_id = party_fields(_first_descendant(root, "BuyerTradeParty"))
+    summation = _first_descendant(root, "SpecifiedTradeSettlementHeaderMonetarySummation")
+    payment_terms = _first_descendant(root, "SpecifiedTradePaymentTerms")
+    due = _first_descendant(payment_terms, "DateTimeString") if payment_terms is not None else None
+    return {
+        "invoice_number": _text_of(_first_child(document, "ID")) if document is not None else None,
+        "issue_date": _normalize_date(_text_of(_first_descendant(issue, "DateTimeString"))),
+        "due_date": _normalize_date(_text_of(due)),
+        "currency": _text_of(_first_descendant(root, "InvoiceCurrencyCode")),
+        "seller_name": seller_name,
+        "seller_id": seller_id,
+        "buyer_name": buyer_name,
+        "buyer_id": buyer_id,
+        "total_ht": _normalize_amount(_text_of(_first_descendant(summation, "TaxBasisTotalAmount"))),
+        "total_tva": _normalize_amount(_text_of(_first_descendant(summation, "TaxTotalAmount"))),
+        "total_ttc": _normalize_amount(_text_of(_first_descendant(summation, "GrandTotalAmount"))),
+    }
+
+
+# Noms locaux candidats pour l'extraction générique (CPP mixte / racine inconnue).
+_GENERIC_FIELD_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "invoice_number": ("numerofacture", "numero", "invoicenumber", "id"),
+    "issue_date": ("datefacture", "dateemission", "issuedate"),
+    "currency": ("devise", "codedevise", "currency", "documentcurrencycode"),
+    "total_ht": ("montanthttotal", "montanttotalht", "totalht"),
+    "total_tva": ("montanttva", "montanttvatotal", "totaltva"),
+    "total_ttc": ("montantttctotal", "montanttotalttc", "totalttc", "montantapayer"),
+}
+
+
+def _extract_generic_invoice(root: ET.Element) -> dict[str, Any]:
+    by_local: dict[str, str] = {}
+    for node in root.iter():
+        local = _local_of(node.tag).lower()
+        if local and local not in by_local:
+            text = (node.text or "").strip()
+            if text:
+                by_local[local] = text
+
+    def pick(field: str) -> str | None:
+        for candidate in _GENERIC_FIELD_CANDIDATES.get(field, ()):  # premier candidat trouvé
+            if candidate in by_local:
+                return by_local[candidate]
+        return None
+
+    return {
+        "invoice_number": pick("invoice_number"),
+        "issue_date": _normalize_date(pick("issue_date")),
+        "due_date": None,
+        "currency": pick("currency"),
+        "seller_name": None,
+        "seller_id": None,
+        "buyer_name": None,
+        "buyer_id": None,
+        "total_ht": _normalize_amount(pick("total_ht")),
+        "total_tva": _normalize_amount(pick("total_tva")),
+        "total_ttc": _normalize_amount(pick("total_ttc")),
+    }
+
+
+def _extract_invoice_fields(structured_xml_bytes: bytes | None, detected_type: str) -> dict[str, Any] | None:
+    if not structured_xml_bytes:
+        return None
+    root = parse_xml_tree(structured_xml_bytes)
+    if root is None:
+        return None
+    if detected_type == UBL_INVOICE:
+        invoice = _extract_ubl_invoice(root)
+    elif detected_type in (CII_INVOICE, FACTURX_CII):
+        invoice = _extract_cii_invoice(root)
+    else:
+        invoice = _extract_generic_invoice(root)
+    # N'expose la section que si au moins un champ a été trouvé.
+    if any(value is not None for value in invoice.values()):
+        return invoice
+    return None
+
+
+def extract_flux_metadata(
+    file_bytes: bytes,
+    filename: str,
+    detected: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Construit les métadonnées informatives d'un fichier de flux.
+
+    N'appelle jamais Chorus et ne journalise aucun contenu. ``detected`` peut
+    être fourni pour éviter une seconde détection ; sinon il est recalculé.
+    """
+    detected = detected or detect_flux_file(file_bytes, filename)
+    is_pdf = bool(detected.get("is_pdf"))
+    is_xml = bool(detected.get("is_xml"))
+
+    document: dict[str, Any] = {
+        "filename": filename or None,
+        "extension": file_extension(filename),
+        "size_bytes": len(file_bytes),
+        "kind": "pdf" if is_pdf else "xml" if is_xml else "unknown",
+        "encoding": None,
+    }
+
+    xml_section: dict[str, Any] | None = None
+    structured_xml_bytes: bytes | None = None
+
+    if is_pdf:
+        document.update(_pdf_document_metadata(file_bytes))
+        emb_name, emb_bytes = extract_embedded_invoice_xml(file_bytes)
+        if emb_bytes:
+            structured_xml_bytes = emb_bytes
+            encoding = None
+            match = _XML_DECL_ENCODING_RE.search(emb_bytes[:256])
+            if match:
+                encoding = match.group(1).decode("ascii", "ignore") or None
+            xml_section = {
+                "source": "embedded",
+                "filename": emb_name or detected.get("embedded_xml_filename"),
+                "root_element": detected.get("embedded_xml_root"),
+                "namespace": detected.get("embedded_xml_namespace"),
+                "encoding": encoding,
+            }
+    elif is_xml:
+        structured_xml_bytes = file_bytes
+        match = _XML_DECL_ENCODING_RE.search(file_bytes[:256])
+        encoding = match.group(1).decode("ascii", "ignore") if match else None
+        document["encoding"] = encoding
+        xml_section = {
+            "source": "file",
+            "filename": filename or None,
+            "root_element": detected.get("root_element"),
+            "namespace": detected.get("namespace"),
+            "encoding": encoding,
+        }
+
+    invoice = _extract_invoice_fields(structured_xml_bytes, detected.get("detected_file_type", ""))
+
+    return {"document": document, "xml": xml_section, "invoice": invoice}
+
+
+# ---------------------------------------------------------------------------
 # Compatibilité détecté ↔ syntaxeFlux
 # ---------------------------------------------------------------------------
 def _family_filter(detected_type: str):
@@ -481,6 +845,55 @@ def explain_chorus_flux_error(
             "category": "PIVOT_OUTPUT",
             "message": "Le XML déposé semble être un flux pivot Chorus sortant, et non un fichier d'entrée de dépôt de facture.",
         }
+
+    # Rejets « métier » Chorus (TVA/identifiants/adresses) — analyse insensible aux accents.
+    combined_noacc = combined.translate(str.maketrans("éèêëàâäîïôöùûüç", "eeeeaaaiioouuuc"))
+    business_details: list[dict[str, str]] = []
+    if "taxsubtotal.percent" in combined_noacc or "taxsubtotal/percent" in combined_noacc:
+        business_details.append({
+            "message": "Le taux de TVA est manquant dans le détail TaxSubtotal.",
+            "source": "TaxTotal.TaxSubtotal.TaxCategory.Percent",
+            "fix": "Ajouter cbc:Percent dans chaque TaxSubtotal.",
+        })
+    if "identifiant fournisseur" in combined_noacc:
+        business_details.append({
+            "message": "Le fournisseur indiqué dans le XML n'est pas reconnu par Chorus.",
+            "source": "AccountingSupplierParty.Party.PartyIdentification.ID",
+            "fix": "Utiliser le SIRET fournisseur réellement rattaché au compte technique dans Chorus qualification.",
+        })
+    if "demandes de paiement" in combined_noacc:
+        business_details.append({
+            "message": "La structure fournisseur n'est pas autorisée pour l'application Demandes de paiement.",
+            "source": "AccountingSupplierParty.Party.PartyIdentification.ID",
+            "fix": "Activer ou vérifier l'application Demandes de paiement pour cette structure dans Chorus.",
+        })
+    if "ligne d'adresse pour le fournisseur" in combined_noacc:
+        business_details.append({
+            "message": "L'adresse fournisseur est obligatoire dans le XML.",
+            "source": "AccountingSupplierParty.Party.PostalAddress",
+            "fix": "Ajouter au moins une ligne d'adresse fournisseur.",
+        })
+    if "ligne d'adresse pour le debiteur" in combined_noacc:
+        business_details.append({
+            "message": "L'adresse du débiteur/client est obligatoire dans le XML.",
+            "source": "AccountingCustomerParty.Party.PostalAddress",
+            "fix": "Ajouter au moins une ligne d'adresse débiteur/client.",
+        })
+    if "identifiant debiteur" in combined_noacc:
+        business_details.append({
+            "message": "Le débiteur/client indiqué dans le XML n'est pas reconnu dans Chorus.",
+            "source": "AccountingCustomerParty.Party.PartyIdentification.ID",
+            "fix": "Vérifier que le SIRET destinataire existe et est actif dans l'annuaire Chorus.",
+        })
+    if business_details:
+        return {
+            "category": "BUSINESS_VALIDATION",
+            "message": " ".join(detail["message"] for detail in business_details),
+            "source": business_details[0]["source"],
+            "fix": business_details[0]["fix"],
+            "details": business_details,
+        }
+
     if http_status == 401:
         return {
             "category": "AUTH",

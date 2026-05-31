@@ -101,6 +101,9 @@ from chorus_python.annuaire import build_annuaire_files_from_api_response, relat
 from chorus_python.audit import append_audit_event
 from chorus_python.auth import get_current_auth_user, require_auth, require_submit_permission, router as auth_router
 from chorus_python.chorus_flux_routes import router as flux_router
+from chorus_python.chorus_pdf_to_flux_routes import router as pdf_to_flux_router
+from chorus_python.g2b_routes_flux import router as g2b_flux_router
+from chorus_python.g2b_routes_annuaire import router as g2b_annuaire_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.errors import normalize_chorus_error
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
@@ -521,6 +524,9 @@ async def audit_essential_actions(request: Request, call_next):
 
 app.include_router(auth_router)
 app.include_router(flux_router)
+app.include_router(pdf_to_flux_router)
+app.include_router(g2b_flux_router)
+app.include_router(g2b_annuaire_router)
 
 if _DB_ROUTER_AVAILABLE:
     app.include_router(db_router)

@@ -3,7 +3,7 @@ import { useLocation, Link } from 'react-router-dom';
 import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
   ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox, CheckCircle2,
-  Zap, Scale, MessageSquareWarning, Bell, UploadCloud,
+  Zap, Scale, MessageSquareWarning, Bell, UploadCloud, Sparkles, Network,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -39,6 +39,8 @@ const emissionItems: SidebarNavItem[] = [
   { title: 'Émissions à traiter', url: '/invoices/to-process', icon: AlertTriangle },
   { title: 'Nouvelle émission', url: '/invoices/new', icon: Upload },
   { title: 'Dépôt de flux', url: '/invoices/flux', icon: UploadCloud },
+  { title: 'PDF facture → flux', url: '/invoices/pdf-to-flux', icon: Sparkles },
+  { title: 'Dépôt de flux G2B', url: '/invoices/g2b-flux', icon: Network },
 ];
 
 const invoiceItems: SidebarNavItem[] = [...receptionItems, ...emissionItems];
