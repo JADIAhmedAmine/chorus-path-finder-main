@@ -803,6 +803,23 @@ function splitBusinessRows(rows: ReceptionDisplayRow[]): ReceptionPhaseBuckets {
   return buckets;
 }
 
+function countReceptionRows(...rowGroups: ReceptionDisplayRow[][]): number {
+  return rowGroups.reduce((sum, rows) => sum + rows.length, 0);
+}
+
+function countReceivedInvoiceRows(buckets: ReceptionPhaseBuckets): number {
+  return countReceptionRows(
+    buckets.receivedRows,
+    buckets.suspendedRows,
+    buckets.aActionnerRows,
+    buckets.validationInterneRows,
+    buckets.cheminementRows,
+    buckets.prisesEnCompteRows,
+    buckets.paiementRows,
+    buckets.erreursTechniquesRows,
+  );
+}
+
 function applyReceptionErrors(
   rows: ReceptionDisplayRow[],
   errors: ReceptionBulkResultError[],
@@ -1069,7 +1086,7 @@ export default function ReceptionProcessing() {
       responseRows: cachedResponseRows,
       notificationRows: cachedNotificationRows,
       pendingRows: cachedPendingRows,
-      totalStored: dbRows.length,
+      totalStored: countReceivedInvoiceRows(cachedBuckets),
       detailSuccess: cachedDetailRows.length,
       detailFailed: 0,
       note: cachedDetailRows.length > 0
@@ -1129,6 +1146,7 @@ export default function ReceptionProcessing() {
       const historyFailureNote = historySync.failed > 0
         ? ` ${historySync.failed} historique(s) indisponible(s).`
         : '';
+      const receivedInvoiceCount = countReceivedInvoiceRows(buckets);
       setBulkInput(displayRows.map((row) => row.identifiantFactureCPP).join('\n'));
       setBulkState({
         status: 'done',
@@ -1144,17 +1162,17 @@ export default function ReceptionProcessing() {
         notificationRows: buckets.notificationRows,
         pendingRows: buckets.pendingRows,
         errors,
-        totalStored: refreshedRows.length,
-        detailSuccess: buckets.receivedRows.length,
-        detailFailed: buckets.pendingRows.filter((row) => row.detailStatus === 'error').length,
+        totalStored: receivedInvoiceCount,
+        detailSuccess: receivedInvoiceCount,
+        detailFailed: errors.length,
         syncRuns,
-        note: `${refreshedRows.length} ligne(s) synchronisée(s) en PostgreSQL. ${buckets.receivedRows.length} à traiter, ${buckets.suspendedRows.length} suspendue(s), ${buckets.aActionnerRows.length} à actionner, ${buckets.validationInterneRows.length} en validation, ${buckets.cheminementRows.length} en cheminement, ${buckets.prisesEnCompteRows.length} prise(s) en compte, ${buckets.paiementRows.length} en paiement, ${buckets.erreursTechniquesRows.length} en erreur tech., ${buckets.responseRows.length} rejet/refus, ${buckets.notificationRows.length} notification(s), ${buckets.pendingRows.length} à qualifier.${historyNote}${historyLimitNote}${historyFailureNote}`,
+        note: `${receivedInvoiceCount} facture(s) reçue(s) exploitable(s) en PostgreSQL. ${buckets.receivedRows.length} à traiter, ${buckets.suspendedRows.length} suspendue(s), ${buckets.aActionnerRows.length} à actionner, ${buckets.validationInterneRows.length} en validation, ${buckets.cheminementRows.length} en cheminement, ${buckets.prisesEnCompteRows.length} prise(s) en compte, ${buckets.paiementRows.length} en paiement, ${buckets.erreursTechniquesRows.length} en erreur tech., ${buckets.responseRows.length} rejet/refus, ${buckets.notificationRows.length} notification(s).${historyNote}${historyLimitNote}${historyFailureNote}`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
       setBulkState({
         status: 'idle',
-        totalStored: dbRows.length,
+        totalStored: countReceivedInvoiceRows(cachedBuckets),
         globalError: `Synchronisation PostgreSQL impossible : ${message}`,
       });
     }
@@ -1259,7 +1277,16 @@ export default function ReceptionProcessing() {
       responseRows,
       notificationRows,
       pendingRows,
-      totalStored: dbRows.length,
+      totalStored: countReceptionRows(
+        bulkRows,
+        suspendedRows,
+        aActionnerRows,
+        validationInterneRows,
+        cheminementRows,
+        prisesEnCompteRows,
+        paiementRows,
+        erreursTechniquesRows,
+      ),
       detailSuccess: bulkRows.length,
       detailFailed: 0,
       totalRequested: identifiers.length,
@@ -1312,6 +1339,7 @@ export default function ReceptionProcessing() {
         errors,
       );
       const buckets = splitBusinessRows(classifiedRows);
+      const receivedInvoiceCount = countReceivedInvoiceRows(buckets);
       setBulkState({
         status: 'done',
         rows: buckets.receivedRows,
@@ -1326,10 +1354,10 @@ export default function ReceptionProcessing() {
         notificationRows: buckets.notificationRows,
         pendingRows: buckets.pendingRows,
         errors,
-        totalStored: baseRows.length,
-        detailSuccess: buckets.receivedRows.length + buckets.suspendedRows.length,
-        detailFailed: buckets.pendingRows.filter((row) => row.detailStatus === 'error').length,
-        note: `Cache PostgreSQL prioritaire. ${buckets.receivedRows.length} à traiter, ${buckets.suspendedRows.length} suspendue(s), ${buckets.aActionnerRows.length} à actionner, ${buckets.validationInterneRows.length} en validation, ${buckets.cheminementRows.length} en cheminement, ${buckets.prisesEnCompteRows.length} prise(s) en compte, ${buckets.paiementRows.length} en paiement, ${buckets.erreursTechniquesRows.length} en erreur tech., ${buckets.responseRows.length} rejet/refus, ${buckets.notificationRows.length} notification(s), ${buckets.pendingRows.length} à qualifier.`,
+        totalStored: receivedInvoiceCount,
+        detailSuccess: receivedInvoiceCount,
+        detailFailed: errors.length,
+        note: `Cache PostgreSQL prioritaire. ${receivedInvoiceCount} facture(s) reçue(s) exploitable(s). ${buckets.receivedRows.length} à traiter, ${buckets.suspendedRows.length} suspendue(s), ${buckets.aActionnerRows.length} à actionner, ${buckets.validationInterneRows.length} en validation, ${buckets.cheminementRows.length} en cheminement, ${buckets.prisesEnCompteRows.length} prise(s) en compte, ${buckets.paiementRows.length} en paiement, ${buckets.erreursTechniquesRows.length} en erreur tech., ${buckets.responseRows.length} rejet/refus, ${buckets.notificationRows.length} notification(s).`,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Erreur inattendue.';
@@ -1379,7 +1407,6 @@ export default function ReceptionProcessing() {
         erreursTechniquesRows={erreursTechniquesRows}
         responseRows={responseRows}
         notificationRows={notificationRows}
-        pendingRows={pendingRows}
         busy={busy}
         onPreviewInvoice={openDrawerForInvoice}
       />
@@ -1959,7 +1986,6 @@ function BulkConsultCard({
   erreursTechniquesRows,
   responseRows,
   notificationRows,
-  pendingRows,
   busy,
   onPreviewInvoice,
 }: {
@@ -1977,7 +2003,6 @@ function BulkConsultCard({
   erreursTechniquesRows: ReceptionDisplayRow[];
   responseRows: ReceptionDisplayRow[];
   notificationRows: ReceptionDisplayRow[];
-  pendingRows: ReceptionDisplayRow[];
   busy: boolean;
   onPreviewInvoice: (invoice: ReceptionInvoice) => void;
 }) {
@@ -1989,8 +2014,7 @@ function BulkConsultCard({
     || cheminementRows.length > 0
     || prisesEnCompteRows.length > 0
     || paiementRows.length > 0
-    || erreursTechniquesRows.length > 0
-    || pendingRows.length > 0;
+    || erreursTechniquesRows.length > 0;
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -2063,9 +2087,17 @@ function BulkConsultCard({
               prisesEnCompte={prisesEnCompteRows.length}
               paiement={paiementRows.length}
               erreursTechniques={erreursTechniquesRows.length}
-              pending={pendingRows.length}
-              totalStored={state.totalStored ?? rows.length + suspendedRows.length + pendingRows.length}
-              detailFailed={state.detailFailed ?? pendingRows.filter((row) => row.detailStatus === 'error').length}
+              totalStored={state.totalStored ?? countReceptionRows(
+                rows,
+                suspendedRows,
+                aActionnerRows,
+                validationInterneRows,
+                cheminementRows,
+                prisesEnCompteRows,
+                paiementRows,
+                erreursTechniquesRows,
+              )}
+              detailFailed={state.detailFailed ?? 0}
             />
             {rows.length > 0 && (
               <PhaseSection
@@ -2131,12 +2163,6 @@ function BulkConsultCard({
                 onPreviewInvoice={onPreviewInvoice}
               />
             )}
-            {pendingRows.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">À qualifier en base</h3>
-                <FavorableResponsesTable rows={pendingRows} />
-              </div>
-            )}
           </>
         ) : isLoading ? (
           <div className="space-y-3">
@@ -2146,8 +2172,8 @@ function BulkConsultCard({
         ) : (
           !state.globalError && (
             <EmptyState
-              title="Aucune facture côté valideur pour l'instant"
-              description="Colle une liste d'identifiants Chorus CPP ci-dessous et lance la consultation pour les récupérer en lot."
+              title="Aucune facture reçue exploitable"
+              description="Les lignes non reconnues comme factures reçues sont écartées de cette vue. Lance une synchronisation Chorus pour récupérer les vraies factures reçues."
             />
           )
         )}
@@ -2187,7 +2213,6 @@ function BulkSummaryStrip({
   prisesEnCompte,
   paiement,
   erreursTechniques,
-  pending,
   totalStored,
   detailFailed,
 }: {
@@ -2199,7 +2224,6 @@ function BulkSummaryStrip({
   prisesEnCompte: number;
   paiement: number;
   erreursTechniques: number;
-  pending: number;
   totalStored: number;
   detailFailed: number;
 }) {
@@ -2214,7 +2238,6 @@ function BulkSummaryStrip({
     { label: 'Prises en compte', value: prisesEnCompte, tone: tone(prisesEnCompte, 'text-emerald-700') },
     { label: 'Paiement', value: paiement, tone: tone(paiement, 'text-emerald-700') },
     { label: 'Erreurs tech.', value: erreursTechniques, tone: tone(erreursTechniques, 'text-destructive') },
-    { label: 'À qualifier', value: pending, tone: tone(pending, 'text-amber-600') },
     { label: 'En base', value: totalStored, tone: 'text-muted-foreground' },
     { label: 'À vérifier', value: detailFailed, tone: tone(detailFailed, 'text-amber-600') },
   ];
@@ -2728,7 +2751,7 @@ function DetailStatusBadge({ status }: { status: ReceptionDisplayRow['detailStat
     return <span className="mt-1 inline-flex rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">à vérifier</span>;
   }
   if (status === 'database') {
-    return <span className="mt-1 inline-flex rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">à qualifier</span>;
+    return <span className="mt-1 inline-flex rounded bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-700">non classée</span>;
   }
   return <span className="mt-1 inline-flex rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700">réponse</span>;
 }

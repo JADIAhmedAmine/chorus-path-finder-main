@@ -318,6 +318,8 @@ class ChorusSubmissionService:
     def recycle_invoice(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.client.reset_api_calls()
         final_payload = deepcopy(payload)
+        if isinstance(final_payload.get("reference"), dict):
+            enforce_recycle_vat_type(final_payload)
         response = self.client.recycle_invoice(final_payload)
         return {
             "ok": True,
