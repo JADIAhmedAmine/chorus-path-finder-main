@@ -3,9 +3,11 @@ import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowRight,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   Euro,
+  Filter,
   FileText,
   Inbox,
   Loader2,
@@ -14,6 +16,7 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  X,
 } from 'lucide-react';
 import {
   Bar,
@@ -32,11 +35,15 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { KpiCard } from '@/components/common/KpiCard';
 import { PageHeader } from '@/components/common/PageHeader';
 import { EmptyState } from '@/components/common/EmptyState';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
+import { DashboardPilotagePanel } from '@/components/chorus/DashboardPilotagePanel';
 import {
   getInvoiceChorusStatus,
   isActionableInvoice,
@@ -54,6 +61,75 @@ import {
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import type { Invoice } from '@/types';
 import { cn } from '@/lib/utils';
+
+const ALL_FILTER_VALUE = '__all__';
+const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat('fr-FR', { month: 'short', year: 'numeric' });
+
+function formatDateInput(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentYearStartDateInput(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-01-01`;
+}
+
+function getTodayDateInput(): string {
+  return formatDateInput(new Date());
+}
+
+function getLastDaysStartDateInput(days: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - Math.max(days - 1, 0));
+  return formatDateInput(date);
+}
+
+function dateOnly(value: string | undefined | null): string | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (match) return match[1];
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? formatDateInput(parsed) : null;
+}
+
+function monthKeyFromDate(value: string | undefined | null): string | null {
+  const normalized = dateOnly(value);
+  return normalized ? normalized.slice(0, 7) : null;
+}
+
+function buildMonthKeys(startKey: string, endKey: string): string[] {
+  const [startYear, startMonth] = startKey.split('-').map(Number);
+  const [endYear, endMonth] = endKey.split('-').map(Number);
+  if (!startYear || !startMonth || !endYear || !endMonth) return [];
+
+  const out: string[] = [];
+  const cursor = new Date(startYear, startMonth - 1, 1);
+  const end = new Date(endYear, endMonth - 1, 1);
+
+  while (cursor <= end) {
+    out.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return out;
+}
+
+function formatMonthKey(key: string): string {
+  const [year, month] = key.split('-').map(Number);
+  if (!year || !month) return key;
+  return MONTH_LABEL_FORMATTER.format(new Date(year, month - 1, 1));
+}
+
+function invoiceMatchesDateRange(invoice: Invoice, fromDate: string, toDate: string): boolean {
+  const invoiceDate = dateOnly(invoice.invoiceDate);
+  if (!invoiceDate) return false;
+  if (fromDate && invoiceDate < fromDate) return false;
+  if (toDate && invoiceDate > toDate) return false;
+  return true;
+}
 
 function parseConfiguredSupplierId(value: string): number | undefined {
   const parsed = Number(value);
@@ -113,12 +189,16 @@ function makeSparkline(invoices: Invoice[], predicate: (i: Invoice) => boolean, 
 export default function Dashboard() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState(getCurrentYearStartDateInput);
+  const [dateTo, setDateTo] = useState(getTodayDateInput);
+  const [statusFilter, setStatusFilter] = useState(ALL_FILTER_VALUE);
+  const [customerFilter, setCustomerFilter] = useState(ALL_FILTER_VALUE);
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const customersQuery = usePublicCustomersQuery();
   const syncInvoices = useSyncInvoicesMutation();
   const syncSuppliers = useSyncSuppliersMutation();
 
-  const invoices = invoicesQuery.data?.items ?? [];
+  const allInvoices = invoicesQuery.data?.items ?? [];
   const customers = customersQuery.data ?? [];
   const lastSyncRuns: SyncRunResult[] = (syncInvoices.data ?? []) as SyncRunResult[];
   const loading = invoicesQuery.isLoading || customersQuery.isLoading;
@@ -129,6 +209,63 @@ export default function Dashboard() {
     () => new Map(customers.map((customer) => [customer.id, customer])),
     [customers],
   );
+
+  const statusOptions = useMemo(
+    () => [...new Set(allInvoices.map(getInvoiceChorusStatus).filter((status): status is string => Boolean(status)))]
+      .sort((left, right) =>
+        getChorusRawStatusConfig(left).label.localeCompare(getChorusRawStatusConfig(right).label, 'fr'),
+      ),
+    [allInvoices],
+  );
+
+  const customerOptions = useMemo(() => {
+    const ids = [...new Set(allInvoices.map((invoice) => invoice.publicCustomerId).filter(Boolean))];
+    return ids
+      .map((id) => ({
+        id,
+        label: customerById.get(id)?.legalName || id,
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label, 'fr'));
+  }, [allInvoices, customerById]);
+
+  const invoices = useMemo(
+    () => allInvoices.filter((invoice) =>
+      invoiceMatchesDateRange(invoice, dateFrom, dateTo)
+      && (statusFilter === ALL_FILTER_VALUE || getInvoiceChorusStatus(invoice) === statusFilter)
+      && (customerFilter === ALL_FILTER_VALUE || invoice.publicCustomerId === customerFilter),
+    ),
+    [allInvoices, customerFilter, dateFrom, dateTo, statusFilter],
+  );
+
+  const activeSecondaryFilters = [
+    statusFilter !== ALL_FILTER_VALUE,
+    customerFilter !== ALL_FILTER_VALUE,
+  ].filter(Boolean).length;
+
+  const periodLabel = dateFrom || dateTo
+    ? `${dateFrom ? formatDate(dateFrom) : 'début'} -> ${dateTo ? formatDate(dateTo) : 'aujourd’hui'}`
+    : 'Toutes les dates';
+
+  function applyCurrentYearPeriod() {
+    setDateFrom(getCurrentYearStartDateInput());
+    setDateTo(getTodayDateInput());
+  }
+
+  function applyLast30DaysPeriod() {
+    setDateFrom(getLastDaysStartDateInput(30));
+    setDateTo(getTodayDateInput());
+  }
+
+  function clearPeriod() {
+    setDateFrom('');
+    setDateTo('');
+  }
+
+  function resetFilters() {
+    applyCurrentYearPeriod();
+    setStatusFilter(ALL_FILTER_VALUE);
+    setCustomerFilter(ALL_FILTER_VALUE);
+  }
 
   async function handleRefresh() {
     setSyncError(null);
@@ -295,28 +432,33 @@ export default function Dashboard() {
   );
 
   const monthlyActivity = useMemo(() => {
-    const buckets = new Map<string, { count: number; amount: number; timestamp: number }>();
+    const buckets = new Map<string, { count: number; amount: number }>();
     for (const invoice of invoices) {
-      const parsed = new Date(invoiceActivityDate(invoice));
-      const timestamp = parsed.getTime();
-      if (!Number.isFinite(timestamp)) continue;
-      const key = `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`;
-      const current = buckets.get(key) ?? { count: 0, amount: 0, timestamp };
+      const key = monthKeyFromDate(invoice.invoiceDate);
+      if (!key) continue;
+      const current = buckets.get(key) ?? { count: 0, amount: 0 };
       current.count += 1;
       current.amount += invoice.totalTtc;
       buckets.set(key, current);
     }
 
-    return [...buckets.entries()]
-      .sort((left, right) => left[1].timestamp - right[1].timestamp)
-      .slice(-6)
-      .map(([key, value]) => ({
+    const populatedKeys = [...buckets.keys()].sort();
+    const fromKey = monthKeyFromDate(dateFrom);
+    const toKey = monthKeyFromDate(dateTo);
+    const startKey = fromKey ?? populatedKeys[0] ?? toKey;
+    const endKey = toKey ?? populatedKeys[populatedKeys.length - 1] ?? fromKey;
+    if (!startKey || !endKey || startKey > endKey) return [];
+
+    return buildMonthKeys(startKey, endKey).map((key) => {
+      const value = buckets.get(key) ?? { count: 0, amount: 0 };
+      return {
         key,
-        month: new Date(`${key}-01T00:00:00`).toLocaleDateString('fr-FR', { month: 'short', year: 'numeric' }),
+        month: formatMonthKey(key),
         count: value.count,
         amount: value.amount,
-      }));
-  }, [invoices]);
+      };
+    });
+  }, [dateFrom, dateTo, invoices]);
 
   const alerts = useMemo(() => {
     const items: Array<{
@@ -439,6 +581,99 @@ export default function Dashboard() {
       {syncing && <SyncRunProgress />}
       {lastSyncRuns.length > 0 && <SyncRunSummary runs={lastSyncRuns} />}
 
+      <Card className="card-elevated">
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-[15px]">
+                <Filter className="h-4 w-4 text-primary" />
+                Filtres du tableau de bord
+              </CardTitle>
+              <CardDescription className="text-[12.5px]">
+                Période affichée : {periodLabel}
+              </CardDescription>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">
+                {loading ? 'Chargement...' : `${invoices.length.toLocaleString('fr-FR')} / ${allInvoices.length.toLocaleString('fr-FR')} factures`}
+              </Badge>
+              {activeSecondaryFilters > 0 && (
+                <Badge variant="outline">{activeSecondaryFilters} filtre{activeSecondaryFilters > 1 ? 's' : ''} actif{activeSecondaryFilters > 1 ? 's' : ''}</Badge>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-3 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]">
+            <div className="space-y-1.5">
+              <Label htmlFor="dashboard-date-from" className="text-[11.5px] text-muted-foreground">Du</Label>
+              <Input
+                id="dashboard-date-from"
+                type="date"
+                value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dashboard-date-to" className="text-[11.5px] text-muted-foreground">Au</Label>
+              <Input
+                id="dashboard-date-to"
+                type="date"
+                value={dateTo}
+                onChange={(event) => setDateTo(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dashboard-status-filter" className="text-[11.5px] text-muted-foreground">Statut Chorus</Label>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger id="dashboard-status-filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_FILTER_VALUE}>Tous les statuts</SelectItem>
+                  {statusOptions.map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {getChorusRawStatusConfig(status).label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="dashboard-customer-filter" className="text-[11.5px] text-muted-foreground">Destinataire</Label>
+              <Select value={customerFilter} onValueChange={setCustomerFilter}>
+                <SelectTrigger id="dashboard-customer-filter">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={ALL_FILTER_VALUE}>Tous les destinataires</SelectItem>
+                  {customerOptions.map((customer) => (
+                    <SelectItem key={customer.id} value={customer.id}>
+                      {customer.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-wrap items-end gap-2 lg:justify-end">
+              <Button variant="outline" size="sm" onClick={applyCurrentYearPeriod}>
+                <CalendarDays className="mr-1.5 h-3.5 w-3.5" />
+                Année en cours
+              </Button>
+              <Button variant="outline" size="sm" onClick={applyLast30DaysPeriod}>
+                30 jours
+              </Button>
+              <Button variant="outline" size="sm" onClick={clearPeriod}>
+                Tout
+              </Button>
+              <Button variant="ghost" size="icon" onClick={resetFilters} aria-label="Réinitialiser les filtres">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* KPI strip */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5 stagger-children">
         <KpiCard
@@ -488,6 +723,16 @@ export default function Dashboard() {
           loading={loading}
           href="/invoices/reception"
         />
+      </section>
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-[15px] font-semibold text-foreground">Pilotage opérationnel</h2>
+          <p className="text-[12.5px] text-muted-foreground">
+            Synthèse agrégée calculée sur la période sélectionnée.
+          </p>
+        </div>
+        <DashboardPilotagePanel fromDate={dateFrom || undefined} toDate={dateTo || undefined} />
       </section>
 
       {/* Alerts + Activity */}
@@ -608,26 +853,16 @@ export default function Dashboard() {
       <section className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
         <Card className="card-elevated">
           <CardHeader className="pb-2">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <div>
-                <CardTitle className="text-[15px]">Évolution mensuelle</CardTitle>
-                <CardDescription className="text-[12.5px]">Volume de factures et valeur TTC synchronisée par mois.</CardDescription>
-              </div>
-              <div className="flex items-center gap-3 text-[11.5px] text-muted-foreground">
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-sm bg-chart-1" /> Factures
-                </span>
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-sm bg-chart-3" /> Montant TTC
-                </span>
-              </div>
+            <div>
+              <CardTitle className="text-[15px]">Évolution mensuelle (nombre + montant TTC)</CardTitle>
+              <CardDescription className="text-[12.5px]">Nombre de factures et montant TTC par mois sur la période filtrée.</CardDescription>
             </div>
           </CardHeader>
           <CardContent>
             {monthlyActivity.length > 0 ? (
-              <div className="h-[300px]">
+              <div className="h-[340px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <ComposedChart data={monthlyActivity} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
+                  <ComposedChart data={monthlyActivity} margin={{ top: 14, right: 24, left: 8, bottom: 6 }} barCategoryGap="24%">
                     <defs>
                       <linearGradient id="barFill" x1="0" y1="0" x2="0" y2="1">
                         <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.95} />
@@ -638,26 +873,26 @@ export default function Dashboard() {
                     <XAxis
                       dataKey="month"
                       stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
+                      fontSize={12}
                       tickLine={false}
-                      axisLine={false}
+                      axisLine={{ stroke: 'hsl(var(--border))' }}
                     />
                     <YAxis
                       yAxisId="left"
                       allowDecimals={false}
                       stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
+                      fontSize={12}
                       tickLine={false}
-                      axisLine={false}
+                      axisLine={{ stroke: 'hsl(var(--border))' }}
                     />
                     <YAxis
                       yAxisId="right"
                       orientation="right"
-                      width={86}
+                      width={112}
                       stroke="hsl(var(--muted-foreground))"
-                      fontSize={11}
+                      fontSize={12}
                       tickLine={false}
-                      axisLine={false}
+                      axisLine={{ stroke: 'hsl(var(--border))' }}
                       tickFormatter={(value) => formatCurrency(Number(value))}
                     />
                     <Tooltip
@@ -675,8 +910,8 @@ export default function Dashboard() {
                           : [`${value} facture(s)`, 'Factures'];
                       }}
                     />
-                    <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" />
-                    <Bar yAxisId="left" dataKey="count" name="Factures" fill="url(#barFill)" radius={[6, 6, 0, 0]} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar yAxisId="left" dataKey="count" name="Factures" fill="url(#barFill)" maxBarSize={72} radius={[6, 6, 0, 0]} />
                     <Line
                       yAxisId="right"
                       type="monotone"
@@ -684,8 +919,8 @@ export default function Dashboard() {
                       name="Montant TTC"
                       stroke="hsl(var(--chart-3))"
                       strokeWidth={2.5}
-                      dot={{ r: 3, strokeWidth: 0, fill: 'hsl(var(--chart-3))' }}
-                      activeDot={{ r: 5, strokeWidth: 0 }}
+                      dot={{ r: 4, strokeWidth: 2, stroke: 'hsl(var(--chart-3))', fill: 'hsl(var(--card))' }}
+                      activeDot={{ r: 5, strokeWidth: 2, stroke: 'hsl(var(--chart-3))', fill: 'hsl(var(--card))' }}
                     />
                   </ComposedChart>
                 </ResponsiveContainer>

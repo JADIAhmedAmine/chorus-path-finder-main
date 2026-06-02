@@ -334,6 +334,16 @@ def _recycle_audit_fields(
     return _compact_audit_fields({
         "chorusId": _audit_value(chorus_id, max_length=80),
         "customerCode": _audit_text(_nested_value(payload, "destinataire", "codeDestinataire"), max_length=32),
+        "customerServiceCode": _audit_text(_nested_value(payload, "destinataire", "codeServiceExecutant"), max_length=64),
+        "currentUserId": _audit_value(payload.get("idUtilisateurCourant"), max_length=80),
+        "currency": _audit_text(_nested_value(payload, "reference", "deviseFacture"), max_length=8),
+        "paymentMode": _audit_text(_nested_value(payload, "reference", "modePaiement"), max_length=32),
+        "invoiceType": _audit_text(_nested_value(payload, "reference", "typeFacture"), max_length=32),
+        "vatType": _audit_text(_nested_value(payload, "reference", "typeTva"), max_length=40),
+        "purchaseOrderNumber": _audit_text(_nested_value(payload, "reference", "numeroBonCommande"), max_length=80),
+        "marketNumber": _audit_text(_nested_value(payload, "reference", "numeroMarche"), max_length=80),
+        "originalInvoiceNumber": _audit_text(_nested_value(payload, "reference", "numeroFactureOrigine"), max_length=80),
+        "vatExemptionReason": _audit_text(_nested_value(payload, "reference", "motifExonerationTva"), max_length=120),
         "comment": _audit_text(payload.get("commentaire"), max_length=240),
     })
 
