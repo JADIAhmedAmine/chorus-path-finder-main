@@ -47,17 +47,39 @@ def _resolve_tenant_id(explicit: Optional[str]) -> str:
     return load_database_settings().default_tenant_id
 
 
+def _user_tenant_id(user: dict[str, Any]) -> str:
+    raw_tenant_id = user.get("tenantId") or user.get("tenant_id")
+    if isinstance(raw_tenant_id, str) and raw_tenant_id.strip():
+        return raw_tenant_id.strip()
+    return load_database_settings().default_tenant_id
+
+
+def _resolve_tenant_id_for_user(explicit: Optional[str], user: dict[str, Any]) -> str:
+    if user.get("roleCode") == "ADMINISTRATEUR":
+        return _resolve_tenant_id(explicit)
+
+    user_tenant_id = _user_tenant_id(user)
+    requested_tenant_id = explicit.strip() if explicit and explicit.strip() else user_tenant_id
+    if requested_tenant_id != user_tenant_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Accès interdit à ce tenant.",
+        )
+    return requested_tenant_id
+
+
 @router.get("/suppliers", response_model=PaginatedSuppliers)
 def list_suppliers_endpoint(
     tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
     active_only: bool = Query(default=True, alias="activeOnly"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=100, ge=1, le=500, alias="pageSize"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> PaginatedSuppliers:
     result = repositories.list_suppliers(
         session,
-        tenant_id=_resolve_tenant_id(tenant_id),
+        tenant_id=_resolve_tenant_id_for_user(tenant_id, user),
         active_only=active_only,
         page=page,
         page_size=page_size,
@@ -74,11 +96,12 @@ def list_suppliers_endpoint(
 def list_public_customers_endpoint(
     tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
     active_only: bool = Query(default=True, alias="activeOnly"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> list[PublicCustomerOut]:
     items = repositories.list_public_customers(
         session,
-        tenant_id=_resolve_tenant_id(tenant_id),
+        tenant_id=_resolve_tenant_id_for_user(tenant_id, user),
         active_only=active_only,
     )
     return [PublicCustomerOut.model_validate(item) for item in items]
@@ -88,11 +111,12 @@ def list_public_customers_endpoint(
 def list_public_services_endpoint(
     tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
     public_customer_id: Optional[str] = Query(default=None, alias="publicCustomerId"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> list[PublicServiceOut]:
     items = repositories.list_public_services(
         session,
-        tenant_id=_resolve_tenant_id(tenant_id),
+        tenant_id=_resolve_tenant_id_for_user(tenant_id, user),
         public_customer_id=public_customer_id,
     )
     return [PublicServiceOut.model_validate(item) for item in items]
@@ -107,11 +131,12 @@ def list_invoices_endpoint(
     status_chorus: Optional[str] = Query(default=None, alias="statusChorus"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=500, alias="pageSize"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> PaginatedInvoices:
     result = repositories.list_invoices(
         session,
-        tenant_id=_resolve_tenant_id(tenant_id),
+        tenant_id=_resolve_tenant_id_for_user(tenant_id, user),
         supplier_id=supplier_id,
         public_customer_id=public_customer_id,
         status_internal=status_internal,
@@ -167,9 +192,10 @@ def dashboard_summary_endpoint(
     from_date: Optional[str] = Query(default=None, alias="from"),
     to_date: Optional[str] = Query(default=None, alias="to"),
     audit_window: int = Query(default=200, ge=1, le=1000, alias="auditWindow"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> dict[str, Any]:
-    resolved_tenant = _resolve_tenant_id(tenant_id)
+    resolved_tenant = _resolve_tenant_id_for_user(tenant_id, user)
     period_from = _parse_iso_date(from_date)
     period_to = _parse_iso_date(to_date)
 
@@ -201,11 +227,12 @@ def list_sync_runs_endpoint(
     tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
     entity: Optional[str] = Query(default=None),
     limit: int = Query(default=25, ge=1, le=200),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> list[SyncRunOut]:
     runs = repositories.list_recent_sync_runs(
         session,
-        tenant_id=_resolve_tenant_id(tenant_id),
+        tenant_id=_resolve_tenant_id_for_user(tenant_id, user),
         entity=entity,
         limit=limit,
     )
@@ -215,9 +242,10 @@ def list_sync_runs_endpoint(
 @router.get("/tenant/current")
 def get_current_tenant_endpoint(
     tenant_id: Optional[str] = Query(default=None, alias="tenantId"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> dict[str, Any]:
-    resolved_tenant_id = _resolve_tenant_id(tenant_id)
+    resolved_tenant_id = _resolve_tenant_id_for_user(tenant_id, user)
     tenant = session.scalar(select(Tenant).where(Tenant.id == resolved_tenant_id))
     if tenant is None:
         return {
@@ -263,9 +291,11 @@ def get_current_user_endpoint(
 @router.post("/sync/suppliers", response_model=SyncRunOut)
 def trigger_sync_suppliers(
     body: Optional[SyncTriggerRequest] = None,
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> SyncRunOut:
     body = body or SyncTriggerRequest()
+    tenant_id = _resolve_tenant_id_for_user(body.tenant_id, user)
     settings = load_chorus_settings(environment_override=body.environment)
     client = ChorusClient(settings)
     try:
@@ -273,7 +303,7 @@ def trigger_sync_suppliers(
             session,
             settings=settings,
             client=client,
-            tenant_id=_resolve_tenant_id(body.tenant_id),
+            tenant_id=tenant_id,
             trigger="api",
         )
     except Exception as error:  # noqa: BLE001
@@ -325,11 +355,12 @@ def _resolve_supplier_ids_to_sync(
 @router.post("/sync/invoices", response_model=list[SyncRunOut])
 def trigger_sync_invoices(
     body: Optional[SyncTriggerRequest] = None,
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> list[SyncRunOut]:
     body = body or SyncTriggerRequest()
     settings = load_chorus_settings(environment_override=body.environment)
-    tenant_id = _resolve_tenant_id(body.tenant_id)
+    tenant_id = _resolve_tenant_id_for_user(body.tenant_id, user)
 
     supplier_ids = _resolve_supplier_ids_to_sync(
         session,
@@ -371,12 +402,13 @@ def trigger_sync_invoices(
 @router.post("/sync/all", response_model=dict[str, SyncRunOut])
 def trigger_sync_all(
     body: Optional[SyncTriggerRequest] = None,
+    user: dict[str, Any] = Depends(get_current_auth_user),
     session: Session = Depends(fastapi_session),
 ) -> dict[str, SyncRunOut]:
     body = body or SyncTriggerRequest()
     settings = load_chorus_settings(environment_override=body.environment)
     client = ChorusClient(settings)
-    tenant_id = _resolve_tenant_id(body.tenant_id)
+    tenant_id = _resolve_tenant_id_for_user(body.tenant_id, user)
 
     response: dict[str, Any] = {}
     try:

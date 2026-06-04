@@ -80,6 +80,22 @@ class FakeChorusClient:
             },
         )
 
+    def resolve_attachment_type_code(
+        self,
+        attachment_type: str,
+        *,
+        type_objet: str = "FACTURE",
+        code_langue: str = "fr",
+    ) -> str:
+        self.resolved_attachment_types.append(
+            {
+                "attachment_type": attachment_type,
+                "type_objet": type_objet,
+                "code_langue": code_langue,
+            }
+        )
+        return attachment_type
+
     def submit_invoice(self, payload: dict[str, object]) -> dict[str, str]:
         self.submitted_payload = payload
         return {
@@ -412,7 +428,7 @@ class SoumissionFactureTest(unittest.TestCase):
 
         self.assertEqual(
             result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
-            "18",
+            "BORDEREAU_SUIVI_VALIDATION",
         )
         self.assertEqual(
             fake_client.resolved_attachment_types[0],
@@ -481,7 +497,7 @@ class SoumissionFactureTest(unittest.TestCase):
 
         self.assertEqual(
             result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
-            "19",
+            "BL",
         )
 
     def test_submit_prepared_payload_forces_vat_type_to_debit(self) -> None:

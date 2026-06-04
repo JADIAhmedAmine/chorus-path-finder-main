@@ -83,8 +83,11 @@ http://localhost:8081
 
 ### Backend Python local
 
+Le backend nécessite Python 3.12 ou plus. Docker et la CI utilisent Python 3.12,
+notamment pour la syntaxe Python moderne utilisée dans les modules DB.
+
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 python scripts/chorus_submit_server.py
@@ -240,14 +243,26 @@ chorusPilot.gigalis.local -> 192.168.150.50
 
 ## Authentification
 
-L'application utilise actuellement un compte applicatif partagé côté serveur.
+L'application utilise des utilisateurs applicatifs chargés côté serveur. En
+priorité, l'API lit `config/auth-users.json` si ce fichier local existe. Ce
+fichier est ignoré par Git et doit contenir uniquement les comptes réels du
+serveur. Un modèle fictif est fourni dans `config/auth-users.example.json`.
+
+Pour initialiser un fichier local :
+
+```bash
+cp config/auth-users.example.json config/auth-users.json
+```
+
+Si `config/auth-users.json` n'existe pas, l'application peut encore utiliser un
+compte unique issu des variables `.env.local`.
 
 Variables à configurer dans `.env.local` :
 
 ```env
 APP_AUTH_EMAIL=admin@ton-domaine.fr
-APP_AUTH_PASSWORD_HASH: set this in your local .env file
-APP_AUTH_JWT_SECRET: set this in your local .env file
+APP_AUTH_PASSWORD_HASH=set this in your local .env file
+APP_AUTH_JWT_SECRET=set this in your local .env file
 APP_AUTH_TOKEN_TTL_SECONDS=43200
 ```
 
@@ -259,10 +274,10 @@ python -c "import bcrypt; print(bcrypt.hashpw(b'TON_MOT_DE_PASSE', bcrypt.gensal
 
 Usage multi-utilisateurs actuel :
 
-- plusieurs personnes peuvent utiliser le même compte admin ;
-- elles voient et modifient les mêmes données ;
-- l'application ne distingue pas encore les actions par utilisateur réel ;
-- une vraie séparation par comptes nécessite une table `users` et une évolution de `/api/auth/login`.
+- plusieurs utilisateurs peuvent être déclarés dans `config/auth-users.json` ;
+- les rôles serveur limitent les actions sensibles (`AUDITEUR`, `DEPOSANT`, `GESTIONNAIRE`, `ADMINISTRATEUR`) ;
+- les données restent principalement mono-tenant par défaut ;
+- pour un multi-tenant strict, chaque utilisateur doit porter le bon `tenantId`.
 
 ## Configuration Chorus
 
@@ -424,6 +439,12 @@ chorus_annuaire_data
 est monté côté API et côté nginx pour partager les fichiers annuaire.
 
 ## Tests et commandes utiles
+
+Pré-requis backend :
+
+```bash
+python3.12 --version
+```
 
 Installer les dépendances frontend :
 

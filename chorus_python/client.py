@@ -5,9 +5,11 @@ import re
 from dataclasses import dataclass
 from decimal import Decimal
 import json
+import logging
 from pathlib import Path
 from typing import Any
 import unicodedata
+from urllib.parse import urlparse
 
 import requests
 
@@ -48,6 +50,28 @@ BASE64_DEBUG_KEY_PARTS = (
     "piecejointefichier",
 )
 
+SENSITIVE_LOG_KEY_PARTS = (
+    *SENSITIVE_DEBUG_KEY_PARTS,
+    "account",
+    "adresse",
+    "address",
+    "cpro",
+    "destinataire",
+    "email",
+    "fournisseur",
+    "idcourant",
+    "iddestinataire",
+    "idfournisseur",
+    "idutilisateur",
+    "identifiant",
+    "invoice",
+    "mail",
+    "numero",
+    "siret",
+)
+
+logger = logging.getLogger(__name__)
+
 
 def join_url(base_url: str, path: str) -> str:
     if not path:
@@ -84,6 +108,120 @@ def sanitize_debug_value(value: Any, key: str | None = None) -> Any:
 def sanitize_debug_payload(payload: dict[str, Any]) -> dict[str, Any]:
     sanitized = sanitize_debug_value(payload)
     return sanitized if isinstance(sanitized, dict) else {}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on", "oui"}
+
+
+def _debug_payload_logging_enabled() -> bool:
+    return _env_bool("CHORUS_DEBUG_LOG_PAYLOADS") or _env_bool("CHORUS_DEBUG_PRINT_RESPONSE")
+
+
+def _safe_endpoint(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url[:120]
+    endpoint = parsed.path or url
+    return endpoint[:120]
+
+
+def _mask_log_text(value: str) -> str:
+    masked = re.sub(r"[\w.+-]+@[\w.-]+\.\w+", "[email masque]", value)
+    masked = re.sub(r"\d{9,}", lambda match: f"{match.group(0)[:2]}…{match.group(0)[-2:]}", masked)
+    return masked
+
+
+def _sanitize_log_value(value: Any, key: str | None = None) -> Any:
+    normalized_key = _normalized_debug_key(key)
+    if normalized_key and any(part in normalized_key for part in SENSITIVE_LOG_KEY_PARTS):
+        return "[masque]"
+
+    if isinstance(value, dict):
+        return {
+            item_key: _sanitize_log_value(item_value, str(item_key))
+            for item_key, item_value in list(value.items())[:20]
+        }
+
+    if isinstance(value, list):
+        items = [_sanitize_log_value(item) for item in value[:10]]
+        if len(value) > 10:
+            items.append(f"[{len(value) - 10} elements masques]")
+        return items
+
+    if isinstance(value, str):
+        if normalized_key and any(part in normalized_key for part in BASE64_DEBUG_KEY_PARTS):
+            return f"[base64 masque, {len(value)} caracteres]"
+        masked = _mask_log_text(value)
+        return masked if len(masked) <= 160 else f"{masked[:157]}..."
+
+    return value
+
+
+def _debug_excerpt(value: Any, *, max_chars: int = 800) -> str:
+    try:
+        configured = int(os.environ.get("CHORUS_DEBUG_LOG_MAX_CHARS", str(max_chars)))
+    except ValueError:
+        configured = max_chars
+    limit = max(80, min(configured, 1200))
+
+    try:
+        serialized = json.dumps(
+            _sanitize_log_value(value),
+            ensure_ascii=False,
+            indent=2,
+            default=str,
+        )
+    except (TypeError, ValueError):
+        serialized = _mask_log_text(repr(value))
+
+    return serialized if len(serialized) <= limit else f"{serialized[:limit]}... [tronque]"
+
+
+def _summary_log_value(value: Any) -> Any:
+    if isinstance(value, str):
+        masked = _mask_log_text(value.strip())
+        return masked if len(masked) <= 120 else f"{masked[:117]}..."
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return _mask_log_text(str(value))
+    return value
+
+
+def _response_log_summary(body: Any) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        return {}
+
+    summary_keys = (
+        "codeRetour",
+        "libelle",
+        "pieceJointeId",
+        "idPieceJointe",
+        "idFacture",
+        "identifiantFactureCPP",
+        "numeroFluxDepot",
+        "dateDepot",
+    )
+    summary = {
+        key: _summary_log_value(body.get(key))
+        for key in summary_keys
+        if body.get(key) is not None
+    }
+
+    parametres_retour = body.get("parametresRetour")
+    if isinstance(parametres_retour, dict):
+        page_summary = {
+            key: parametres_retour.get(key)
+            for key in ("total", "pageEnCours", "nombreResultats")
+            if parametres_retour.get(key) is not None
+        }
+        if page_summary:
+            summary["parametresRetour"] = page_summary
+
+    return summary
 
 
 def parse_rate_percent(label: str | None) -> Decimal | None:
@@ -181,74 +319,40 @@ class ChorusClient:
         return sanitize_debug_payload(payload)
 
     def _print_post_debug(self, *, label: str, url: str, payload: dict[str, Any]) -> None:
-        print(f"\n[debug] POST Chorus - {label}", flush=True)
-        print(f"[debug] URL: {url}", flush=True)
-        print("[debug] Body:", flush=True)
-        print(
-            json.dumps(
-                self._sanitize_debug_payload(payload),
-                ensure_ascii=False,
-                indent=2,
-            ),
-            flush=True,
-        )
+        endpoint = _safe_endpoint(url)
+        logger.info("POST Chorus: label=%s endpoint=%s", label, endpoint)
+        if _debug_payload_logging_enabled():
+            logger.debug(
+                "POST Chorus payload excerpt: label=%s endpoint=%s body=%s",
+                label,
+                endpoint,
+                _debug_excerpt(payload),
+            )
 
     def _print_post_response_debug(
         self,
         *,
         label: str,
         status_code: int,
+        url: str | None = None,
         body: Any = None,
     ) -> None:
-        print(f"[debug] Réponse Chorus - {label}: HTTP {status_code}", flush=True)
-
-        if isinstance(body, dict):
-            code_retour = body.get("codeRetour")
-            libelle = body.get("libelle")
-            if code_retour is not None or libelle is not None:
-                print(
-                    f"[debug] codeRetour={code_retour} libelle={libelle}",
-                    flush=True,
-                )
-            parametres_retour = body.get("parametresRetour")
-            if isinstance(parametres_retour, dict):
-                summary = {
-                    key: parametres_retour.get(key)
-                    for key in ("total", "pageEnCours", "nombreResultats")
-                    if parametres_retour.get(key) is not None
-                }
-                if summary:
-                    print(f"[debug] parametresRetour: {summary}", flush=True)
-
-        if body is None or os.environ.get("CHORUS_DEBUG_PRINT_RESPONSE", "true").strip().lower() in {"0", "false", "no", "off"}:
-            return
-
-        try:
-            serialized = json.dumps(
-                self._sanitize_debug_payload(body) if isinstance(body, dict) else body,
-                ensure_ascii=False,
-                indent=2,
-                default=str,
+        endpoint = _safe_endpoint(url or "")
+        summary = _response_log_summary(body)
+        logger.info(
+            "Réponse Chorus: label=%s endpoint=%s http=%s summary=%s",
+            label,
+            endpoint,
+            status_code,
+            summary or "{}",
+        )
+        if body is not None and _debug_payload_logging_enabled():
+            logger.debug(
+                "Réponse Chorus excerpt: label=%s endpoint=%s body=%s",
+                label,
+                endpoint,
+                _debug_excerpt(body),
             )
-        except (TypeError, ValueError):
-            serialized = repr(body)
-
-        max_chars_raw = os.environ.get("CHORUS_DEBUG_RESPONSE_MAX_CHARS", "8000")
-        try:
-            max_chars = int(max_chars_raw)
-        except ValueError:
-            max_chars = 8000
-
-        print("[debug] Response body:", flush=True)
-        if max_chars > 0 and len(serialized) > max_chars:
-            print(serialized[:max_chars], flush=True)
-            print(
-                f"[debug] ... (tronqué à {max_chars} caractères sur {len(serialized)}; "
-                f"CHORUS_DEBUG_RESPONSE_MAX_CHARS=0 pour désactiver la troncature)",
-                flush=True,
-            )
-        else:
-            print(serialized, flush=True)
 
     def fetch_oauth_token_payload(self) -> dict[str, Any]:
         if self._access_token_payload:
@@ -276,6 +380,7 @@ class ChorusClient:
         )
         self._print_post_response_debug(
             label="Récupération du token OAuth2",
+            url=self.settings.token_url,
             status_code=response.status_code,
         )
 
@@ -336,6 +441,7 @@ class ChorusClient:
 
         self._print_post_response_debug(
             label=label,
+            url=url,
             status_code=response.status_code,
             body=body,
         )

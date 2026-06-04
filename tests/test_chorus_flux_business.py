@@ -222,6 +222,7 @@ class BusinessRouteTests(unittest.TestCase):
         self._orig_cfg = routes.load_supplier_config
         self._orig_syntaxes = routes.recuperer_syntaxe_flux
         self._orig_deposer = routes.deposer_flux_facture
+        self._orig_lookup = routes._try_annuaire_lookup
         routes.load_chorus_settings = _fake_settings
         routes.load_supplier_config = lambda env=None: dict(ALLOWLIST)
         self.client = TestClient(server.app)
@@ -232,6 +233,7 @@ class BusinessRouteTests(unittest.TestCase):
         routes.load_supplier_config = self._orig_cfg
         routes.recuperer_syntaxe_flux = self._orig_syntaxes
         routes.deposer_flux_facture = self._orig_deposer
+        routes._try_annuaire_lookup = self._orig_lookup
 
     def test_business_validate_route_blocks(self) -> None:
         r = self.client.post(
@@ -270,6 +272,24 @@ class BusinessRouteTests(unittest.TestCase):
         fields = {s["field"] for s in body["suggestions"]}
         self.assertIn("AccountingSupplierParty.Party.PostalAddress", fields)
         self.assertIn("AccountingCustomerParty.Party.PostalAddress", fields)
+
+    def test_prepare_correction_awaits_annuaire_lookup(self) -> None:
+        async def _fake_lookup(file_bytes, filename, detected):
+            self.assertTrue(file_bytes)
+            self.assertEqual(filename, "f.xml")
+            self.assertEqual(detected["detected_file_type"], "UBL_INVOICE")
+            return {"11000201100044": {"active": True}}
+
+        routes._try_annuaire_lookup = _fake_lookup
+        r = self.client.post(
+            "/api/chorus/flux/prepare-correction",
+            files={"file": ("f.xml", ubl(), "application/xml")},
+        )
+        body = r.json()
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(body["success"])
+        fields = {s["field"] for s in body["suggestions"]}
+        self.assertNotIn("AccountingCustomerParty.Party.PartyIdentification.ID", fields)
 
 
 if __name__ == "__main__":
