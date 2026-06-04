@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
+import { InvoiceStatusBadge } from '@/components/chorus/InvoiceStatusBadge';
 import type { ReceptionInvoice } from '@/types/chorus';
 import { InvoiceDetailPanel } from '@/pages/ReceptionProcessing';
 
@@ -18,7 +21,11 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange }: InvoiceDeta
         side="right"
         className="w-full overflow-y-auto sm:max-w-2xl xl:max-w-3xl"
       >
-        <SheetHeader className="space-y-1.5 pb-4">
+        <SheetHeader className="space-y-2 pb-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <InvoiceContextBadge context="reception" />
+            {invoice?.statutFacture && <InvoiceStatusBadge status={invoice.statutFacture} />}
+          </div>
           <SheetTitle className="flex items-center gap-2 text-base">
             Aperçu facture
             {invoice?.numeroFacture && (
@@ -35,6 +42,7 @@ export function InvoiceDetailDrawer({ invoice, open, onOpenChange }: InvoiceDeta
         {invoice && (
           <>
             <InvoiceDetailPanel invoice={invoice} />
+            <Separator className="mt-4" />
             <div className="mt-4 flex justify-end">
               <Button variant="outline" size="sm" asChild>
                 <Link to={`/invoices/reception/${invoice.identifiantFactureCPP ?? ''}`}>

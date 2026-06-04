@@ -44,6 +44,8 @@ import {
 } from '@/lib/queries/db';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
 import { ChorusStatusBadge } from '@/components/chorus/ChorusStatusBadge';
+import { InvoiceActionGuide } from '@/components/chorus/InvoiceActionGuide';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
 import { InvoiceDetailDrawer } from '@/components/chorus/InvoiceDetailDrawer';
 import { BulkProgress } from '@/components/common/BulkProgress';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -59,6 +61,7 @@ import type {
   ReceptionInvoiceAttachment,
 } from '@/types/chorus';
 import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
+import { toDisplayInvoiceFromReception } from '@/lib/chorus/invoiceDisplay';
 
 const BULK_HINT_PLACEHOLDER = '8424327\n8424328\n8424329';
 const CONSULT_CHUNK_SIZE = 50;
@@ -2348,6 +2351,7 @@ function BulkResultsTable({
               >
                 <td className="p-3 font-mono text-xs">
                   <div>{row.identifiantFactureCPP}</div>
+                  <InvoiceContextBadge context="reception" className="mt-1" />
                   <DetailStatusBadge status={row.detailStatus} />
                 </td>
                 <td className="p-3">{f.numeroFacture ?? '—'}</td>
@@ -2443,6 +2447,7 @@ function ProcessedInvoicesTable({
               >
                 <td className="p-3 font-mono text-xs">
                   <div>{row.identifiantFactureCPP}</div>
+                  <InvoiceContextBadge context="reception" className="mt-1" />
                   <span className="mt-1 inline-flex rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
                     traitée
                   </span>
@@ -2587,10 +2592,23 @@ function ReceivedResponsesTable({
             return (
               <tr
                 key={row.identifiantFactureCPP}
-                className="border-b last:border-0 animate-fade-in-up"
+                onClick={() => onPreviewInvoice(f)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onPreviewInvoice(f);
+                  }
+                }}
+                tabIndex={0}
+                role="button"
+                aria-label={`Aperçu retour réception ${row.identifiantFactureCPP}`}
+                className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none animate-fade-in-up"
                 style={{ animationDelay }}
               >
-                <td className="p-3">{f.numeroFacture ?? '—'}</td>
+                <td className="p-3">
+                  <div>{f.numeroFacture ?? '—'}</div>
+                  <InvoiceContextBadge context="reception" className="mt-1" />
+                </td>
                 <td className="p-3 font-mono text-xs">{row.identifiantFactureCPP}</td>
                 <td className="p-3"><StatusPill value={f.statutFacture} /></td>
                 <td className="p-3">
@@ -2610,7 +2628,7 @@ function ReceivedResponsesTable({
                     {f.commentaire ?? 'Motif à analyser dans le détail'}
                   </div>
                 </td>
-                <td className="p-3">
+                <td className="p-3" onClick={(event) => event.stopPropagation()}>
                   <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
                     <Button variant="ghost" size="sm" onClick={() => onPreviewInvoice(f)}>
                       <Eye className="mr-1 h-3.5 w-3.5" /> Aperçu
@@ -2675,7 +2693,10 @@ function NotificationRowsTable({
                 className="cursor-pointer border-b last:border-0 transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none animate-fade-in-up"
                 style={{ animationDelay }}
               >
-                <td className="p-3">{f.numeroFacture ?? '—'}</td>
+                <td className="p-3">
+                  <div>{f.numeroFacture ?? '—'}</div>
+                  <InvoiceContextBadge context="reception" className="mt-1" />
+                </td>
                 <td className="p-3 font-mono text-xs">{row.identifiantFactureCPP}</td>
                 <td className="p-3"><StatusPill value={f.statutFacture} /></td>
                 <td className="p-3">
@@ -2766,8 +2787,14 @@ export function InvoiceDetailPanel({
   const overdue = isOverdue(invoice.dates.dateEcheancePaiement, invoice.statutFacture);
   const invoiceIdentifier = asPositiveInteger(identifiantFactureCPP)
     ?? asPositiveInteger(invoice.identifiantFactureCPP);
+  const displayInvoice = toDisplayInvoiceFromReception(invoice, {
+    source: 'Consultation valideur',
+    detailHref: invoiceIdentifier ? `/invoices/reception/${invoiceIdentifier}` : undefined,
+  });
   return (
     <div className="space-y-4">
+      <InvoiceActionGuide invoice={displayInvoice} />
+
       {invoice.statutFacture === 'REJETEE' && invoice.rejetTraite === false && (
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />

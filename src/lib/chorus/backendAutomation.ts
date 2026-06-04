@@ -31,6 +31,7 @@ export const RECEPTION_CONSULT_BULK_PATH = '/api/reception/consult-bulk';
 export const RECEPTION_PROCESS_PATH = '/api/reception/process';
 export const RECEPTION_COMPLETE_PATH = '/api/reception/complete';
 export const RECEPTION_DOWNLOAD_PATH = '/api/reception/download';
+export const CHORUS_INVOICE_DOWNLOAD_PATH = '/api/chorus/invoices/download';
 export const CHORUS_INVOICE_HISTORY_PATH = '/api/chorus/invoices/history';
 export const CHORUS_ANNUAIRE_SYNC_PATH = '/api/chorus/annuaire/sync';
 export const CHORUS_SIRET_INFO_PATH = '/api/chorus/siret/info';
@@ -356,6 +357,10 @@ export class ChorusBackendAutomationClient {
 
   get receptionDownloadUrl(): string {
     return resolveChorusBridgeUrl(this.config, RECEPTION_DOWNLOAD_PATH);
+  }
+
+  get invoiceDownloadUrl(): string {
+    return resolveChorusBridgeUrl(this.config, CHORUS_INVOICE_DOWNLOAD_PATH);
   }
 
   get invoiceHistoryUrl(): string {
@@ -762,7 +767,15 @@ export class ChorusBackendAutomationClient {
     };
   }
 
+  async downloadInvoice(input: ReceptionDownloadInput): Promise<ReceptionDownloadResult> {
+    return this.downloadInvoiceFromUrl(this.invoiceDownloadUrl, input);
+  }
+
   async downloadReceivedInvoice(input: ReceptionDownloadInput): Promise<ReceptionDownloadResult> {
+    return this.downloadInvoiceFromUrl(this.receptionDownloadUrl, input);
+  }
+
+  private async downloadInvoiceFromUrl(url: string, input: ReceptionDownloadInput): Promise<ReceptionDownloadResult> {
     const requestBody: Record<string, unknown> = {
       environment: this.config.environment,
       idFacture: input.idFacture,
@@ -772,7 +785,7 @@ export class ChorusBackendAutomationClient {
       requestBody.avecPiecesJointesComplementaires = input.avecPiecesJointesComplementaires;
     }
 
-    const response = await this.fetchImpl(this.receptionDownloadUrl, {
+    const response = await this.fetchImpl(url, {
       method: 'POST',
       headers: authHeaders({
         Accept: '*/*',

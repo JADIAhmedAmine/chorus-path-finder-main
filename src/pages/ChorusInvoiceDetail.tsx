@@ -15,6 +15,9 @@ import { ChorusBackendAutomationClient, ChorusBackendAutomationError } from '@/l
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { CompleteSuspendedInvoiceCard } from '@/components/chorus/CompleteSuspendedInvoiceCard';
+import { InvoiceActionGuide } from '@/components/chorus/InvoiceActionGuide';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
+import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
 import { SubmissionStateInsight } from '@/components/chorus/SubmissionStateInsight';
 import {
   dbQueryKeys,
@@ -22,6 +25,7 @@ import {
   usePublicCustomersQuery,
   useSuppliersQuery,
 } from '@/lib/queries/db';
+import { toDisplayInvoiceFromInvoice } from '@/lib/chorus/invoiceDisplay';
 import type {
   ChorusCorrectValidatorPayload,
   ChorusRecycleInvoicePayload,
@@ -349,6 +353,13 @@ export default function ChorusInvoiceDetail() {
   const raw = invoice && isRecord((invoice as { rawPayload?: unknown }).rawPayload)
     ? (invoice as { rawPayload?: Record<string, unknown> }).rawPayload
     : invoice;
+  const displayInvoice = invoice
+    ? toDisplayInvoiceFromInvoice(invoice, supplier, customer, {
+        context: 'emission',
+        source: 'Fiche émission Chorus',
+        detailHref: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
+      })
+    : null;
   const invoiceId = invoice?.id;
   const chorusPaymentRequestId = invoice ? resolveChorusPaymentRequestId(invoice, raw) : undefined;
   const chorusHistoryInvoiceId = invoice ? resolveChorusHistoryInvoiceId(invoice, raw) : undefined;
@@ -664,6 +675,7 @@ export default function ChorusInvoiceDetail() {
           <div>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-2xl font-semibold">{invoice.supplierInvoiceNumber}</h1>
+              <InvoiceContextBadge context="emission" />
               <ChorusStatusPill value={invoice.statusChorus || invoice.statusInternal} />
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -671,10 +683,15 @@ export default function ChorusInvoiceDetail() {
             </p>
           </div>
         </div>
-        <Button variant="outline" asChild>
-          <Link to="/invoices">Liste des factures</Link>
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          {displayInvoice && <InvoiceDownloadMenu invoice={displayInvoice} label="Télécharger" />}
+          <Button variant="outline" asChild>
+            <Link to="/invoices">Liste des factures</Link>
+          </Button>
+        </div>
       </div>
+
+      {displayInvoice && <InvoiceActionGuide invoice={displayInvoice} />}
 
       <SubmissionStateInsight
         state={invoice.statusChorus || invoice.statusInternal}

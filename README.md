@@ -261,10 +261,14 @@ Variables à configurer dans `.env.local` :
 
 ```env
 APP_AUTH_EMAIL=admin@ton-domaine.fr
-APP_AUTH_PASSWORD_HASH=set this in your local .env file
-APP_AUTH_JWT_SECRET=set this in your local .env file
+APP_AUTH_PASSWORD_HASH=
+APP_AUTH_JWT_SECRET=
 APP_AUTH_TOKEN_TTL_SECONDS=43200
 ```
+
+Les valeurs `APP_AUTH_PASSWORD_HASH` et `APP_AUTH_JWT_SECRET` sont laissées vides
+dans la documentation pour éviter toute confusion avec des secrets versionnés.
+Elles doivent être renseignées uniquement dans le fichier local `.env.local`.
 
 Pour générer le hash du mot de passe :
 
