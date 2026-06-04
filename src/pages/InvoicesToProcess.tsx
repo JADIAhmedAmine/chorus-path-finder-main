@@ -12,6 +12,8 @@ import { KpiCard } from '@/components/common/KpiCard';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { EmptyState } from '@/components/common/EmptyState';
 import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
+import { InvoiceOverviewDrawer } from '@/components/chorus/InvoiceOverviewDrawer';
 import { cn } from '@/lib/utils';
 import {
   getInvoiceChorusStatus,
@@ -27,6 +29,7 @@ import {
   useSyncInvoicesMutation,
   useSyncSuppliersMutation,
 } from '@/lib/queries/db';
+import { toDisplayInvoiceFromInvoice } from '@/lib/chorus/invoiceDisplay';
 import { formatCurrency, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import type { Invoice } from '@/types';
 
@@ -153,6 +156,8 @@ export default function InvoicesToProcess() {
   const [amountMin, setAmountMin] = useState('');
   const [amountMax, setAmountMax] = useState('');
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
@@ -172,6 +177,21 @@ export default function InvoicesToProcess() {
   const customerById = useMemo(
     () => new Map(customers.map((customer) => [customer.id, customer])),
     [customers],
+  );
+  const selectedDisplayInvoice = useMemo(
+    () => selectedInvoice
+      ? toDisplayInvoiceFromInvoice(
+          selectedInvoice,
+          supplierById.get(selectedInvoice.supplierOrganizationId),
+          customerById.get(selectedInvoice.publicCustomerId),
+          {
+            context: 'emission',
+            source: 'Émissions à traiter',
+            detailHref: `/invoices/chorus/${encodeURIComponent(selectedInvoice.id)}`,
+          },
+        )
+      : null,
+    [customerById, selectedInvoice, supplierById],
   );
 
   const actionableInvoices = useMemo(
@@ -536,15 +556,29 @@ export default function InvoicesToProcess() {
                   const customer = customerById.get(invoice.publicCustomerId);
                   const action = actionForStatus(invoice);
                   return (
-                    <tr key={invoice.id} className="border-b border-border/70 transition-colors last:border-0 hover:bg-primary/[0.025]">
+                    <tr
+                      key={invoice.id}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Aperçu émission à traiter ${invoice.supplierInvoiceNumber}`}
+                      onClick={() => {
+                        setSelectedInvoice(invoice);
+                        setDrawerOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedInvoice(invoice);
+                          setDrawerOpen(true);
+                        }
+                      }}
+                      className="cursor-pointer border-b border-border/70 transition-colors last:border-0 hover:bg-primary/[0.025] focus-visible:bg-primary/[0.025] focus-visible:outline-none"
+                    >
                       <td className="px-4 py-2.5 font-medium">
-                        <Link
-                          to={`/invoices/chorus/${encodeURIComponent(invoice.id)}`}
-                          className="group inline-flex items-center gap-1 text-primary hover:text-primary-hover"
-                        >
-                          {invoice.supplierInvoiceNumber}
-                          <ExternalLink className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
-                        </Link>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-primary">{invoice.supplierInvoiceNumber}</span>
+                          <InvoiceContextBadge context="emission" />
+                        </div>
                       </td>
                       <td className="px-4 py-2.5">
                         <div className="font-medium text-foreground">{supplier?.legalName || invoice.supplierChorusName || '—'}</div>
@@ -568,7 +602,7 @@ export default function InvoicesToProcess() {
                           <div className="line-clamp-2 text-[11.5px] leading-snug text-muted-foreground">{action.helper}</div>
                         </div>
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-right" onClick={(event) => event.stopPropagation()}>
                         <div className="flex justify-end gap-1.5">
                           <InvoiceDownloadMenu invoice={invoice} compact />
                           <Button variant="outline" size="sm" asChild className="h-8 px-2.5">
@@ -617,6 +651,11 @@ export default function InvoicesToProcess() {
           </div>
         </CardContent>
       </Card>
+      <InvoiceOverviewDrawer
+        invoice={selectedDisplayInvoice}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </div>
   );
 }

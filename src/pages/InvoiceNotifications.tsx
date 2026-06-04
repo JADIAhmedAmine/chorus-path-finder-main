@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Bell, Clock3, ExternalLink, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ChorusStatusBadge } from '@/components/chorus/ChorusStatusBadge';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
+import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
+import { InvoiceOverviewDrawer } from '@/components/chorus/InvoiceOverviewDrawer';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SkeletonTable } from '@/components/common/LoadingSkeleton';
@@ -28,7 +31,8 @@ import {
   useSyncInvoicesMutation,
   useSyncSuppliersMutation,
 } from '@/lib/queries/db';
-import { formatCurrency, formatDateTime } from '@/lib/status-utils';
+import { toDisplayInvoiceFromInvoice, type InvoiceDisplayModel } from '@/lib/chorus/invoiceDisplay';
+import { formatCurrency, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import type { Invoice, InvoiceStatusHistory, PublicCustomer, SupplierOrganization } from '@/types';
 
 type NotificationScope = 'emission' | 'reception';
@@ -373,11 +377,12 @@ function buildNotificationRows(
 }
 
 export default function InvoiceNotificationsPage() {
-  const navigate = useNavigate();
   const [scope, setScope] = useState<NotificationScope>('emission');
   const [filters, setFilters] = useState<NotificationFilters>(EMPTY_FILTERS);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [selectedInvoice, setSelectedInvoice] = useState<InvoiceDisplayModel | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
@@ -497,6 +502,23 @@ export default function InvoiceNotificationsPage() {
     } catch (refreshError) {
       setSyncError(refreshError instanceof Error ? refreshError.message : 'Synchronisation impossible.');
     }
+  }
+
+  function openNotificationPreview(row: NotificationRow, detailPath: string) {
+    const context = scope === 'reception' ? 'reception' : 'emission';
+    const base = toDisplayInvoiceFromInvoice(row.invoice, row.supplier, row.customer, {
+      context,
+      source: `Notifications · ${sourceLabel(row.source)}`,
+      detailHref: detailPath,
+    });
+    setSelectedInvoice({
+      ...base,
+      status: row.status,
+      statusLabel: getChorusRawStatusConfig(row.status).label,
+      reason: row.motif,
+      lastUpdated: row.eventAt,
+    });
+    setDrawerOpen(true);
   }
 
   return (
@@ -738,17 +760,20 @@ export default function InvoiceNotificationsPage() {
                         role="button"
                         tabIndex={0}
                         className="cursor-pointer border-b transition-colors last:border-0 hover:bg-muted/30 focus:bg-muted/30 focus:outline-none"
-                        onClick={() => navigate(detailPath)}
+                        onClick={() => openNotificationPreview(row, detailPath)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
-                            navigate(detailPath);
+                            openNotificationPreview(row, detailPath);
                           }
                         }}
                       >
                         <td className="p-3">
-                          <div className="font-medium text-primary">
-                            {invoice.supplierInvoiceNumber || invoice.chorusInvoiceNumber || invoice.id}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-primary">
+                              {invoice.supplierInvoiceNumber || invoice.chorusInvoiceNumber || invoice.id}
+                            </span>
+                            <InvoiceContextBadge context={scope === 'reception' ? 'reception' : 'emission'} />
                           </div>
                           <div className="text-xs text-muted-foreground">
                             {invoice.chorusInvoiceNumber ? `Chorus ${invoice.chorusInvoiceNumber}` : `ID ${invoice.id}`}
@@ -788,12 +813,15 @@ export default function InvoiceNotificationsPage() {
                         <td className="p-3 text-right font-medium">{formatCurrency(invoice.totalTtc)}</td>
                         <td className="p-3 text-xs text-muted-foreground">{sourceLabel(row.source)}</td>
                         <td className="p-3 text-right" onClick={(event) => event.stopPropagation()}>
-                          <Button variant="ghost" size="sm" asChild>
-                            <Link to={detailPath}>
-                              <ExternalLink className="mr-1 h-3.5 w-3.5" />
-                              Afficher la fiche complète
-                            </Link>
-                          </Button>
+                          <div className="flex justify-end gap-1.5">
+                            <InvoiceDownloadMenu invoice={invoice} compact />
+                            <Button variant="ghost" size="sm" asChild>
+                              <Link to={detailPath}>
+                                <ExternalLink className="mr-1 h-3.5 w-3.5" />
+                                Afficher la fiche complète
+                              </Link>
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -819,6 +847,11 @@ export default function InvoiceNotificationsPage() {
           )}
         </CardContent>
       </Card>
+      <InvoiceOverviewDrawer
+        invoice={selectedInvoice}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </div>
   );
 }

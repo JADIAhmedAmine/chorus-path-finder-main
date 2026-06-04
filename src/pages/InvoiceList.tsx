@@ -12,7 +12,6 @@ import {
   ChevronRight,
   Download,
   Euro,
-  ExternalLink,
   FileText,
   Loader2,
   MessageSquareWarning,
@@ -33,11 +32,14 @@ import {
 import { SyncRunProgress, SyncRunSummary } from '@/components/common/SyncRunSummary';
 import { SubmissionStateOverview } from '@/components/chorus/SubmissionStateOverview';
 import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
+import { InvoiceOverviewDrawer } from '@/components/chorus/InvoiceOverviewDrawer';
 import { PageHeader } from '@/components/common/PageHeader';
 import { KpiCard } from '@/components/common/KpiCard';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { EmptyState } from '@/components/common/EmptyState';
 import { saveChorusLiveInvoiceDetails } from '@/lib/chorus/liveInvoiceDetails';
+import { toDisplayInvoiceFromInvoice } from '@/lib/chorus/invoiceDisplay';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import { isPaidChorusStatus, isRejectedChorusStatus } from '@/lib/chorus/actionableInvoices';
 import { cn } from '@/lib/utils';
@@ -207,6 +209,8 @@ export default function InvoiceList() {
   const [syncError, setSyncError] = useState<string | null>(null);
   const [chorusSearchForm, setChorusSearchForm] = useState<ChorusInvoiceSearchForm>(DEFAULT_CHORUS_INVOICE_SEARCH_FORM);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
@@ -234,6 +238,21 @@ export default function InvoiceList() {
   const customerById = useMemo(
     () => new Map(customers.map((customer) => [customer.id, customer])),
     [customers],
+  );
+  const selectedDisplayInvoice = useMemo(
+    () => selectedInvoice
+      ? toDisplayInvoiceFromInvoice(
+          selectedInvoice,
+          supplierById.get(selectedInvoice.supplierOrganizationId),
+          customerById.get(selectedInvoice.publicCustomerId),
+          {
+            context: 'emission',
+            source: 'Suivi émission',
+            detailHref: `/invoices/chorus/${encodeURIComponent(selectedInvoice.id)}`,
+          },
+        )
+      : null,
+    [customerById, selectedInvoice, supplierById],
   );
 
   const filtered = useMemo(() => {
@@ -655,18 +674,27 @@ export default function InvoiceList() {
                   return (
                     <tr
                       key={inv.id}
-                      className="border-b border-border/70 transition-colors last:border-0 hover:bg-primary/[0.025]"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Aperçu facture émise ${inv.supplierInvoiceNumber}`}
+                      onClick={() => {
+                        setSelectedInvoice(inv);
+                        setDrawerOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedInvoice(inv);
+                          setDrawerOpen(true);
+                        }
+                      }}
+                      className="cursor-pointer border-b border-border/70 transition-colors last:border-0 hover:bg-primary/[0.025] focus-visible:bg-primary/[0.025] focus-visible:outline-none"
                     >
                       <td className="px-4 py-2.5">
-                        <Link
-                          to={`/invoices/chorus/${encodeURIComponent(inv.id)}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="group inline-flex items-center gap-1 font-medium text-primary hover:text-primary-hover"
-                        >
-                          {inv.supplierInvoiceNumber}
-                          <ExternalLink className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-100" />
-                        </Link>
+                        <div className="flex flex-col gap-1">
+                          <span className="font-medium text-primary">{inv.supplierInvoiceNumber}</span>
+                          <InvoiceContextBadge context="emission" />
+                        </div>
                       </td>
                       <td className="px-4 py-2.5">
                         <div className="font-medium text-foreground">{supplier?.legalName || '—'}</div>
@@ -692,7 +720,7 @@ export default function InvoiceList() {
                         </div>
                       </td>
                       <td className="hidden px-4 py-2.5 text-[11.5px] text-muted-foreground lg:table-cell">{formatDate(inv.updatedAt)}</td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-right" onClick={(event) => event.stopPropagation()}>
                         <InvoiceDownloadMenu invoice={inv} compact />
                       </td>
                     </tr>
@@ -749,6 +777,11 @@ export default function InvoiceList() {
           )}
         </CardContent>
       </Card>
+      <InvoiceOverviewDrawer
+        invoice={selectedDisplayInvoice}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </div>
   );
 }

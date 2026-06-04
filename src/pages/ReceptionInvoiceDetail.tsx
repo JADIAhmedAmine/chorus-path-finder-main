@@ -4,6 +4,7 @@ import { ArrowLeft, FileJson, History, Loader2, Receipt, RefreshCw } from 'lucid
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
 import { ProcessReceivedInvoiceCard } from '@/components/chorus/ProcessReceivedInvoiceCard';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -410,9 +411,12 @@ export default function ReceptionInvoiceDetail() {
             </p>
           </div>
         </div>
-        <Button variant="outline" asChild>
-          <Link to="/invoices/reception">Factures reçues</Link>
-        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <InvoiceDownloadMenu invoice={displayedInvoice} label="Télécharger" />
+          <Button variant="outline" asChild>
+            <Link to="/invoices/reception">Factures reçues</Link>
+          </Button>
+        </div>
       </div>
 
       <Alert>

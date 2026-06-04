@@ -1,5 +1,15 @@
 import type { Invoice } from '@/types';
 
+export interface ChorusInvoiceDownloadTarget {
+  id?: unknown;
+  chorusId?: unknown;
+  chorusInvoiceNumber?: unknown;
+  externalReference?: unknown;
+  identifiantFactureCPP?: unknown;
+  rawPayload?: unknown;
+  raw?: unknown;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -14,8 +24,8 @@ function asPositiveInteger(value: unknown): number | null {
   return null;
 }
 
-function rawPayload(invoice: Invoice): Record<string, unknown> {
-  return isRecord(invoice.rawPayload) ? invoice.rawPayload : {};
+function field(target: ChorusInvoiceDownloadTarget, key: keyof ChorusInvoiceDownloadTarget): unknown {
+  return isRecord(target) ? target[key] : undefined;
 }
 
 /**
@@ -23,18 +33,27 @@ function rawPayload(invoice: Invoice): Record<string, unknown> {
  * Mirrors the ReceptionProcessing resolver so the download endpoint
  * can be called consistently from any invoice list.
  */
-export function resolveChorusInvoiceId(invoice: Invoice): number | null {
-  const raw = rawPayload(invoice);
+export function resolveChorusInvoiceId(invoice: Invoice | ChorusInvoiceDownloadTarget): number | null {
+  const rawCandidates = [field(invoice, 'rawPayload'), field(invoice, 'raw')]
+    .filter(isRecord);
+  const invoiceId = field(invoice, 'id');
   const candidates: unknown[] = [
-    invoice.chorusInvoiceNumber,
-    raw.identifiantFactureCPP,
-    raw.idFactureCPP,
-    raw.idFacture,
-    raw.identifiantDemandePaiementCPP,
-    raw.idDemandePaiementCPP,
-    raw.idDemandePaiement,
-    raw.identifiantDemandePaiement,
-    invoice.id.startsWith('chorus-') ? invoice.id.slice('chorus-'.length) : invoice.id,
+    field(invoice, 'chorusId'),
+    field(invoice, 'chorusInvoiceNumber'),
+    field(invoice, 'externalReference'),
+    field(invoice, 'identifiantFactureCPP'),
+    ...rawCandidates.flatMap((raw) => [
+      raw.identifiantFactureCPP,
+      raw.idFactureCPP,
+      raw.idFacture,
+      raw.identifiantDemandePaiementCPP,
+      raw.idDemandePaiementCPP,
+      raw.idDemandePaiement,
+      raw.identifiantDemandePaiement,
+    ]),
+    typeof invoiceId === 'string' && invoiceId.startsWith('chorus-')
+      ? invoiceId.slice('chorus-'.length)
+      : invoiceId,
   ];
   for (const candidate of candidates) {
     const parsed = asPositiveInteger(candidate);

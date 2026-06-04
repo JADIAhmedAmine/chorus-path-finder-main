@@ -27,11 +27,14 @@ import { KpiCard } from '@/components/common/KpiCard';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { SkeletonTable } from '@/components/common/LoadingSkeleton';
 import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
+import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
+import { InvoiceOverviewDrawer } from '@/components/chorus/InvoiceOverviewDrawer';
 import {
   useInvoicesQuery,
   usePublicCustomersQuery,
   useSuppliersQuery,
 } from '@/lib/queries/db';
+import { toDisplayInvoiceFromInvoice } from '@/lib/chorus/invoiceDisplay';
 import { isRejectedChorusStatus } from '@/lib/chorus/actionableInvoices';
 import { formatCurrency, formatDate, getChorusRawStatusConfig } from '@/lib/status-utils';
 import type { Invoice } from '@/types';
@@ -143,6 +146,8 @@ function StatusPill({ status }: { status: string }) {
 
 export default function EmissionRejectionsPage() {
   const [filters, setFilters] = useState<RejectionFilters>(EMPTY_FILTERS);
+  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const invoicesQuery = useInvoicesQuery({ pageSize: 500 });
   const suppliersQuery = useSuppliersQuery();
   const customersQuery = usePublicCustomersQuery();
@@ -154,6 +159,21 @@ export default function EmissionRejectionsPage() {
   const customersById = useMemo(
     () => new Map((customersQuery.data ?? []).map((customer) => [customer.id, customer])),
     [customersQuery.data],
+  );
+  const selectedDisplayInvoice = useMemo(
+    () => selectedInvoice
+      ? toDisplayInvoiceFromInvoice(
+          selectedInvoice,
+          suppliersById.get(selectedInvoice.supplierOrganizationId),
+          customersById.get(selectedInvoice.publicCustomerId),
+          {
+            context: 'emission',
+            source: 'Rejets / refus d’émission',
+            detailHref: `/invoices/chorus/${encodeURIComponent(selectedInvoice.id)}`,
+          },
+        )
+      : null,
+    [customersById, selectedInvoice, suppliersById],
   );
 
   const rejectionRows = useMemo(
@@ -548,20 +568,30 @@ export default function EmissionRejectionsPage() {
                 return (
                   <article
                     key={invoice.id}
-                    className="group relative overflow-hidden rounded-xl border bg-card p-4 shadow-soft transition-all hover:-translate-y-px hover:shadow-card"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Aperçu rejet d’émission ${invoice.supplierInvoiceNumber}`}
+                    onClick={() => {
+                      setSelectedInvoice(invoice);
+                      setDrawerOpen(true);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setSelectedInvoice(invoice);
+                        setDrawerOpen(true);
+                      }
+                    }}
+                    className="group relative cursor-pointer overflow-hidden rounded-xl border bg-card p-4 shadow-soft transition-all hover:-translate-y-px hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
                       {/* identity */}
                       <div className="min-w-[200px] flex-1">
-                        <div className="flex items-center gap-2">
-                          <Link
-                            to={detailHref}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="text-[15px] font-semibold text-foreground hover:text-primary"
-                          >
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-[15px] font-semibold text-foreground">
                             {invoice.supplierInvoiceNumber}
-                          </Link>
+                          </span>
+                          <InvoiceContextBadge context="emission" />
                           <StatusPill status={invoiceStatus(invoice)} />
                         </div>
                         <p className="mt-1 text-[12.5px] text-muted-foreground">
@@ -595,7 +625,7 @@ export default function EmissionRejectionsPage() {
                       </div>
 
                       {/* meta + actions */}
-                      <div className="ml-auto flex w-full max-w-[200px] flex-col items-end gap-2">
+                      <div className="ml-auto flex w-full max-w-[200px] flex-col items-end gap-2" onClick={(event) => event.stopPropagation()}>
                         <p className="text-right text-[18px] font-semibold tabular-nums leading-none">
                           {formatCurrency(invoice.totalTtc)}
                         </p>
@@ -627,6 +657,11 @@ export default function EmissionRejectionsPage() {
           )}
         </div>
       </section>
+      <InvoiceOverviewDrawer
+        invoice={selectedDisplayInvoice}
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+      />
     </div>
   );
 }
@@ -646,4 +681,3 @@ function FilterChip({ label, onClear }: { label: string; onClear: () => void }) 
     </Badge>
   );
 }
-
