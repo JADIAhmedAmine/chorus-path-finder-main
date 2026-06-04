@@ -803,8 +803,9 @@ async def handle_flux_prepare_correction(
 
     detected = detect_flux_file(file_bytes, filename)
     config = load_supplier_config()
+    annuaire_lookup = await _try_annuaire_lookup(file_bytes, filename, detected)
     business = validate_flux_business_rules(
-        file_bytes, filename, detected=detected, annuaire_lookup=_try_annuaire_lookup(), supplier_config=config,
+        file_bytes, filename, detected=detected, annuaire_lookup=annuaire_lookup, supplier_config=config,
     )["business_validation"]
     checks = business.get("checks", {})
     extracted = business.get("extracted", {})

@@ -39,7 +39,7 @@ describe('chorus storage', () => {
       clientId: '',
       clientSecret: '',
       technicalLogin: '',
-      submissionSupplierId: '160',
+      submissionSupplierId: getDefaultChorusConfig().submissionSupplierId,
     });
   });
 

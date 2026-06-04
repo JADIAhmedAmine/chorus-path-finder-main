@@ -170,7 +170,9 @@ def _address_present(parts: dict[str, str | None]) -> bool:
 def _ubl_party(wrapper: ET.Element | None) -> dict[str, Any]:
     if wrapper is None:
         return {"identifier": None, "name": None, "address_parts": {}, "address": None}
-    party = _first_descendant(wrapper, "Party") or wrapper
+    party = _first_descendant(wrapper, "Party")
+    if party is None:
+        party = wrapper
 
     identification = _first_descendant(party, "PartyIdentification")
     identifier = _text_of(_first_child(identification, "ID")) if identification is not None else None

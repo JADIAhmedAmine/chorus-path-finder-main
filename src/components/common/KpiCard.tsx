@@ -125,22 +125,16 @@ export function KpiCard({
 }: KpiCardProps) {
   const styles = TONE_STYLES[tone];
   const isInteractive = Boolean(href);
-
-  const Wrapper: any = href ? Link : 'div';
-  const wrapperProps = href ? { to: href } : {};
-
-  return (
-    <Wrapper
-      {...wrapperProps}
-      className={cn(
-        'group relative isolate overflow-hidden rounded-xl border bg-card p-5 shadow-soft',
-        'transition-all duration-200 ease-out',
-        isInteractive && 'hover:-translate-y-px hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        'animate-fade-in-up',
-        className,
-      )}
-      style={animationDelayMs ? { animationDelay: `${animationDelayMs}ms` } : undefined}
-    >
+  const cardClassName = cn(
+    'group relative isolate overflow-hidden rounded-xl border bg-card p-5 shadow-soft',
+    'transition-all duration-200 ease-out',
+    isInteractive && 'hover:-translate-y-px hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+    'animate-fade-in-up',
+    className,
+  );
+  const cardStyle = animationDelayMs ? { animationDelay: `${animationDelayMs}ms` } : undefined;
+  const content = (
+    <>
       <div className={cn('pointer-events-none absolute inset-x-0 top-0 h-24 bg-gradient-to-b', styles.accent)} />
       <div className="relative flex items-start justify-between gap-3">
         <div className="min-w-0">
@@ -175,6 +169,20 @@ export function KpiCard({
           Ouvrir <ArrowRight className="ml-1 h-3 w-3" />
         </span>
       )}
-    </Wrapper>
+    </>
+  );
+
+  if (href) {
+    return (
+      <Link to={href} className={cardClassName} style={cardStyle}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <div className={cardClassName} style={cardStyle}>
+      {content}
+    </div>
   );
 }
