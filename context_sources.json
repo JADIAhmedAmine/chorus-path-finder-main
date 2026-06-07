@@ -1,0 +1,133 @@
+{
+  "generated_at": "2026-06-07",
+  "objective_note": "The file 'chorus_research_prompt.txt' referenced by the user was NOT found in the project. The research objective was inferred from the project itself (Chorus Pilot — a Chorus Pro / PISTE invoicing & flux pilot for the French public sector). This inference is recorded transparently and should be confirmed by the user.",
+  "collection_method": "Low-volume public WebFetch/WebSearch on official sources + primary extraction from this repository's source code. No login, captcha, paywall, or anti-bot system was bypassed. robots.txt was checked for each crawled host.",
+  "robots_txt": {
+    "piste.gouv.fr": "User-agent:* Disallow: /administrator/ /api/ /bin/ /cache/ /cli/ /components/ /includes/ /installation/ /language/ /layouts/ /libraries/ /logs/ /modules/ /plugins/ /tmp/. The public page /en/api-catalog is NOT disallowed.",
+    "communaute.chorus-pro.gouv.fr": "User-agent:* Disallow: /wp-admin/ (Allow /wp-admin/admin-ajax.php). Documentation pages are allowed."
+  },
+  "official_sources": [
+    {
+      "id": "S1",
+      "label": "PISTE — portail API de l'État",
+      "url": "https://piste.gouv.fr/",
+      "type": "portal",
+      "access": "public landing; API catalog content is JavaScript-rendered and the full catalog requires authentication",
+      "extractable": "partial",
+      "notes": "PISTE replaced the legacy Chorus Pro API platform in January 2020. The former developer.aife.economie.gouv.fr host no longer resolves (consolidated into piste.gouv.fr)."
+    },
+    {
+      "id": "S2",
+      "label": "PISTE — API catalog",
+      "url": "https://piste.gouv.fr/en/api-catalog",
+      "type": "catalog",
+      "access": "public URL (HTTP 200) but list is JS-rendered; not statically extractable",
+      "extractable": "no",
+      "notes": "Marked 'not visible publicly' for endpoint-level detail."
+    },
+    {
+      "id": "S3",
+      "label": "Communauté Chorus Pro — Documentation API",
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/api/",
+      "type": "documentation",
+      "access": "public",
+      "extractable": "partial",
+      "notes": "Landing/navigation page for API service domains."
+    },
+    {
+      "id": "S4",
+      "label": "Fiche pratique — Réussir son raccordement Chorus Pro en mode API OAuth2",
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/fiche-pratique-reussir-son-raccordement-chorus-pro-en-mode-api-oauth2/",
+      "type": "documentation",
+      "access": "public",
+      "extractable": "partial",
+      "notes": "Confirms PISTE/OAuth2 since 01/2020. Detailed parameters are inside a downloadable PDF (Fiche_pratique_Reussir-son-raccordement-Chorus-Pro-en-mode-API-Oauth2-2022.pdf) — not parsed here."
+    },
+    {
+      "id": "S5",
+      "label": "Communauté Chorus Pro — Rechercher une ou plusieurs factures",
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/rechercher-une-ou-plusieurs-factures/",
+      "type": "documentation",
+      "access": "public",
+      "extractable": "yes",
+      "notes": "Search criteria + invoice statuses (Brouillon, Rejetée, À recycler, Suspendue), PDF/XML/CSV export, 2-year retention then Archives."
+    },
+    {
+      "id": "S6",
+      "label": "Communauté Chorus Pro — Monitoring flows (compte rendu)",
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/monitoring-flows/?lang=en",
+      "type": "documentation",
+      "access": "public",
+      "extractable": "yes",
+      "notes": "consulterCR method; 9 flow states; flow contains 1+ invoices; complete vs partial rejection."
+    },
+    {
+      "id": "S7",
+      "label": "Dossier de Spécifications Externes — Annexe Services API (PDF v4.x)",
+      "url": "https://communaute.chorus-pro.gouv.fr/wp-content/uploads/2019/12/Specifications_Externes_Annexe_Services_API_V4.14-bis.pdf",
+      "type": "specification_pdf",
+      "access": "public",
+      "extractable": "not_parsed",
+      "notes": "Authoritative API method catalog (deposerFluxFacture, consulterCR, etc.). PDF not parsed in this pass — recommended deep source."
+    },
+    {
+      "id": "S8",
+      "label": "Communauté Chorus Pro — Submit flow invoice",
+      "url": "https://communaute.chorus-pro.gouv.fr/submit-flow-invoice/?lang=en",
+      "type": "documentation",
+      "access": "public",
+      "extractable": "partial",
+      "notes": "deposerFluxFacture: XML or PDF/A3, file <= 10 Mo / 30 Mo compressé."
+    },
+    {
+      "id": "S9",
+      "label": "Communauté Chorus Pro — Traiter une facture",
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/traiter-une-facture/",
+      "type": "documentation",
+      "access": "public",
+      "extractable": "partial",
+      "notes": "Recipient-side processing / lifecycle of a received invoice."
+    },
+    {
+      "id": "S10",
+      "label": "Comment interfacer Chorus Pro à mon outil de gestion (PDF)",
+      "url": "https://communaute.chorus-pro.gouv.fr/wp-content/uploads/2018/09/COMMEN1.pdf",
+      "type": "guide_pdf",
+      "access": "public",
+      "extractable": "not_parsed",
+      "notes": "Integration overview."
+    }
+  ],
+  "repository_primary_sources": [
+    {
+      "id": "R1",
+      "file": "src/lib/chorus/storage.ts",
+      "facts": "OAuth2 token URLs (sandbox-oauth/oauth.piste.gouv.fr/api/oauth/token), API base (sandbox-api/api.piste.gouv.fr/cpro/factures), user account/connections paths (chorus-pro.gouv.fr:5443), default scope 'openid', qualif vs prod presets."
+    },
+    {
+      "id": "R2",
+      "file": "src/lib/chorus/* (client.ts, pisteRoutes.ts, fluxDeposit.ts, backendAutomation.ts)",
+      "facts": "Chorus Pro endpoint paths used by the app and the backend bridge paths (/api/chorus/*, /api/g2b/*)."
+    },
+    {
+      "id": "R3",
+      "file": "src/lib/g2b/g2bFluxApi.ts",
+      "facts": "G2B flux bridge (detect/business-validate/deposit/status/poll); code interfaces FSO3110A, FSO3117A, FSO3300A, FSO6000A; uidFlux, checksum, statusLocal."
+    },
+    {
+      "id": "R4",
+      "file": "src/lib/g2b/g2bAnnuaireApi.ts",
+      "facts": "Annuaire recipient validation; recipient rules (serviceCodeRequired, engagementRequired, serviceOrEngagementRequired, moa/moaUniquement)."
+    },
+    {
+      "id": "R5",
+      "file": "src/lib/status-utils.ts",
+      "facts": "Full Chorus invoice status code list (60+ codes) and success/warning/error/info classification."
+    },
+    {
+      "id": "R6",
+      "file": "src/pages/ChorusPilotPage.tsx",
+      "facts": "References /v1/recuperer/formatflux, /v1/recuperer/syntaxeflux, /v1/deposer/flux, /v1/consulterCR."
+    }
+  ]
+}

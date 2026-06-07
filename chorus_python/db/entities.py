@@ -427,6 +427,14 @@ class ChorusFluxDeposit(Base):
     numero_flux_depot: Mapped[Optional[str]] = mapped_column(String(128), default=None)
     raw_response: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, default=None)
     status_local: Mapped[str] = mapped_column(String(32), nullable=False)
+    # --- Enrichissement compte rendu (CR) — P2-3 (consulterCR / consulterCRDetaille) ---
+    etat_courant_flux: Mapped[Optional[str]] = mapped_column(String(64), default=None)
+    cr_summary_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, default=None)
+    invoice_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    error_count: Mapped[Optional[int]] = mapped_column(Integer, default=None)
+    cr_available: Mapped[Optional[bool]] = mapped_column(Boolean, default=None)
+    last_cr_checked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=None)
+    last_cr_error: Mapped[Optional[str]] = mapped_column(Text, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, init=False
     )

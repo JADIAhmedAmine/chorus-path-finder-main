@@ -35,6 +35,8 @@ import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
 import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
 import { InvoiceOverviewDrawer } from '@/components/chorus/InvoiceOverviewDrawer';
 import { PageHeader } from '@/components/common/PageHeader';
+import { ProcessExplanationCard } from '@/components/flux/ProcessExplanationCard';
+import { PAGE_EXPLANATIONS } from '@/lib/flux/content';
 import { KpiCard } from '@/components/common/KpiCard';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -436,6 +438,8 @@ export default function InvoiceList() {
           </>
         }
       />
+
+      <ProcessExplanationCard {...PAGE_EXPLANATIONS.facturesLiees} />
 
       {error && (
         <ApiErrorCard

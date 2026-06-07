@@ -9,6 +9,8 @@ import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/common/PageHeader';
+import { ProcessExplanationCard } from '@/components/flux/ProcessExplanationCard';
+import { PAGE_EXPLANATIONS } from '@/lib/flux/content';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { useToast } from '@/hooks/use-toast';
 import { loadChorusConfig } from '@/lib/chorus/storage';
@@ -141,6 +143,8 @@ export default function G2BFluxDepositPage() {
         title="Dépôt de flux G2B"
         description="Assistant guidé pour l'API G2B Dépôt Flux : détection du fichier, recommandation du codeInterface, validation métier, dépôt et suivi du statut."
       />
+
+      <ProcessExplanationCard {...PAGE_EXPLANATIONS.suivi} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         {/* ----- Colonne gauche ----- */}

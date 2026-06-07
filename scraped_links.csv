@@ -1,0 +1,18 @@
+source_id,url,host,type,robots_allowed,http_status,extracted,notes
+S1,https://piste.gouv.fr/,piste.gouv.fr,portal,yes,200,partial,PISTE gateway; replaced AIFE platform 01/2020
+S2,https://piste.gouv.fr/en/api-catalog,piste.gouv.fr,catalog,yes,200,no,API list JS-rendered/auth-gated (not visible publicly)
+S3,https://communaute.chorus-pro.gouv.fr/documentation/api/,communaute.chorus-pro.gouv.fr,documentation,yes,200,partial,API service domains landing
+S4,https://communaute.chorus-pro.gouv.fr/documentation/fiche-pratique-reussir-son-raccordement-chorus-pro-en-mode-api-oauth2/,communaute.chorus-pro.gouv.fr,documentation,yes,200,partial,OAuth2 raccordement (details in PDF)
+S5,https://communaute.chorus-pro.gouv.fr/documentation/rechercher-une-ou-plusieurs-factures/,communaute.chorus-pro.gouv.fr,documentation,yes,200,yes,Search criteria + invoice statuses + exports
+S6,https://communaute.chorus-pro.gouv.fr/documentation/monitoring-flows/?lang=en,communaute.chorus-pro.gouv.fr,documentation,yes,200,yes,consulterCR + 9 flow states + flux/invoice link
+S7,https://communaute.chorus-pro.gouv.fr/wp-content/uploads/2019/12/Specifications_Externes_Annexe_Services_API_V4.14-bis.pdf,communaute.chorus-pro.gouv.fr,specification_pdf,yes,200,not_parsed,Authoritative API method catalog (recommended deep read)
+S8,https://communaute.chorus-pro.gouv.fr/submit-flow-invoice/?lang=en,communaute.chorus-pro.gouv.fr,documentation,yes,200,partial,deposerFluxFacture XML/PDF-A3 <= 10 Mo / 30 Mo compressé
+S9,https://communaute.chorus-pro.gouv.fr/documentation/traiter-une-facture/,communaute.chorus-pro.gouv.fr,documentation,yes,200,partial,Recipient-side processing / OCR route
+S10,https://communaute.chorus-pro.gouv.fr/wp-content/uploads/2018/09/COMMEN1.pdf,communaute.chorus-pro.gouv.fr,guide_pdf,yes,200,not_parsed,Integration overview
+LEGACY,https://developer.aife.economie.gouv.fr/,developer.aife.economie.gouv.fr,portal,n/a,000,no,DNS does not resolve (decommissioned/consolidated into PISTE)
+R1,src/lib/chorus/storage.ts,repository,source_code,n/a,n/a,yes,OAuth token URLs + API base URLs + presets + scope openid
+R2,src/lib/chorus/(client|pisteRoutes|fluxDeposit|backendAutomation).ts,repository,source_code,n/a,n/a,yes,Chorus Pro endpoint paths + backend bridge paths
+R3,src/lib/g2b/g2bFluxApi.ts,repository,source_code,n/a,n/a,yes,G2B flux bridge + code interfaces FSO3110A/FSO3117A/FSO3300A/FSO6000A
+R4,src/lib/g2b/g2bAnnuaireApi.ts,repository,source_code,n/a,n/a,yes,Annuaire recipient validation + obligation rules
+R5,src/lib/status-utils.ts,repository,source_code,n/a,n/a,yes,Full Chorus invoice status code list + classification
+R6,src/pages/ChorusPilotPage.tsx,repository,source_code,n/a,n/a,yes,References /v1/deposer/flux + /v1/consulterCR + recuperer formatflux/syntaxeflux

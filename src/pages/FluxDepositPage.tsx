@@ -12,6 +12,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageHeader } from '@/components/common/PageHeader';
+import { ProcessExplanationCard } from '@/components/flux/ProcessExplanationCard';
+import { PAGE_EXPLANATIONS } from '@/lib/flux/content';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { useToast } from '@/hooks/use-toast';
 import { loadChorusConfig } from '@/lib/chorus/storage';
@@ -388,6 +390,8 @@ export default function FluxDepositPage() {
         title="Dépôt de flux"
         description="Déposez une facture structurée (XML UBL/CII ou PDF/A3 Factur-X). L'application détecte le type réel du fichier et empêche les incohérences avant l'appel à Chorus Pro."
       />
+
+      <ProcessExplanationCard {...PAGE_EXPLANATIONS.depot} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Card className="card-elevated">
