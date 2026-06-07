@@ -113,6 +113,10 @@ from chorus_python.submission_state import (
     extract_payment_request_state,
     validate_payment_request_state,
 )
+from chorus_python.recycle_policy import (
+    InvalidRecyclePayloadError,
+    prepare_recycle_payload,
+)
 
 try:
     from chorus_python.db.api import router as db_router
@@ -2737,6 +2741,20 @@ def handle_recycle(
                 "ok": False,
                 "error": "Le champ payload est obligatoire et doit être un objet JSON.",
             },
+        )
+
+    try:
+        payload = prepare_recycle_payload(payload)
+    except InvalidRecyclePayloadError as validation_error:
+        logger.warning(
+            "Recyclage bloqué: endpoint=%s, champ=%s, erreur=%s",
+            RECYCLE_PATH,
+            validation_error.field,
+            validation_error,
+        )
+        return _json_response(
+            HTTPStatus.BAD_REQUEST,
+            validation_error.to_error_payload(),
         )
 
     payload = _add_submitter_comment(payload, auth_user)

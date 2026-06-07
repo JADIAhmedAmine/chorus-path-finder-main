@@ -672,6 +672,7 @@ export default function InvoiceCreate() {
   const submissionResultRef = useRef<HTMLDivElement | null>(null);
   const batchFolderInputRef = useRef<HTMLInputElement | null>(null);
   const editingInvoiceId = searchParams.get('invoiceId');
+  const isRejectedInvoiceCorrection = searchParams.get('correction') === '1';
   const {
     suppliers,
     publicCustomers,
@@ -1033,7 +1034,7 @@ export default function InvoiceCreate() {
           supplierSiret: '',
           supplierName: '',
           supplierVatNumber: '',
-          supplierInvoiceNumber: invoice.supplierInvoiceNumber,
+          supplierInvoiceNumber: isRejectedInvoiceCorrection ? '' : invoice.supplierInvoiceNumber,
           publicCustomerId: invoice.publicCustomerId,
           publicCustomerCode: '',
           publicCustomerName: '',
@@ -1071,8 +1072,10 @@ export default function InvoiceCreate() {
         if (!cancelled) {
           setPrefilledInvoiceId(editingInvoiceId);
           toast({
-            title: 'Facture préchargée',
-            description: `La facture ${invoice.supplierInvoiceNumber} a été chargée pour édition/soumission.`,
+            title: isRejectedInvoiceCorrection ? 'Correction préchargée' : 'Facture préchargée',
+            description: isRejectedInvoiceCorrection
+              ? `Les données de ${invoice.supplierInvoiceNumber} sont reprises. Saisissez un nouveau numéro de facture.`
+              : `La facture ${invoice.supplierInvoiceNumber} a été chargée pour édition/soumission.`,
           });
         }
       } catch (error) {
@@ -1092,7 +1095,7 @@ export default function InvoiceCreate() {
     return () => {
       cancelled = true;
     };
-  }, [editingInvoiceId, prefilledInvoiceId, toast]);
+  }, [editingInvoiceId, isRejectedInvoiceCorrection, prefilledInvoiceId, toast]);
 
   useEffect(() => {
     const isPdf = mainFile?.type === 'application/pdf' || mainFile?.name.toLowerCase().endsWith('.pdf');

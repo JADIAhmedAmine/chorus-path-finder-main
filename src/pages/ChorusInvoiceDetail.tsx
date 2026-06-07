@@ -7,9 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Textarea } from '@/components/ui/textarea';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChorusBackendAutomationClient, ChorusBackendAutomationError } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
@@ -35,12 +33,8 @@ import type {
   ChorusInvoiceHistoryStatus,
 } from '@/types/chorus';
 import type { Invoice } from '@/types';
-import type { ChorusInvoiceType, ChorusPaymentMode, ChorusVatType } from '@/lib/chorus/types';
 
 const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
-const PAYMENT_MODES: ChorusPaymentMode[] = ['CHEQUE', 'ESPECE', 'VIREMENT', 'PRELEVEMENT', 'AUTRE', 'REPORT'];
-const INVOICE_TYPES: ChorusInvoiceType[] = ['FACTURE', 'AVOIR'];
-const VAT_TYPES: ChorusVatType[] = ['TVA_SUR_DEBIT', 'TVA_SUR_ENCAISSEMENT', 'EXONERATION', 'SANS_TVA'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -75,21 +69,6 @@ function firstString(record: Record<string, unknown> | null | undefined, keys: s
 function nestedRecord(record: Record<string, unknown> | null | undefined, key: string): Record<string, unknown> | null {
   const value = record?.[key];
   return isRecord(value) ? value : null;
-}
-
-function pickPaymentMode(value: string | undefined, fallback: ChorusPaymentMode): ChorusPaymentMode {
-  const normalized = value?.trim().toUpperCase() as ChorusPaymentMode | undefined;
-  return normalized && PAYMENT_MODES.includes(normalized) ? normalized : fallback;
-}
-
-function pickInvoiceType(value: string | undefined, fallback: ChorusInvoiceType): ChorusInvoiceType {
-  const normalized = value?.trim().toUpperCase() as ChorusInvoiceType | undefined;
-  return normalized && INVOICE_TYPES.includes(normalized) ? normalized : fallback;
-}
-
-function pickVatType(value: string | undefined, fallback: ChorusVatType): ChorusVatType {
-  const normalized = value?.trim().toUpperCase() as ChorusVatType | undefined;
-  return normalized && VAT_TYPES.includes(normalized) ? normalized : fallback;
 }
 
 function parsePositiveInteger(value: unknown): number | undefined {
@@ -254,31 +233,13 @@ function extractResponseStatus(response: unknown): string | undefined {
 interface RecycleFormState {
   codeDestinataire: string;
   codeServiceExecutant: string;
-  idUtilisateurCourant: string;
-  deviseFacture: string;
-  modePaiement: ChorusPaymentMode;
-  motifExonerationTva: string;
   numeroBonCommande: string;
-  numeroFactureOrigine: string;
-  numeroMarche: string;
-  typeFacture: ChorusInvoiceType;
-  typeTva: ChorusVatType;
-  commentaire: string;
 }
 
 const EMPTY_RECYCLE_FORM: RecycleFormState = {
   codeDestinataire: '',
   codeServiceExecutant: '',
-  idUtilisateurCourant: '',
-  deviseFacture: 'EUR',
-  modePaiement: 'VIREMENT',
-  motifExonerationTva: '',
   numeroBonCommande: '',
-  numeroFactureOrigine: '',
-  numeroMarche: '',
-  typeFacture: 'FACTURE',
-  typeTva: 'TVA_SUR_DEBIT',
-  commentaire: '',
 };
 
 interface CorrectValidatorFormState {
@@ -378,20 +339,12 @@ export default function ChorusInvoiceDetail() {
     const config = resolveChorusRuntimeConfig(loadChorusConfig());
     const rawRecord = isRecord(raw) ? raw : null;
     const rawReference = nestedRecord(rawRecord, 'reference') ?? nestedRecord(rawRecord, 'references');
-    const fallbackVatType: ChorusVatType = config.submissionVatType === 'AUTO' ? 'TVA_SUR_DEBIT' : config.submissionVatType;
     setRecycleForm({
-      codeDestinataire: customer?.codeDestinataire || invoice.recipientChorusCode || '32242033407300',
+      codeDestinataire: customer?.siret || customer?.codeDestinataire || invoice.recipientChorusCode || '',
       codeServiceExecutant: invoice.serviceChorusCode || firstString(rawRecord, ['codeServiceExecutant', 'serviceChorusCode']),
-      idUtilisateurCourant: firstString(rawRecord, ['idUtilisateurCourant', 'currentUserId'], config.submissionCurrentUserId),
-      deviseFacture: firstString(rawReference, ['deviseFacture', 'devise'], invoice.currencyCode || 'EUR'),
-      modePaiement: pickPaymentMode(firstString(rawReference, ['modePaiement']), config.submissionPaymentMode),
-      motifExonerationTva: firstString(rawReference, ['motifExonerationTva', 'motifExonerationTVA']),
-      numeroBonCommande: invoice.purchaseOrderNumber || firstString(rawReference, ['numeroBonCommande']),
-      numeroFactureOrigine: firstString(rawReference, ['numeroFactureOrigine']),
-      numeroMarche: invoice.marketNumber || firstString(rawReference, ['numeroMarche']),
-      typeFacture: pickInvoiceType(invoice.chorusInvoiceType || firstString(rawReference, ['typeFacture']), config.submissionInvoiceType),
-      typeTva: pickVatType(firstString(rawReference, ['typeTva']), fallbackVatType),
-      commentaire: 'Traitement recyclage : correction des données d’acheminement.',
+      numeroBonCommande: invoice.engagementNumber
+        || invoice.purchaseOrderNumber
+        || firstString(rawReference, ['numeroBonCommande']),
     });
     setCorrectValidatorForm({
       idStructure: validatorStructureId ? String(validatorStructureId) : '',
@@ -405,14 +358,13 @@ export default function ChorusInvoiceDetail() {
     setHistoryResponse(null);
     setHistoryError(null);
   }, [
+    customer?.siret,
     customer?.codeDestinataire,
     invoice?.id,
     invoice?.recipientChorusCode,
     invoice?.serviceChorusCode,
-    invoice?.currencyCode,
+    invoice?.engagementNumber,
     invoice?.purchaseOrderNumber,
-    invoice?.marketNumber,
-    invoice?.chorusInvoiceType,
     invoice?.rawPayload,
     validatorStructureId,
     validatorStructureIdentifier,
@@ -541,22 +493,16 @@ export default function ChorusInvoiceDetail() {
       const identifiantFactureCPP = chorusPaymentRequestId;
       const codeDestinataire = recycleForm.codeDestinataire.trim();
       const codeServiceExecutant = recycleForm.codeServiceExecutant.trim();
-      const idUtilisateurCourant = parsePositiveInteger(recycleForm.idUtilisateurCourant);
-      const deviseFacture = recycleForm.deviseFacture.trim().toUpperCase();
-      const motifExonerationTva = recycleForm.motifExonerationTva.trim();
       const numeroBonCommande = recycleForm.numeroBonCommande.trim();
-      const numeroFactureOrigine = recycleForm.numeroFactureOrigine.trim();
-      const numeroMarche = recycleForm.numeroMarche.trim();
 
       if (!identifiantFactureCPP) {
         throw new Error('Identifiant facture CPP introuvable dans la facture synchronisée.');
       }
       if (!codeDestinataire) {
-        throw new Error('Code destinataire obligatoire pour recycler la facture.');
+        throw new Error('SIRET ou code destinataire Chorus obligatoire pour recycler la facture.');
       }
 
       const payload: ChorusRecycleInvoicePayload = {
-        commentaire: recycleForm.commentaire.trim() || undefined,
         destinataire: {
           codeDestinataire,
         },
@@ -565,19 +511,9 @@ export default function ChorusInvoiceDetail() {
       if (codeServiceExecutant) {
         payload.destinataire.codeServiceExecutant = codeServiceExecutant;
       }
-      if (idUtilisateurCourant) {
-        payload.idUtilisateurCourant = idUtilisateurCourant;
+      if (numeroBonCommande) {
+        payload.reference = { numeroBonCommande };
       }
-      payload.reference = {
-        ...(deviseFacture ? { deviseFacture } : {}),
-        modePaiement: recycleForm.modePaiement,
-        ...(motifExonerationTva ? { motifExonerationTva } : {}),
-        ...(numeroBonCommande ? { numeroBonCommande } : {}),
-        ...(numeroFactureOrigine ? { numeroFactureOrigine } : {}),
-        ...(numeroMarche ? { numeroMarche } : {}),
-        typeFacture: recycleForm.typeFacture,
-        typeTva: recycleForm.typeTva,
-      };
 
       const result = await new ChorusBackendAutomationClient(config).recycleInvoice(payload);
       const nextStatus = extractResponseStatus(result.response);
@@ -825,17 +761,31 @@ export default function ChorusInvoiceDetail() {
                 <AlertDescription>{recycleSuccess}</AlertDescription>
               </Alert>
             )}
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <Alert className="border-warning/30 bg-warning/5">
+              <Info className="h-4 w-4 text-warning" />
+              <AlertDescription className="space-y-2">
+                <p className="font-medium text-foreground">
+                  Une facture à recycler n’est pas une facture rejetée à recréer.
+                </p>
+                <p>
+                  Corrigez uniquement l’acheminement : destinataire, service exécutant et engagement
+                  juridique ou bon de commande. Le montant, la TVA, les lignes, le fournisseur et le
+                  numéro de facture restent inchangés.
+                </p>
+              </AlertDescription>
+            </Alert>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="recycle-cpp-id">Identifiant CPP</Label>
                 <Input id="recycle-cpp-id" value={chorusPaymentRequestId ? String(chorusPaymentRequestId) : ''} disabled />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="recycle-destinataire">Code destinataire</Label>
+                <Label htmlFor="recycle-destinataire">SIRET / code destinataire Chorus</Label>
                 <Input
                   id="recycle-destinataire"
                   value={recycleForm.codeDestinataire}
                   onChange={(event) => setRecycleForm((current) => ({ ...current, codeDestinataire: event.target.value }))}
+                  placeholder="14 chiffres ou code destinataire"
                 />
               </div>
               <div className="space-y-1.5">
@@ -848,69 +798,7 @@ export default function ChorusInvoiceDetail() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="recycle-current-user">ID utilisateur courant</Label>
-                <Input
-                  id="recycle-current-user"
-                  inputMode="numeric"
-                  value={recycleForm.idUtilisateurCourant}
-                  onChange={(event) => setRecycleForm((current) => ({ ...current, idUtilisateurCourant: event.target.value.replace(/\D/g, '') }))}
-                  placeholder="Optionnel"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-currency">Devise</Label>
-                <Input
-                  id="recycle-currency"
-                  value={recycleForm.deviseFacture}
-                  onChange={(event) => setRecycleForm((current) => ({ ...current, deviseFacture: event.target.value.toUpperCase() }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-payment-mode">Mode paiement</Label>
-                <Select
-                  value={recycleForm.modePaiement}
-                  onValueChange={(value) => setRecycleForm((current) => ({ ...current, modePaiement: value as ChorusPaymentMode }))}
-                >
-                  <SelectTrigger id="recycle-payment-mode"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {PAYMENT_MODES.map((mode) => (
-                      <SelectItem key={mode} value={mode}>{mode}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-invoice-type">Type facture</Label>
-                <Select
-                  value={recycleForm.typeFacture}
-                  onValueChange={(value) => setRecycleForm((current) => ({ ...current, typeFacture: value as ChorusInvoiceType }))}
-                >
-                  <SelectTrigger id="recycle-invoice-type"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {INVOICE_TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>{type}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-vat-type">Type TVA</Label>
-                <Select
-                  value={recycleForm.typeTva}
-                  onValueChange={(value) => setRecycleForm((current) => ({ ...current, typeTva: value as ChorusVatType }))}
-                >
-                  <SelectTrigger id="recycle-vat-type"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {VAT_TYPES.map((type) => (
-                      <SelectItem key={type} value={type}>{type}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-purchase-order">Bon de commande</Label>
+                <Label htmlFor="recycle-purchase-order">Engagement juridique / bon de commande</Label>
                 <Input
                   id="recycle-purchase-order"
                   value={recycleForm.numeroBonCommande}
@@ -918,42 +806,6 @@ export default function ChorusInvoiceDetail() {
                   placeholder="Optionnel"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-market">Marché</Label>
-                <Input
-                  id="recycle-market"
-                  value={recycleForm.numeroMarche}
-                  onChange={(event) => setRecycleForm((current) => ({ ...current, numeroMarche: event.target.value }))}
-                  placeholder="Optionnel"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-original-invoice">Facture origine</Label>
-                <Input
-                  id="recycle-original-invoice"
-                  value={recycleForm.numeroFactureOrigine}
-                  onChange={(event) => setRecycleForm((current) => ({ ...current, numeroFactureOrigine: event.target.value }))}
-                  placeholder="Optionnel"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recycle-vat-exoneration">Motif exonération TVA</Label>
-                <Input
-                  id="recycle-vat-exoneration"
-                  value={recycleForm.motifExonerationTva}
-                  onChange={(event) => setRecycleForm((current) => ({ ...current, motifExonerationTva: event.target.value }))}
-                  placeholder="Si EXONERATION"
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="recycle-comment">Commentaire</Label>
-              <Textarea
-                id="recycle-comment"
-                value={recycleForm.commentaire}
-                onChange={(event) => setRecycleForm((current) => ({ ...current, commentaire: event.target.value }))}
-                rows={3}
-              />
             </div>
             <div className="flex justify-end">
               <Button

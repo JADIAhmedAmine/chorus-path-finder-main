@@ -6,18 +6,18 @@ export const CHORUS_SUBMISSION_STATE_ERROR_CODE = 'INVALID_PAYMENT_REQUEST_STATE
 export const CHORUS_ALLOWED_SUBMISSION_STATES = [
   'BROUILLON',
   'ERREUR_FOURNISSEUR_SUR_VALIDEUR',
-  'A_RECYCLER',
 ] as const;
 
 export type ChorusAllowedSubmissionState = typeof CHORUS_ALLOWED_SUBMISSION_STATES[number];
 
 export const CHORUS_BLOCKED_SUBMISSION_STATE = 'REJETEE';
 
-export type ChorusSubmissionStateReason = 'rejected' | 'missing' | 'unknown';
+export type ChorusSubmissionStateReason = 'rejected' | 'recyclable' | 'missing' | 'unknown';
 
 export type ChorusSubmissionEvaluationKind =
   | 'allowed'
   | 'rejected'
+  | 'recyclable'
   | 'missing'
   | 'unknown';
 
@@ -94,9 +94,24 @@ export function evaluateChorusSubmissionState(
         'Cette demande de paiement ne peut pas être soumise car elle est actuellement rejetée.',
       recommendedActions: [
         'Vérifier dans Chorus Pro le motif précis du rejet.',
-        'Corriger les informations de la facture ou de la demande.',
-        'Créer ou recycler une nouvelle demande de paiement si nécessaire.',
+        'Créer une nouvelle facture corrigée avec un nouveau numéro.',
         'Ne pas relancer la soumission tant que l’état reste REJETEE.',
+      ],
+      canSubmit: false,
+    };
+  }
+
+  if (currentState === 'A_RECYCLER') {
+    return {
+      currentState,
+      kind: 'recyclable',
+      allowedStates,
+      message:
+        'Cette demande de paiement doit passer par le recyclage dédié, sans modification libre de la facture.',
+      recommendedActions: [
+        'Corriger uniquement le SIRET destinataire, le code service ou l’engagement juridique.',
+        'Utiliser ensuite l’action « Recycler la facture ».',
+        'Ne pas modifier le montant, la TVA, les lignes, le fournisseur ou le numéro de facture.',
       ],
       canSubmit: false,
     };
@@ -150,7 +165,7 @@ export function parseChorusSubmissionStateErrorPayload(
   }
   const reason = record.reason;
   const normalizedReason: ChorusSubmissionStateReason =
-    reason === 'rejected' || reason === 'missing' || reason === 'unknown'
+    reason === 'rejected' || reason === 'recyclable' || reason === 'missing' || reason === 'unknown'
       ? reason
       : 'unknown';
   const allowedStates = Array.isArray(record.allowed_states)

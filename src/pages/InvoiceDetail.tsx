@@ -288,7 +288,12 @@ export default function InvoiceDetail() {
             </Button>
           )}
           {isRejected && (
-            <Button><RotateCcw className="mr-2 h-4 w-4" /> Resoumettre</Button>
+            <Button asChild>
+              <Link to={`/invoices/new?invoiceId=${encodeURIComponent(invoice.id)}&correction=1`}>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Créer une facture corrigée
+              </Link>
+            </Button>
           )}
         </div>
       </div>

@@ -102,17 +102,49 @@ export function getInvoiceGuide(input: InvoiceGuideInput): InvoiceStatusGuide {
     };
   }
 
-  if (input.context === 'emission' && hasAny(status, ['REJET', 'REFUS', 'ERREUR', 'NON_CONFORME'])) {
+  if (input.context === 'emission' && hasAny(status, ['A_RECYCLER', 'RECYCL'])) {
     return {
       ...base,
-      description: 'Le dépôt, l’acheminement ou la validation Chorus a échoué.',
+      description:
+        'La facture doit être recyclée sans modifier son contenu comptable ni son identité.',
+      actions: [
+        action('Corriger le SIRET destinataire', 'available'),
+        action('Corriger le code service destinataire', 'available'),
+        action('Corriger l’engagement juridique ou le bon de commande', 'available'),
+        action('Recycler et renvoyer la facture', 'available'),
+      ],
+      recommendedAction:
+        'Corriger uniquement les données d’acheminement. Le montant, la TVA, les lignes, le fournisseur et le numéro restent inchangés.',
+    };
+  }
+
+  if (input.context === 'emission' && hasAny(status, ['SUSPEND', 'A_COMPLETER'])) {
+    return {
+      ...base,
+      description: 'La facture est suspendue dans l’attente d’un complément.',
+      actions: [
+        action('Ajouter le complément demandé', 'available'),
+        action('Ajouter un commentaire', 'available'),
+        action('Ajouter une pièce jointe', 'available'),
+      ],
+      recommendedAction:
+        'Répondre au motif de suspension sans recréer ni recycler librement la facture.',
+    };
+  }
+
+  if (input.context === 'emission' && hasAny(status, ['REJET', 'REFUS', 'NON_CONFORME'])) {
+    return {
+      ...base,
+      description:
+        'La facture est rejetée. Sa correction nécessite une nouvelle facture avec un nouveau numéro.',
       actions: [
         action('Consulter le motif de rejet', 'available'),
-        action('Corriger les données', 'available'),
+        action('Créer une nouvelle facture corrigée', 'available'),
         action('Télécharger ou consulter le flux initial', 'available'),
-        action('Redéposer la facture corrigée', 'planned', 'À faire uniquement si le statut et le flux le permettent.'),
+        action('Déposer la nouvelle facture', 'planned', 'Le numéro de facture doit être différent.'),
       ],
-      recommendedAction: 'Identifier l’erreur bloquante et préparer une correction.',
+      recommendedAction:
+        'Identifier l’erreur bloquante, corriger la source et attribuer un nouveau numéro avant dépôt.',
     };
   }
 
@@ -126,6 +158,18 @@ export function getInvoiceGuide(input: InvoiceGuideInput): InvoiceStatusGuide {
         action('Vérifier les retours Chorus', 'available'),
       ],
       recommendedAction: 'Attendre le retour ou surveiller le changement de statut.',
+    };
+  }
+
+  if (hasAny(status, ['INTEGREE', 'INTEGRATED'])) {
+    return {
+      ...base,
+      description: 'La facture est intégrée dans Chorus Pro et reste en lecture seule.',
+      actions: [
+        action('Consulter l’historique', 'available'),
+        action('Télécharger les justificatifs disponibles', 'available'),
+      ],
+      recommendedAction: 'Aucune correction n’est autorisée sur cette facture intégrée.',
     };
   }
 

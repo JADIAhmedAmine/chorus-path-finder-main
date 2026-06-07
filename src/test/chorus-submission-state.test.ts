@@ -22,6 +22,13 @@ describe('evaluateChorusSubmissionState', () => {
     expect(evaluation.recommendedActions.length).toBeGreaterThan(0);
   });
 
+  it('routes A_RECYCLER to the dedicated recycle action', () => {
+    const evaluation = evaluateChorusSubmissionState('A_RECYCLER');
+    expect(evaluation.kind).toBe('recyclable');
+    expect(evaluation.canSubmit).toBe(false);
+    expect(evaluation.recommendedActions.join(' ')).toContain('SIRET');
+  });
+
   it('flags absent state as missing', () => {
     const evaluation = evaluateChorusSubmissionState(null);
     expect(evaluation.kind).toBe('missing');
@@ -50,7 +57,7 @@ describe('parseChorusSubmissionStateErrorPayload', () => {
       error_code: CHORUS_SUBMISSION_STATE_ERROR_CODE,
       reason: 'rejected',
       current_state: 'REJETEE',
-      allowed_states: ['BROUILLON', 'ERREUR_FOURNISSEUR_SUR_VALIDEUR', 'A_RECYCLER'],
+      allowed_states: ['BROUILLON', 'ERREUR_FOURNISSEUR_SUR_VALIDEUR'],
       message:
         'La demande de paiement ne peut pas être soumise car son état est REJETEE.',
     });
@@ -61,7 +68,6 @@ describe('parseChorusSubmissionStateErrorPayload', () => {
     expect(payload?.allowedStates).toEqual([
       'BROUILLON',
       'ERREUR_FOURNISSEUR_SUR_VALIDEUR',
-      'A_RECYCLER',
     ]);
   });
 

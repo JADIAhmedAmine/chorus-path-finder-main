@@ -18,7 +18,7 @@ interface OverviewBucket {
   className: string;
 }
 
-const ALLOWED_STATES = new Set(['BROUILLON', 'ERREUR_FOURNISSEUR_SUR_VALIDEUR', 'A_RECYCLER']);
+const ALLOWED_STATES = new Set(['BROUILLON', 'ERREUR_FOURNISSEUR_SUR_VALIDEUR']);
 const RECYCLABLE_STATES = new Set(['A_RECYCLER', 'EN_ATTENTE_RECYCLAGE_FOURNISSEUR']);
 const REJECTED_STATES = new Set(['REJETEE']);
 
@@ -56,7 +56,7 @@ export function SubmissionStateOverview({ highlightedState }: SubmissionStateOve
       {
         key: 'allowed',
         label: 'Prêtes à être soumises',
-        description: 'BROUILLON, ERREUR_FOURNISSEUR_SUR_VALIDEUR ou A_RECYCLER.',
+        description: 'BROUILLON ou ERREUR_FOURNISSEUR_SUR_VALIDEUR.',
         count: allowed,
         Icon: CheckCircle2,
         className: 'border-success/30 bg-success/5 text-success',

@@ -131,9 +131,11 @@ function SubmissionStateBlockingCard({
   const Icon = evaluation.kind === 'rejected' ? AlertTriangle : Info;
   const title = evaluation.kind === 'rejected'
     ? 'Soumission bloquée'
-    : evaluation.kind === 'missing'
-      ? 'État inconnu côté Chorus'
-      : 'État non compatible';
+    : evaluation.kind === 'recyclable'
+      ? 'Recyclage dédié requis'
+      : evaluation.kind === 'missing'
+        ? 'État inconnu côté Chorus'
+        : 'État non compatible';
 
   return (
     <Alert variant={variant} data-testid="submission-state-block">
