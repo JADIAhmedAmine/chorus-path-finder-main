@@ -17,18 +17,27 @@ import asyncio
 import hashlib
 import logging
 import os
+from datetime import date, datetime, timezone
 from http import HTTPStatus
 from time import perf_counter
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, File, Form, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from .audit import append_audit_event
-from .auth import require_submit_permission
+from .auth import get_current_auth_user, require_submit_permission
+from .chorus_cr import (
+    OFFICIAL_FLUX_STATES,
+    normalize_cr,
+    normalize_cr_detaille,
+    official_id_for_label,
+)
 from .chorus_flux_client import (
     ChorusFluxError,
+    consulter_cr,
+    consulter_cr_detaille,
     deposer_flux_facture,
     recuperer_format_flux,
     recuperer_syntaxe_flux,
@@ -223,6 +232,364 @@ def _persist_fields(
         "numero_flux_depot": numero_flux_depot,
         "raw_response": raw_response,
     }
+
+
+# ---------------------------------------------------------------------------
+# Lecture des dépôts de flux + statistiques (hub /flux).
+#
+# La table `chorus_flux_deposits` stocke `status_local` (statut local du dépôt :
+# ACCEPTED/REJECTED/ERROR/BLOCKED_*) et, depuis P2-3, l'`etat_courant_flux` officiel
+# (Reçu/Intégré/…) issu de `consulterCR`/`consulterCRDetaille` quand il a été rafraîchi.
+# Tant qu'aucun CR n'est récupéré, l'état officiel est dérivé best-effort de status_local.
+# Source unique des 9 états officiels + normalisation : `chorus_cr.py`.
+# ---------------------------------------------------------------------------
+
+_OFFICIAL_LABELS: dict[str, str] = dict(OFFICIAL_FLUX_STATES)
+
+# Correspondance best-effort statut local -> état officiel (faute de consulterCR).
+_STATUS_LOCAL_TO_OFFICIAL: dict[str, str] = {
+    "ACCEPTED": "integre",   # dépôt accepté par Chorus (codeRetour 0) — à affiner via consulterCR
+    "REJECTED": "rejete",
+    "ERROR": "incidente",    # incident technique en atteignant Chorus
+}
+# Statuts locaux « bloqués avant envoi » : aucun flux n'a atteint Chorus.
+_BLOCKED_STATUS_LOCAL: frozenset[str] = frozenset({"BLOCKED_LOCAL_VALIDATION", "BLOCKED_BUSINESS_VALIDATION"})
+# Statuts locaux comptés comme « flux en erreur » (ont atteint Chorus et échoué).
+_ERROR_STATUS_LOCAL: frozenset[str] = frozenset({"REJECTED", "ERROR"})
+
+
+def _official_state_id(status_local: str | None) -> str | None:
+    """Renvoie l'id d'état officiel best-effort pour un statut local, ou None."""
+    if not status_local:
+        return None
+    return _STATUS_LOCAL_TO_OFFICIAL.get(status_local.strip().upper())
+
+
+def _serialize_flux_deposit(row: Any) -> dict[str, Any]:
+    """Sérialise une ligne `ChorusFluxDeposit` en dict camelCase pour le frontend.
+
+    Depuis P2-3 : `officialFluxState` provient du CR réel (`etat_courant_flux`) si
+    disponible, sinon dérivé best-effort de `status_local`. `invoiceCount` reste
+    `null` (non fourni par consulterCRDetaille).
+    """
+    status_local = getattr(row, "status_local", None)
+    etat_courant = getattr(row, "etat_courant_flux", None)
+    cr_available = getattr(row, "cr_available", None)
+
+    if etat_courant:
+        official_id = official_id_for_label(etat_courant)
+        official_label = etat_courant
+        official_source = "chorus_cr"
+    else:
+        official_id = _official_state_id(status_local)
+        official_label = _OFFICIAL_LABELS.get(official_id) if official_id else None
+        official_source = "derived_from_status_local"
+    has_error = (
+        official_id in {"rejete", "incidente", "integrePartiellement"}
+        if etat_courant
+        else bool(status_local in _ERROR_STATUS_LOCAL) if status_local else False
+    )
+
+    return {
+        "id": getattr(row, "id", None),
+        "numeroFluxDepot": getattr(row, "numero_flux_depot", None),
+        "nomFichier": getattr(row, "nom_fichier", None),
+        "fileSize": getattr(row, "file_size", None),
+        "formatFlux": getattr(row, "format_flux", None) or None,
+        "syntaxeFlux": getattr(row, "syntaxe_flux", None) or None,
+        "formatDepot": getattr(row, "format_depot", None),
+        "detectedFileType": getattr(row, "detected_file_type", None),
+        "avecSignature": getattr(row, "avec_signature", None),
+        "statusLocal": status_local,
+        "officialFluxStateId": official_id,
+        "officialFluxState": official_label,
+        "officialFluxStateSource": official_source,
+        "hasError": has_error,
+        "httpStatus": getattr(row, "http_status", None),
+        "codeRetour": getattr(row, "code_retour", None),
+        "libelle": getattr(row, "libelle", None),
+        "invoiceCount": getattr(row, "invoice_count", None),  # null : non fourni par consulterCRDetaille
+        "errorCount": getattr(row, "error_count", None),
+        "crAvailable": bool(cr_available) if cr_available is not None else None,
+        "lastCrCheckedAt": getattr(row, "last_cr_checked_at", None),
+        "lastCrError": getattr(row, "last_cr_error", None),
+        "dateDepot": getattr(row, "date_depot", None),
+        "createdAt": getattr(row, "created_at", None),
+        "updatedAt": getattr(row, "updated_at", None),
+    }
+
+
+def _build_flux_stats(raw: dict[str, Any]) -> dict[str, Any]:
+    """Construit l'objet `stats` du hub (logique pure, testable sans base).
+
+    États officiels = états CR RÉELS (`by_etat_courant_flux`) pour les dépôts ayant un
+    compte rendu, complétés par la dérivation best-effort de `status_local` pour ceux
+    sans CR (`by_status_local_no_cr`, ou tout `by_status_local` si aucun CR connu).
+    """
+    by_status: dict[str, int] = {str(k): int(v) for k, v in (raw.get("by_status_local") or {}).items()}
+    by_etat: dict[str, int] = {str(k): int(v) for k, v in (raw.get("by_etat_courant_flux") or {}).items()}
+    by_status_no_cr: dict[str, int] = {str(k): int(v) for k, v in (raw.get("by_status_local_no_cr") or {}).items()}
+    cr_count = int(raw.get("cr_count") or 0)
+    numero_count = int(raw.get("numero_count") or 0)
+
+    official = {sid: 0 for sid, _ in OFFICIAL_FLUX_STATES}
+
+    # 1) États CR réels (libellé officiel -> id).
+    for label, count in by_etat.items():
+        sid = official_id_for_label(label)
+        if sid:
+            official[sid] += count
+
+    # 2) Repli best-effort pour les dépôts SANS CR.
+    fallback_source = by_status_no_cr if (by_status_no_cr or cr_count > 0) else by_status
+    blocked_before_send = 0
+    for status, count in fallback_source.items():
+        normalized = status.strip().upper()
+        if normalized in _BLOCKED_STATUS_LOCAL:
+            blocked_before_send += count
+            continue
+        sid = _STATUS_LOCAL_TO_OFFICIAL.get(normalized)
+        if sid:
+            official[sid] += count
+
+    total = int(raw.get("total") or 0)
+    submitted = total - blocked_before_send
+    accepted = official["integre"] + official["integrePartiellement"]
+    total_errors = official["rejete"] + official["incidente"] + official["integrePartiellement"]
+    success_rate = round(accepted / submitted * 100) if submitted > 0 else None
+
+    return {
+        "total": total,
+        "submitted": submitted,
+        "blockedBeforeSend": blocked_before_send,
+        "totalErrors": total_errors,
+        "successRate": success_rate,
+        "lastDepositAt": raw.get("last_created_at"),
+        "firstDepositAt": raw.get("first_created_at"),
+        "lastDateDepot": raw.get("last_date_depot"),
+        "byStatusLocal": by_status,
+        "byEtatCourantFlux": by_etat,
+        "crCount": cr_count,
+        "officialFluxStates": official,
+        "officialFluxStatesLabels": dict(OFFICIAL_FLUX_STATES),
+        "officialStatesSource": "chorus_cr" if cr_count > 0 else "derived_from_status_local",
+        # Complet seulement si tous les flux ayant un numéro Chorus ont un CR.
+        "officialStatesComplete": cr_count > 0 and numero_count > 0 and cr_count >= numero_count,
+        "bySyntaxeFlux": {str(k): int(v) for k, v in (raw.get("by_syntaxe_flux") or {}).items()},
+        "byFormatFlux": {str(k): int(v) for k, v in (raw.get("by_format_flux") or {}).items()},
+        "byFormatDepot": None,  # not_available : formatDepot non agrégé (peu pertinent)
+    }
+
+
+def _empty_flux_stats() -> dict[str, Any]:
+    return _build_flux_stats(
+        {
+            "total": 0,
+            "by_status_local": {},
+            "by_syntaxe_flux": {},
+            "by_format_flux": {},
+            "last_created_at": None,
+            "first_created_at": None,
+            "last_date_depot": None,
+        }
+    )
+
+
+def _resolve_flux_tenant(user: dict[str, Any], explicit: str | None) -> str:
+    """Résout le tenant à lire (isolation), aligné sur la logique de /api/db."""
+    from .db.config import load_database_settings
+
+    default_tenant = load_database_settings().default_tenant_id
+    role = user.get("roleCode") if isinstance(user, dict) else None
+    raw_user_tenant = (user.get("tenantId") or user.get("tenant_id")) if isinstance(user, dict) else None
+    user_tenant = raw_user_tenant.strip() if isinstance(raw_user_tenant, str) and raw_user_tenant.strip() else default_tenant
+
+    if role == "ADMINISTRATEUR":
+        return explicit.strip() if isinstance(explicit, str) and explicit.strip() else default_tenant
+    if isinstance(explicit, str) and explicit.strip() and explicit.strip() != user_tenant:
+        raise HTTPException(status_code=403, detail="Accès interdit à ce tenant.")
+    return user_tenant
+
+
+def _parse_query_date(value: str | None) -> date | None:
+    if not value or not value.strip():
+        return None
+    try:
+        return datetime.fromisoformat(value.strip()).date()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=400, detail=f"Date invalide '{value}' (format attendu : YYYY-MM-DD)."
+        ) from error
+
+
+def _read_flux_deposits_sync(*, tenant_id: str, filters: dict[str, Any], page: int, page_size: int) -> dict[str, Any] | None:
+    """Lecture best-effort des dépôts de flux. None si la base est indisponible."""
+    try:
+        from .db.repositories import list_flux_deposits
+        from .db.session import get_session
+    except Exception:  # noqa: BLE001 - persistance DB optionnelle
+        return None
+    try:
+        with get_session() as session:
+            page_obj = list_flux_deposits(session, tenant_id=tenant_id, page=page, page_size=page_size, **filters)
+            return {
+                "total": page_obj.total,
+                "page": page_obj.page,
+                "page_size": page_obj.page_size,
+                "items": [_serialize_flux_deposit(row) for row in page_obj.items],
+            }
+    except Exception as error:  # noqa: BLE001 - ne jamais casser le hub
+        logger.debug("Lecture des dépôts de flux ignorée: %s", error)
+        return None
+
+
+def _flux_stats_sync(*, tenant_id: str, filters: dict[str, Any]) -> dict[str, Any] | None:
+    """Agrégats best-effort des dépôts de flux. None si la base est indisponible."""
+    try:
+        from .db.repositories import flux_deposit_stats
+        from .db.session import get_session
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        with get_session() as session:
+            return flux_deposit_stats(session, tenant_id=tenant_id, **filters)
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Statistiques des dépôts de flux ignorées: %s", error)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Rafraîchissement du compte rendu (CR) — P2-3.
+# ---------------------------------------------------------------------------
+def _cr_fields_from_normalized(
+    normalized: dict[str, Any], *, http_status: int | None, code_retour: int | None, libelle: str | None
+) -> dict[str, Any]:
+    """Construit les valeurs de colonnes CR à partir d'un CR normalisé (pure)."""
+    summary = dict(normalized)
+    summary["httpStatus"] = http_status
+    summary["codeRetour"] = code_retour
+    summary["libelle"] = libelle
+    return {
+        "etat_courant_flux": normalized.get("etatCourantFlux"),
+        "cr_summary_json": summary,
+        "invoice_count": normalized.get("invoiceCount"),
+        "error_count": normalized.get("errorCount"),
+        "cr_available": True,
+    }
+
+
+async def _fetch_cr(numero_flux_depot: str, environment_override: str | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Appelle consulterCRDetaille (repli consulterCR) et renvoie (résultat brut, CR normalisé)."""
+    settings, access_token = _resolve_settings_and_token(environment_override)
+    try:
+        result = await consulter_cr_detaille(
+            settings.base_url, access_token, settings.cpro_account, numero_flux_depot,
+            timeout_seconds=settings.timeout_seconds,
+        )
+        return result, normalize_cr_detaille(result.get("raw"))
+    except ChorusFluxError:
+        result = await consulter_cr(
+            settings.base_url, access_token, settings.cpro_account, numero_flux_depot,
+            timeout_seconds=settings.timeout_seconds,
+        )
+        return result, normalize_cr(result.get("raw"))
+
+
+def _get_deposit_sync(*, tenant_id: str, deposit_id: str) -> dict[str, Any] | None:
+    """Lecture best-effort d'un dépôt. None si DB indisponible ; {found: False} si absent."""
+    try:
+        from .db.repositories import get_flux_deposit
+        from .db.session import get_session
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        with get_session() as session:
+            deposit = get_flux_deposit(session, tenant_id=tenant_id, deposit_id=deposit_id)
+            if deposit is None:
+                return {"found": False}
+            return {"found": True, "numero": deposit.numero_flux_depot, "deposit": _serialize_flux_deposit(deposit)}
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Lecture du dépôt ignorée: %s", error)
+        return None
+
+
+def _list_needing_cr_sync(*, tenant_id: str, limit: int) -> list[dict[str, Any]] | None:
+    try:
+        from .db.repositories import list_flux_deposits_needing_cr
+        from .db.session import get_session
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        with get_session() as session:
+            rows = list_flux_deposits_needing_cr(session, tenant_id=tenant_id, limit=limit)
+            return [{"id": row.id, "numero": row.numero_flux_depot} for row in rows]
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Liste des dépôts à rafraîchir ignorée: %s", error)
+        return None
+
+
+def _persist_cr_sync(
+    *, tenant_id: str, deposit_id: str, cr_fields: dict[str, Any] | None, error_message: str | None
+) -> dict[str, Any] | str | None:
+    """Applique le CR (succès) ou enregistre l'erreur (échec). Renvoie le dépôt sérialisé,
+    'NOT_FOUND', ou None si DB indisponible."""
+    try:
+        from .db.repositories import apply_cr_to_deposit, get_flux_deposit
+        from .db.session import get_session
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        now = datetime.now(timezone.utc)
+        with get_session() as session:
+            deposit = get_flux_deposit(session, tenant_id=tenant_id, deposit_id=deposit_id)
+            if deposit is None:
+                return "NOT_FOUND"
+            if cr_fields is not None:
+                apply_cr_to_deposit(
+                    session, deposit, last_cr_checked_at=now, last_cr_error=None, **cr_fields
+                )
+            else:
+                # Échec : on horodate la tentative et on garde l'état précédent intact.
+                deposit.last_cr_checked_at = now
+                deposit.last_cr_error = error_message
+                session.add(deposit)
+                session.flush()
+            return _serialize_flux_deposit(deposit)
+    except Exception as error:  # noqa: BLE001
+        logger.debug("Persistance du CR ignorée: %s", error)
+        return None
+
+
+async def _refresh_cr_one(
+    *, tenant_id: str, deposit_id: str, numero_flux_depot: str, environment_override: str | None
+) -> dict[str, Any]:
+    """Rafraîchit le CR d'un dépôt : appel Chorus + persistance. Best-effort."""
+    try:
+        result, normalized = await _fetch_cr(numero_flux_depot, environment_override)
+        http_status = int(result.get("http_status") or 0)
+        code_retour = result.get("codeRetour")
+        cr_ok = http_status in (int(HTTPStatus.OK), int(HTTPStatus.ACCEPTED)) and code_retour in (0, None)
+        if cr_ok:
+            cr_fields = _cr_fields_from_normalized(
+                normalized, http_status=http_status, code_retour=code_retour, libelle=result.get("libelle")
+            )
+            deposit = await asyncio.to_thread(
+                _persist_cr_sync, tenant_id=tenant_id, deposit_id=deposit_id, cr_fields=cr_fields, error_message=None
+            )
+            return {"id": deposit_id, "crRefreshed": True, "deposit": deposit if isinstance(deposit, dict) else None}
+        message = result.get("libelle") or _chorus_call_failure_message(result)
+        deposit = await asyncio.to_thread(
+            _persist_cr_sync, tenant_id=tenant_id, deposit_id=deposit_id, cr_fields=None,
+            error_message=_audit_text(message, 240),
+        )
+        return {"id": deposit_id, "crRefreshed": False, "error": message, "deposit": deposit if isinstance(deposit, dict) else None}
+    except Exception as error:  # noqa: BLE001
+        message = str(error) or error.__class__.__name__
+        deposit = await asyncio.to_thread(
+            _persist_cr_sync, tenant_id=tenant_id, deposit_id=deposit_id, cr_fields=None,
+            error_message=_audit_text(message, 240),
+        )
+        return {"id": deposit_id, "crRefreshed": False, "error": message, "deposit": deposit if isinstance(deposit, dict) else None}
 
 
 async def _try_annuaire_lookup(
@@ -846,4 +1213,197 @@ async def handle_flux_prepare_correction(
     return _json_response(
         HTTPStatus.OK,
         {"success": True, "filename": filename, "suggestions": suggestions, "business_validation": business},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lecture des dépôts de flux (hub /flux) — lecture seule, tout rôle authentifié.
+# ---------------------------------------------------------------------------
+def _build_flux_filters(
+    status_local: str | None,
+    syntaxe_flux: str | None,
+    format_flux: str | None,
+    date_from: str | None,
+    date_to: str | None,
+) -> dict[str, Any]:
+    return {
+        "status_local": (status_local or "").strip() or None,
+        "syntaxe_flux": (syntaxe_flux or "").strip() or None,
+        "format_flux": (format_flux or "").strip() or None,
+        "date_from": _parse_query_date(date_from),
+        "date_to": _parse_query_date(date_to),
+    }
+
+
+@router.get("/deposits")
+async def handle_list_flux_deposits(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
+    status_local: str | None = Query(None, alias="status"),
+    syntaxe_flux: str | None = Query(None, alias="syntaxe"),
+    format_flux: str | None = Query(None, alias="format"),
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    tenant_id: str | None = Query(None, alias="tenantId"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
+) -> JSONResponse:
+    """Liste paginée des dépôts de flux du tenant (plus récent d'abord).
+
+    Lecture seule (tout rôle authentifié). Dégrade proprement si la base n'est pas
+    disponible : `available=false`, liste vide, HTTP 200 (le hub affiche l'état vide).
+    """
+    resolved_tenant = _resolve_flux_tenant(user, tenant_id)
+    filters = _build_flux_filters(status_local, syntaxe_flux, format_flux, date_from, date_to)
+
+    result = await asyncio.to_thread(
+        _read_flux_deposits_sync, tenant_id=resolved_tenant, filters=filters, page=page, page_size=page_size
+    )
+    if result is None:
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "success": True,
+                "available": False,
+                "reason": "database_not_available",
+                "total": 0,
+                "page": page,
+                "pageSize": page_size,
+                "items": [],
+            },
+        )
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "success": True,
+            "available": True,
+            "total": result["total"],
+            "page": result["page"],
+            "pageSize": result["page_size"],
+            "items": result["items"],
+        },
+    )
+
+
+@router.get("/deposits/stats")
+async def handle_flux_deposits_stats(
+    status_local: str | None = Query(None, alias="status"),
+    syntaxe_flux: str | None = Query(None, alias="syntaxe"),
+    format_flux: str | None = Query(None, alias="format"),
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    tenant_id: str | None = Query(None, alias="tenantId"),
+    user: dict[str, Any] = Depends(get_current_auth_user),
+) -> JSONResponse:
+    """Statistiques de synthèse des dépôts de flux pour le hub `/flux`.
+
+    Inclut les 9 états officiels `etatCourantFlux` (dérivés best-effort de
+    `status_local`, cf. `officialStatesComplete=false`). `available=false` si la base
+    n'est pas disponible.
+    """
+    resolved_tenant = _resolve_flux_tenant(user, tenant_id)
+    filters = _build_flux_filters(status_local, syntaxe_flux, format_flux, date_from, date_to)
+
+    raw = await asyncio.to_thread(_flux_stats_sync, tenant_id=resolved_tenant, filters=filters)
+    if raw is None:
+        return _json_response(
+            HTTPStatus.OK,
+            {"success": True, "available": False, "reason": "database_not_available", "stats": _empty_flux_stats()},
+        )
+    return _json_response(
+        HTTPStatus.OK,
+        {"success": True, "available": True, "stats": _build_flux_stats(raw)},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rafraîchissement du compte rendu (CR) — appelle Chorus, donc rôle « submit ».
+# ---------------------------------------------------------------------------
+@router.post("/deposits/{deposit_id}/refresh-cr")
+async def handle_refresh_cr(
+    deposit_id: str,
+    environment: str | None = Query(None),
+    tenant_id: str | None = Query(None, alias="tenantId"),
+    user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    """Récupère le compte rendu Chorus d'un dépôt et enrichit ses champs CR.
+
+    `consulterCRDetaille` (repli `consulterCR`). Renvoie le dépôt enrichi. Si la base
+    est indisponible : `available=false`. Si le dépôt n'a pas de numéro de flux Chorus
+    (bloqué/erreur), renvoie `crRefreshed=false` sans appeler Chorus.
+    """
+    resolved_tenant = _resolve_flux_tenant(user, tenant_id)
+    env_override = environment.strip().lower() if isinstance(environment, str) and environment.strip() else None
+
+    info = await asyncio.to_thread(_get_deposit_sync, tenant_id=resolved_tenant, deposit_id=deposit_id)
+    if info is None:
+        return _json_response(
+            HTTPStatus.OK,
+            {"success": True, "available": False, "reason": "database_not_available"},
+        )
+    if not info.get("found"):
+        raise HTTPException(status_code=404, detail="Dépôt de flux introuvable.")
+
+    numero = info.get("numero")
+    if not numero:
+        return _json_response(
+            HTTPStatus.OK,
+            {
+                "success": False,
+                "available": True,
+                "crRefreshed": False,
+                "error": "Ce dépôt n'a pas de numéro de flux Chorus (dépôt bloqué ou en erreur).",
+                "deposit": info.get("deposit"),
+            },
+        )
+
+    outcome = await _refresh_cr_one(
+        tenant_id=resolved_tenant, deposit_id=deposit_id, numero_flux_depot=str(numero), environment_override=env_override
+    )
+    return _json_response(
+        HTTPStatus.OK,
+        {
+            "success": bool(outcome.get("crRefreshed")),
+            "available": True,
+            "crRefreshed": bool(outcome.get("crRefreshed")),
+            "error": outcome.get("error"),
+            "deposit": outcome.get("deposit"),
+        },
+    )
+
+
+@router.post("/deposits/refresh-cr")
+async def handle_refresh_cr_batch(
+    limit: int = Query(10, ge=1, le=50),
+    environment: str | None = Query(None),
+    tenant_id: str | None = Query(None, alias="tenantId"),
+    user: dict[str, Any] = Depends(require_submit_permission),
+) -> JSONResponse:
+    """Rafraîchit un lot borné de dépôts, les moins récemment consultés d'abord."""
+    resolved_tenant = _resolve_flux_tenant(user, tenant_id)
+    env_override = environment.strip().lower() if isinstance(environment, str) and environment.strip() else None
+
+    candidates = await asyncio.to_thread(_list_needing_cr_sync, tenant_id=resolved_tenant, limit=limit)
+    if candidates is None:
+        return _json_response(
+            HTTPStatus.OK,
+            {"success": True, "available": False, "reason": "database_not_available", "attempted": 0, "refreshed": 0, "items": []},
+        )
+
+    items: list[dict[str, Any]] = []
+    refreshed = 0
+    for candidate in candidates:
+        numero = candidate.get("numero")
+        if not numero:
+            continue
+        outcome = await _refresh_cr_one(
+            tenant_id=resolved_tenant, deposit_id=str(candidate["id"]),
+            numero_flux_depot=str(numero), environment_override=env_override,
+        )
+        if outcome.get("crRefreshed"):
+            refreshed += 1
+        items.append({"id": outcome.get("id"), "crRefreshed": outcome.get("crRefreshed"), "error": outcome.get("error")})
+
+    return _json_response(
+        HTTPStatus.OK,
+        {"success": True, "available": True, "attempted": len(items), "refreshed": refreshed, "items": items},
     )

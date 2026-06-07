@@ -10,6 +10,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/common/PageHeader';
+import { ProcessExplanationCard } from '@/components/flux/ProcessExplanationCard';
+import { PAGE_EXPLANATIONS } from '@/lib/flux/content';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { useToast } from '@/hooks/use-toast';
 import { loadChorusConfig } from '@/lib/chorus/storage';
@@ -234,6 +236,8 @@ export default function PdfToFluxPage() {
         title="PDF facture → flux"
         description="Transformez une facture PDF visuelle en flux UBL structuré. L'extraction est relue et corrigée par vos soins avant génération et dépôt — un PDF normal n'est jamais déposé tel quel."
       />
+
+      <ProcessExplanationCard {...PAGE_EXPLANATIONS.preparation} />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
         {/* ----------------------------- COLONNE GAUCHE ----------------------------- */}

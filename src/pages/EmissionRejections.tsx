@@ -23,6 +23,8 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
+import { ProcessExplanationCard } from '@/components/flux/ProcessExplanationCard';
+import { PAGE_EXPLANATIONS } from '@/lib/flux/content';
 import { KpiCard } from '@/components/common/KpiCard';
 import { ApiErrorCard } from '@/components/common/ApiErrorCard';
 import { SkeletonTable } from '@/components/common/LoadingSkeleton';
@@ -285,6 +287,8 @@ export default function EmissionRejectionsPage() {
           </Button>
         }
       />
+
+      <ProcessExplanationCard {...PAGE_EXPLANATIONS.erreurs} />
 
       {error && (
         <ApiErrorCard

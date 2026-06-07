@@ -28,6 +28,9 @@ import requests
 CHORUS_RECUPERER_FORMAT_FLUX_PATH = "/transverses/v1/recuperer/formatflux"
 CHORUS_RECUPERER_SYNTAXE_FLUX_PATH = "/transverses/v1/recuperer/syntaxeflux"
 CHORUS_DEPOSER_FLUX_PATH = "/factures/v1/deposer/flux"
+# Compte rendu de traitement d'un flux déposé (mêmes domaines que deposer/flux).
+CHORUS_CONSULTER_CR_PATH = "/factures/v1/consulterCR"
+CHORUS_CONSULTER_CR_DETAILLE_PATH = "/factures/v1/consulterCRDetaille"
 
 # Syntaxes de flux du premier MVP (utilisées en repli si l'API formatflux /
 # syntaxeflux n'est pas disponible). La source de vérité reste Chorus Pro.
@@ -245,5 +248,69 @@ async def deposer_flux_facture(
         "dateDepot": _field(body, "dateDepot"),
         "numeroFluxDepot": _field(body, "numeroFluxDepot"),
         "syntaxeFlux": _field(body, "syntaxeFlux") or syntaxe_flux,
+        "raw": body,
+    }
+
+
+async def consulter_cr_detaille(
+    piste_base_url: str,
+    access_token: str,
+    cpro_account_base64: str,
+    numero_flux_depot: str,
+    *,
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    """Consulte le compte rendu DÉTAILLÉ d'un flux (`consulterCRDetaille`).
+
+    Renvoie l'état d'intégration du flux et, le cas échéant, les erreurs techniques
+    (`listeErreurTechnique`) et par demande de paiement (`listeErreurDP`).
+    """
+    _validate_common_args(piste_base_url, access_token, cpro_account_base64)
+    numero = str(numero_flux_depot or "").strip()
+    if not numero:
+        raise ChorusFluxError("numeroFluxDepot manquant.")
+
+    http_status, body = await _post_flux_json(
+        piste_base_url,
+        access_token,
+        cpro_account_base64,
+        CHORUS_CONSULTER_CR_DETAILLE_PATH,
+        {"numeroFluxDepot": numero},
+        timeout_seconds,
+    )
+    return {
+        "http_status": http_status,
+        "codeRetour": _coerce_code_retour(_field(body, "codeRetour")),
+        "libelle": _field(body, "libelle"),
+        "raw": body,
+    }
+
+
+async def consulter_cr(
+    piste_base_url: str,
+    access_token: str,
+    cpro_account_base64: str,
+    numero_flux_depot: str,
+    *,
+    timeout_seconds: float = 30.0,
+) -> dict[str, Any]:
+    """Consulte le compte rendu d'un flux (`consulterCR`) : état + PDF du CR."""
+    _validate_common_args(piste_base_url, access_token, cpro_account_base64)
+    numero = str(numero_flux_depot or "").strip()
+    if not numero:
+        raise ChorusFluxError("numeroFluxDepot manquant.")
+
+    http_status, body = await _post_flux_json(
+        piste_base_url,
+        access_token,
+        cpro_account_base64,
+        CHORUS_CONSULTER_CR_PATH,
+        {"numeroFluxDepot": numero},
+        timeout_seconds,
+    )
+    return {
+        "http_status": http_status,
+        "codeRetour": _coerce_code_retour(_field(body, "codeRetour")),
+        "libelle": _field(body, "libelle"),
         "raw": body,
     }

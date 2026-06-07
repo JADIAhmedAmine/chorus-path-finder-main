@@ -4,6 +4,7 @@ import {
   LayoutDashboard, FileText, Upload, Building2, Settings,
   ClipboardList, UserCircle2, Activity, AlertTriangle, Inbox, CheckCircle2,
   Zap, Scale, MessageSquareWarning, Bell, UploadCloud, Sparkles, Network,
+  Workflow, Wand2,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -25,6 +26,18 @@ interface SidebarNavItem {
 const mainItems: SidebarNavItem[] = [
   { title: 'Chorus Pilot', url: '/chorus-pilot', icon: Zap },
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
+];
+
+// Parcours « Flux » : nouvelle entrée principale qui relie les fonctionnalités
+// existantes (aucune route nouvelle hormis la vue d'ensemble /flux).
+const fluxItems: SidebarNavItem[] = [
+  { title: "Vue d'ensemble", url: '/flux', icon: Network },
+  { title: 'Déposer', url: '/invoices/flux', icon: UploadCloud },
+  { title: 'Préparer / Corriger', url: '/invoices/pdf-to-flux', icon: Wand2 },
+  { title: 'Suivi', url: '/invoices/g2b-flux', icon: Workflow },
+  { title: 'Erreurs', url: '/invoices/rejections', icon: MessageSquareWarning },
+  { title: 'Factures liées', url: '/invoices', icon: FileText },
+  { title: 'Annuaire', url: '/references/customers', icon: Building2 },
 ];
 
 const receptionItems: SidebarNavItem[] = [
@@ -184,6 +197,7 @@ export function AppSidebar() {
 
       <SidebarContent className="gap-1 py-3">
         {renderGroup('Principal', mainItems)}
+        {renderGroup('Flux', fluxItems)}
         {renderGroup('Réception', receptionItems)}
         {renderGroup('Émission', emissionItems)}
         {renderGroup('Référentiels', refItems)}

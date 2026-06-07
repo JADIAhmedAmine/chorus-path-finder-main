@@ -18,6 +18,7 @@ import References from "./pages/References";
 import SettingsPage from "./pages/SettingsPage";
 import Monitoring from "./pages/Monitoring";
 import ChorusPilotPage from "./pages/ChorusPilotPage";
+import FluxHub from "./pages/FluxHub";
 import FluxDepositPage from "./pages/FluxDepositPage";
 import PdfToFluxPage from "./pages/PdfToFluxPage";
 import G2BFluxDepositPage from "./pages/G2BFluxDepositPage";
@@ -123,6 +124,7 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/chorus-pilot" element={<RequireAuth><AppLayout><ChorusPilotPage /></AppLayout></RequireAuth>} />
+            <Route path="/flux" element={<RequireAuth><AppLayout><FluxHub /></AppLayout></RequireAuth>} />
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
             <Route path="/invoices/notifications" element={<RequireAuth><AppLayout><InvoiceNotificationsPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/rejections" element={<RequireAuth><AppLayout><EmissionRejectionsPage /></AppLayout></RequireAuth>} />

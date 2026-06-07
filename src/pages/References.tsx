@@ -10,6 +10,8 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { Search, Plus, Info, Building2, ClipboardList, RefreshCw, Loader2, Server, FileJson } from 'lucide-react';
 import { PageHeader } from '@/components/common/PageHeader';
+import { ProcessExplanationCard } from '@/components/flux/ProcessExplanationCard';
+import { PAGE_EXPLANATIONS } from '@/lib/flux/content';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import {
@@ -276,6 +278,9 @@ export default function References() {
         title="Référentiels"
         description="Clients publics et services destinataires synchronisés depuis Chorus Pro."
       />
+
+      <ProcessExplanationCard {...PAGE_EXPLANATIONS.annuaire} />
+
       {loading && (
         <p className="text-sm text-muted-foreground">Chargement des référentiels Chorus...</p>
       )}
