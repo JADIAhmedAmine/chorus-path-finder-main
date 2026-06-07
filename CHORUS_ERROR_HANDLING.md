@@ -31,7 +31,7 @@
 | **Business data** | `NON_CONFORME`, `REFUSEE_*` | Missing TVA, incoherent TTC, missing invoice number, missing engagement | Business validation (TVA/devises/cadre + amounts) before deposit |
 | **Validation circuit** | `REFUSEE_1/2`, `ABSENCE_VALIDATION_*_HORS_DELAI`, `ERREUR_*_SUR_*` | Recipient validation refusal / delay | Show motif + guide resubmission / contact |
 | **Suspension** | `SUSPENDUE`, `A_COMPLETER`, `EN_ATTENTE_RECYCLAGE_FOURNISSEUR` | Complement requested | Guided complement (comment/attachment) |
-| **Recyclage** | `A_RECYCLER`, `DUPLIQUE_APRES_REFUS` | Must be corrected & resubmitted | Recycle flow → correct → redeposit |
+| **Recyclage** | `A_RECYCLER`, `DUPLIQUE_APRES_REFUS` | Routing data must be corrected | Correct recipient/service/commitment only → recycle |
 
 ## 4. Suspension handling
 
@@ -42,8 +42,11 @@
 
 ## 5. Rejection / recyclage handling
 
-- `REJETEE` / `A_RECYCLER`: read the **motif** from the CR / status reason, correct the source
-  (XML/UBL/CII or data), then **redeposit** [S6/R5].
+- `REJETEE`: read the **motif**, create a corrected invoice with a **new invoice number**, then submit
+  it as a new invoice/flux.
+- `A_RECYCLER`: keep amounts, VAT, lines, supplier and invoice number unchanged. Correct only the
+  recipient SIRET/code, recipient service and legal commitment/purchase order, then call the dedicated
+  recycle action.
 - App support: `/api/chorus/recycle`, `/api/chorus/validator/correct`, `EmissionRejections.tsx` page [R2].
 - Always surface `statusReasonCode` / `statusReasonLabel` (present on the invoice model) to the user [R5].
 

@@ -155,6 +155,13 @@
 
 ## PHASE 3 — Correction guidée (P1–P2)
 
+### P3-0 · Règle métier « À recycler » · ✅ CORRIGÉ (2026-06-07)
+- **Objectif:** distinguer strictement rejet, suspension, recyclage et facture intégrée.
+- **Fichiers:** `chorus_python/recycle_policy.py`, `chorus_python/service.py`, `scripts/chorus_submit_server.py`, `src/pages/ChorusInvoiceDetail.tsx`, `src/lib/chorus/invoiceStatusGuide.ts`, `src/lib/chorus/submissionState.ts`.
+- **Règles:** `REJETEE` → nouvelle facture corrigée avec nouveau numéro ; `SUSPENDUE` → complément/commentaire/pièce jointe ; `A_RECYCLER` → SIRET destinataire, code service et engagement/bon de commande uniquement ; `INTEGREE` → lecture seule.
+- **BE:** liste blanche stricte avant `/factures/v1/recycler`; rejet des montants, TVA, lignes, fournisseur, numéro de facture et métadonnées libres. **FE:** formulaire limité aux données d’acheminement; retrait de `A_RECYCLER` de la soumission générique.
+- **Acceptation:** les trois corrections d’acheminement sont acceptées; montant, TVA et numéro de facture sont refusés avant tout appel Chorus.
+
 ### P3-1 · Chorus error → plain explanation
 - **Objectif:** every reject/suspension motif gets a human explanation + remedy.
 - **Fichiers:** `chorus_python/g2b_error_explainer.py`, `chorus_python/errors.py`, `src/lib/chorus/invoiceStatusGuide.ts`, `status-utils.ts`.
@@ -168,10 +175,10 @@
 - **Acceptation:** user corrects flagged fields, regenerates a conformant flux, re-validates before deposit.
 
 ### P3-3 · Redeposit / recyclage flow
-- **Objectif:** one-click recover → redeposit.
+- **Objectif:** proposer deux parcours distincts sans confondre rejet et recyclage.
 - **Fichiers:** `{RECYCLE_PATH}` handler, `src/pages/EmissionRejections.tsx`.
-- **FE/BE:** redeposit corrected invoice; track new flux. **Dépendances API:** recycle + `deposer/flux`. **Complexité:** med · **Risque:** med · **Priorité:** P2.
-- **Acceptation:** rejected invoice → corrected → redeposited with a new flux id tracked.
+- **FE/BE:** `REJETEE` → nouvelle facture avec nouveau numéro puis nouveau dépôt; `A_RECYCLER` → correction d’acheminement via `recycler` sur la facture existante. **Dépendances API:** recycle + `deposer/flux`. **Complexité:** med · **Risque:** med · **Priorité:** P2.
+- **Acceptation:** chaque statut emprunte son parcours dédié; le nouveau flux d’une facture rejetée est suivi sans transformer une facture à recycler en nouvelle facture.
 
 ### P3-4 · Audit trail of corrections
 - **Objectif:** record who corrected/redeposited what.

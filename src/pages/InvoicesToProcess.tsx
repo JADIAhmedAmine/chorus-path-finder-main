@@ -119,7 +119,7 @@ function actionForStatus(invoice: Invoice): { label: string; helper: string; hre
   if (status.includes('RECYCL')) {
     return {
       label: 'Recycler',
-      helper: 'Corriger puis relancer selon le motif Chorus.',
+      helper: 'Corriger uniquement le destinataire, le service ou l’engagement, puis recycler.',
       href: `/invoices/chorus/${encodeURIComponent(invoice.id)}`,
     };
   }

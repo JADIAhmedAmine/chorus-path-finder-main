@@ -146,22 +146,13 @@ export interface ChorusSubmitInvoiceResult {
 }
 
 export interface ChorusRecycleInvoicePayload {
-  commentaire?: string;
   destinataire: {
     codeDestinataire: string;
     codeServiceExecutant?: string;
   };
-  idUtilisateurCourant?: number;
   identifiantFactureCPP: number;
   reference?: {
-    deviseFacture?: string;
-    modePaiement?: ChorusPaymentMode;
-    motifExonerationTva?: string;
     numeroBonCommande?: string;
-    numeroFactureOrigine?: string;
-    numeroMarche?: string;
-    typeFacture?: ChorusInvoiceType;
-    typeTva?: ChorusVatType;
   };
 }
 

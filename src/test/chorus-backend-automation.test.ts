@@ -145,11 +145,14 @@ describe('ChorusBackendAutomationClient', () => {
 
   it('recycles an invoice through the backend bridge', async () => {
     const payload = {
-      commentaire: 'Correction acheminement',
       destinataire: {
         codeDestinataire: '32242033407300',
+        codeServiceExecutant: 'SERVICE-FACTURES',
       },
       identifiantFactureCPP: 8426157,
+      reference: {
+        numeroBonCommande: 'EJ-2026-0042',
+      },
     };
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(jsonResponse({
       ok: true,

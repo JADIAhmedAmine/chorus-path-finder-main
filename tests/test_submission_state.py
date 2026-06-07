@@ -40,6 +40,15 @@ class ValidatePaymentRequestStateTest(unittest.TestCase):
         )
         self.assertIn("REJETEE", payload["message"])
 
+    def test_a_recycler_requires_dedicated_recycle_action(self) -> None:
+        with self.assertRaises(InvalidPaymentRequestStateError) as context:
+            validate_payment_request_state("A_RECYCLER")
+
+        error = context.exception
+        self.assertEqual(error.current_state, "A_RECYCLER")
+        self.assertEqual(error.reason, "recyclable")
+        self.assertIn("recyclage", str(error).lower())
+
     def test_empty_state_raises_with_missing_reason(self) -> None:
         with self.assertRaises(InvalidPaymentRequestStateError) as context:
             validate_payment_request_state("")

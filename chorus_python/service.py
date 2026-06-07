@@ -9,6 +9,7 @@ from .config import ChorusSettings
 from .files import is_signed_pdf_base64, is_signed_pdf_path
 from .models import ChorusMinimalInvoiceInput
 from .payload import build_minimal_submission_payload
+from .recycle_policy import prepare_recycle_payload
 from .soumission import (
     DEFAULT_MODE_DEPOT,
     DEFAULT_PIECE_JOINTE_PRINCIPALE_DESIGNATION,
@@ -83,15 +84,6 @@ def enforce_submission_vat_type(payload: dict[str, Any]) -> None:
         payload["references"] = references
 
     references["typeTva"] = normalize_submission_vat_type(references.get("typeTva"))
-
-
-def enforce_recycle_vat_type(payload: dict[str, Any]) -> None:
-    reference = payload.get("reference")
-    if not isinstance(reference, dict):
-        reference = {}
-        payload["reference"] = reference
-
-    reference["typeTva"] = normalize_submission_vat_type(reference.get("typeTva"))
 
 
 def mode_depot_for_pdf(is_signed: bool) -> str:
@@ -317,9 +309,7 @@ class ChorusSubmissionService:
 
     def recycle_invoice(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.client.reset_api_calls()
-        final_payload = deepcopy(payload)
-        if isinstance(final_payload.get("reference"), dict):
-            enforce_recycle_vat_type(final_payload)
+        final_payload = prepare_recycle_payload(deepcopy(payload), allow_comment=True)
         response = self.client.recycle_invoice(final_payload)
         return {
             "ok": True,

@@ -613,8 +613,12 @@ class SoumissionFactureTest(unittest.TestCase):
             "commentaire": "Correction acheminement",
             "destinataire": {
                 "codeDestinataire": "32242033407300",
+                "codeServiceExecutant": "SERVICE-FACTURES",
             },
             "identifiantFactureCPP": 8426157,
+            "reference": {
+                "numeroBonCommande": "EJ-2026-0042",
+            },
         }
 
         result = service.recycle_invoice(payload)
@@ -624,9 +628,34 @@ class SoumissionFactureTest(unittest.TestCase):
             "identifiantFactureCPP": 8426157,
             "statutFacture": "BROUILLON",
         })
-        self.assertNotIn("reference", result["payload"])
+        self.assertEqual(
+            result["payload"]["reference"],
+            {"numeroBonCommande": "EJ-2026-0042"},
+        )
         self.assertNotIn("idUtilisateurCourant", result["payload"])
         self.assertEqual(fake_client.recycled_payload, result["payload"])
+
+    def test_recycle_invoice_rejects_accounting_changes_before_chorus_call(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        with self.assertRaises(ValueError):
+            service.recycle_invoice({
+                "destinataire": {
+                    "codeDestinataire": "32242033407300",
+                },
+                "identifiantFactureCPP": 8426157,
+                "montantTotal": {
+                    "montantTtcTotal": 1200,
+                },
+            })
+
+        self.assertIsNone(fake_client.recycled_payload)
 
     def test_consult_invoice_history_posts_consulter_historique_payload(self) -> None:
         settings = ChorusSettings(

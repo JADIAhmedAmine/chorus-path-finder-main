@@ -2,9 +2,9 @@
 
 Chorus Pro retourne le code `GDP_MSG_11.001` lorsqu'on tente de soumettre
 une demande de paiement dont l'état courant n'est pas compatible avec
-l'action ciblée. Les seuls états acceptés sont `BROUILLON`,
-`ERREUR_FOURNISSEUR_SUR_VALIDEUR` et `A_RECYCLER`. On bloque côté backend
-pour rendre l'erreur lisible avant l'appel API.
+l'action ciblée. La soumission générique est réservée à `BROUILLON` et
+`ERREUR_FOURNISSEUR_SUR_VALIDEUR`. `A_RECYCLER` doit passer par l'action
+de recyclage dédiée, limitée aux données d'acheminement.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ ALLOWED_SUBMISSION_STATES: frozenset[str] = frozenset(
     {
         "BROUILLON",
         "ERREUR_FOURNISSEUR_SUR_VALIDEUR",
-        "A_RECYCLER",
     }
 )
 
@@ -45,6 +44,11 @@ class InvalidPaymentRequestStateError(Exception):
             return (
                 "La demande de paiement ne peut pas être soumise car son état "
                 f"est {self.current_state}. Les états autorisés sont {allowed}."
+            )
+        if self.reason == "recyclable":
+            return (
+                "La demande de paiement est à recycler. Utilisez l'action de "
+                "recyclage dédiée pour corriger uniquement son acheminement."
             )
         if self.reason == "missing":
             return (
@@ -92,13 +96,15 @@ def validate_payment_request_state(state: Any) -> str:
     """Vérifie que `state` autorise la soumission.
 
     Lève `InvalidPaymentRequestStateError` si l'état est `REJETEE`,
-    absent ou inconnu. Retourne l'état normalisé en cas de succès.
+    `A_RECYCLER`, absent ou inconnu. Retourne l'état normalisé en cas de succès.
     """
     normalized = normalize_payment_request_state(state)
     if normalized is None:
         raise InvalidPaymentRequestStateError(current_state=None, reason="missing")
     if normalized == "REJETEE":
         raise InvalidPaymentRequestStateError(current_state=normalized, reason="rejected")
+    if normalized == "A_RECYCLER":
+        raise InvalidPaymentRequestStateError(current_state=normalized, reason="recyclable")
     if normalized not in ALLOWED_SUBMISSION_STATES:
         raise InvalidPaymentRequestStateError(current_state=normalized, reason="unknown")
     return normalized
