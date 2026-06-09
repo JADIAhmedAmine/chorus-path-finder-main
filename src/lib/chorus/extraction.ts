@@ -7,6 +7,8 @@ import type {
 } from '@/lib/chorus/types';
 import { authenticatedFetch } from '@/lib/auth/session';
 import { applyExtractionTemplates } from '@/lib/chorus/extraction-templates';
+import { extractInvoiceDataWithLlm } from '@/lib/llm/ollama';
+import { canUseLlmExtraction, loadLlmConfig, resolveLlmRuntimeConfig } from '@/lib/llm/config';
 
 interface CandidateMatch<T> {
   value?: T;
@@ -1872,6 +1874,15 @@ export async function extractInvoiceData(
 
   if (sourceFormat === 'PDF' && text.length < 80) {
     warnings.push('Le PDF semble peu textuel. Les PDF scannés ou OCRisés ne sont pas encore pris en charge.');
+  }
+
+  // Affinage LLM optionnel (vLLM / Ollama selon GEN_PROVIDER). Désactivé par
+  // défaut : si le LLM n'est pas configuré, aucun appel ni changement de
+  // comportement. Quand il l'est, le LLM complète/corrige les champs heuristiques
+  // (il conserve les valeurs heuristiques pour les champs qu'il n'identifie pas).
+  if (canUseLlmExtraction(resolveLlmRuntimeConfig(loadLlmConfig()))) {
+    const llmRefinedFields = await extractInvoiceDataWithLlm(text, sourceFormat, file.name, fields);
+    Object.assign(fields, llmRefinedFields);
   }
 
   if (sourceFormat === 'PDF' && readabilityScore < 0.75) {

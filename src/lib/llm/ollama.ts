@@ -1,4 +1,5 @@
 import { canUseLlmExtraction, loadLlmConfig, resolveLlmRuntimeConfig } from '@/lib/llm/config';
+import { requestLlmCompletion } from '@/lib/llm/client';
 import type {
   ChorusPaymentMode,
   ExtractedInvoiceDraftData,
@@ -7,18 +8,10 @@ import type {
   InvoiceSourceFormat,
 } from '@/lib/chorus/types';
 
-interface OllamaChatResponse {
-  message?: {
-    content?: string;
-  };
-}
-
 interface OllamaExtractionPromptContext {
   evidenceText?: string;
   referenceHints?: string;
 }
-
-const OLLAMA_API_TIMEOUT_MS = 15000;
 
 const CHORUS_TVA_CODE_TO_RATE: Record<string, number> = {
   TVA20: 1.05,
@@ -550,7 +543,7 @@ function validateAndRepairTotals(data: ExtractedInvoiceDraftData): ExtractedInvo
   return data;
 }
 
-export async function extractInvoiceDataWithOllama(
+export async function extractInvoiceDataWithLlm(
   text: string,
   sourceFormat: InvoiceSourceFormat,
   fileName: string,
@@ -652,49 +645,8 @@ export async function extractInvoiceDataWithOllama(
     buildPromptDocumentText(text),
   ].filter(Boolean).join('\n');
 
-  try {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined;
-    const timeoutId = controller
-      ? globalThis.setTimeout(() => controller.abort(), OLLAMA_API_TIMEOUT_MS)
-      : undefined;
+  const content = await requestLlmCompletion(config, prompt, fetchImpl);
+  const llmFields = content ? parseLlmExtraction(content) : null;
 
-    const response = await fetchImpl(`${config.baseUrl.replace(/\/+$/, '')}/api/chat`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-      },
-      signal: controller?.signal,
-      body: JSON.stringify({
-        model: config.model,
-        stream: false,
-        format: 'json',
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        options: {
-          temperature: config.temperature,
-          top_p: config.topP,
-          num_predict: config.maxNewTokens,
-        },
-      }),
-    }).finally(() => {
-      if (timeoutId !== undefined) {
-        globalThis.clearTimeout(timeoutId);
-      }
-    });
-
-    if (!response.ok) {
-      return validateAndRepairTotals(heuristicFields);
-    }
-
-    const payload = await response.json() as OllamaChatResponse;
-    const llmFields = payload.message?.content ? parseLlmExtraction(payload.message.content) : null;
-
-    return validateAndRepairTotals(mergeExtractedData(heuristicFields, llmFields));
-  } catch {
-    return validateAndRepairTotals(heuristicFields);
-  }
+  return validateAndRepairTotals(mergeExtractedData(heuristicFields, llmFields));
 }
