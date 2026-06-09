@@ -1,3 +1,4 @@
+import { type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,8 @@ interface InvoiceOverviewDrawerProps {
   invoice: InvoiceDisplayModel | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Contenu additionnel inséré sous le guide d'action (ex. suggestion de rejet). */
+  children?: ReactNode;
 }
 
 function formatAmount(amount: number, currency: string): string {
@@ -46,7 +49,7 @@ function DetailItem({ label, value }: { label: string; value?: string | number |
   );
 }
 
-export function InvoiceOverviewDrawer({ invoice, open, onOpenChange }: InvoiceOverviewDrawerProps) {
+export function InvoiceOverviewDrawer({ invoice, open, onOpenChange, children }: InvoiceOverviewDrawerProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-2xl xl:max-w-3xl">
@@ -90,6 +93,8 @@ export function InvoiceOverviewDrawer({ invoice, open, onOpenChange }: InvoiceOv
             )}
 
             <InvoiceActionGuide invoice={invoice} />
+
+            {children}
 
             <Separator />
 

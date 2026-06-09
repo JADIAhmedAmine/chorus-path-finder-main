@@ -13,6 +13,7 @@ import { ChorusBackendAutomationClient, ChorusBackendAutomationError } from '@/l
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import { CompleteSuspendedInvoiceCard } from '@/components/chorus/CompleteSuspendedInvoiceCard';
+import { RejectionSuggestionCard } from '@/components/chorus/RejectionSuggestionCard';
 import { InvoiceActionGuide } from '@/components/chorus/InvoiceActionGuide';
 import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
 import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
@@ -652,6 +653,10 @@ export default function ChorusInvoiceDetail() {
             <p className="mt-1 text-sm text-muted-foreground">{invoice.statusReasonLabel}</p>
           </AlertDescription>
         </Alert>
+      )}
+
+      {(isRejected || isSuspended || isRecyclable) && (
+        <RejectionSuggestionCard invoice={invoice} onDetailPage />
       )}
 
       {isWrongValidatorRejection && (

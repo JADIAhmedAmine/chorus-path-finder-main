@@ -31,6 +31,7 @@ import { SkeletonTable } from '@/components/common/LoadingSkeleton';
 import { InvoiceDownloadMenu } from '@/components/chorus/InvoiceDownloadMenu';
 import { InvoiceContextBadge } from '@/components/chorus/InvoiceContextBadge';
 import { InvoiceOverviewDrawer } from '@/components/chorus/InvoiceOverviewDrawer';
+import { RejectionSuggestionCard } from '@/components/chorus/RejectionSuggestionCard';
 import {
   useInvoicesQuery,
   usePublicCustomersQuery,
@@ -646,7 +647,7 @@ export default function EmissionRejectionsPage() {
                             </Link>
                           </Button>
                           <Button size="sm" asChild className="h-8 px-2.5">
-                            <Link to="/invoices/new">
+                            <Link to={`/invoices/new?invoiceId=${encodeURIComponent(invoice.id)}&correction=1`}>
                               <ArrowRight className="mr-1 h-3.5 w-3.5" />
                               Resoumettre
                             </Link>
@@ -665,7 +666,9 @@ export default function EmissionRejectionsPage() {
         invoice={selectedDisplayInvoice}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
-      />
+      >
+        {selectedInvoice && <RejectionSuggestionCard invoice={selectedInvoice} />}
+      </InvoiceOverviewDrawer>
     </div>
   );
 }
