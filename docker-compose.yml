@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chorus}
       POSTGRES_DB: ${POSTGRES_DB:-chorus}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - chorus_pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -29,7 +29,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8008:8008"
+      - "${CHORUS_API_HOST_PORT:-8008}:8008"
     volumes:
       - ./.env.local:/app/.env.local:ro
       - ./config:/app/config
