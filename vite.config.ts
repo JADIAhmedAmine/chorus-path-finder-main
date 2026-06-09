@@ -19,6 +19,15 @@ function withSanitizedProxyHeaders(proxy: ProxyOptions): ProxyOptions {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const ollamaTarget = env.GEN_BASE_URL || "http://127.0.0.1:11434";
+  // vLLM expose une API OpenAI ; le baseUrl contient un chemin (/v1) qu'on ne veut
+  // pas dans la cible du proxy → on ne garde que l'origine.
+  const vllmTarget = (() => {
+    try {
+      return new URL(env.GEN_BASE_URL || "").origin;
+    } catch {
+      return env.GEN_BASE_URL || "http://127.0.0.1:8003";
+    }
+  })();
   const backendApiTarget = env.VITE_BACKEND_API_TARGET || "http://127.0.0.1:8008";
   const parsedDevServerPort = Number.parseInt(env.VITE_DEV_SERVER_PORT || "8081", 10);
   const devServerPort = Number.isFinite(parsedDevServerPort) ? parsedDevServerPort : 8081;
@@ -78,9 +87,17 @@ export default defineConfig(({ mode }) => {
           secure: false,
           rewrite: (path) => path.replace(/^\/__gen-proxy\/ollama/, ""),
         }),
+        "/__gen-proxy/vllm": withSanitizedProxyHeaders({
+          target: vllmTarget,
+          changeOrigin: true,
+          secure: false,
+          rewrite: (path) => path.replace(/^\/__gen-proxy\/vllm/, ""),
+        }),
       },
     },
     plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
+    // Expose aussi les variables GEN_* (config LLM) au client, en plus de VITE_*.
+    envPrefix: ["VITE_", "GEN_"],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

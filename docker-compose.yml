@@ -46,6 +46,12 @@ services:
         VITE_DATA_API_BASE_URL: ${VITE_DATA_API_BASE_URL:-/api/db}
         VITE_REFERENCE_API_BASE_URL: ${VITE_REFERENCE_API_BASE_URL:-/api/db}
         VITE_CHORUS_SUBMISSION_BRIDGE_URL: ${VITE_CHORUS_SUBMISSION_BRIDGE_URL:-/api/chorus/submit}
+        GEN_PROVIDER: ${GEN_PROVIDER:-}
+        GEN_BASE_URL: ${GEN_BASE_URL:-}
+        GEN_MODEL: ${GEN_MODEL:-}
+        GEN_MAX_NEW_TOKENS: ${GEN_MAX_NEW_TOKENS:-1024}
+        GEN_TEMPERATURE: ${GEN_TEMPERATURE:-0.2}
+        GEN_TOP_P: ${GEN_TOP_P:-0.9}
     depends_on:
       chorus-api:
         condition: service_healthy
