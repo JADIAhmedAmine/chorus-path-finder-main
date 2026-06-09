@@ -208,9 +208,9 @@ class Invoice(Base):
         Index("ix_invoices_status_chorus", "tenant_id", "status_chorus"),
         Index("ix_invoices_chorus_number", "chorus_invoice_number"),
         Index("ix_invoices_public_customer", "public_customer_id"),
-        CheckConstraint("total_ht >= 0", name="ck_invoices_total_ht_positive"),
-        CheckConstraint("total_vat >= 0", name="ck_invoices_total_vat_positive"),
-        CheckConstraint("total_ttc >= 0", name="ck_invoices_total_ttc_positive"),
+        # NB: no total_* >= 0 checks — invoices synced from Chorus Pro can be
+        # negative (avoirs / credit notes and rejected invoices). See migration
+        # 20260609_0006.
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
