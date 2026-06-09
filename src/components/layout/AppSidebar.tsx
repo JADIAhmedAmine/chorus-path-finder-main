@@ -14,6 +14,7 @@ import {
 import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
 import { loadAuthSession } from '@/lib/auth/session';
 import { loadChorusConfig } from '@/lib/chorus/storage';
+import { FLUX_ENABLED } from '@/lib/featureFlags';
 import { cn } from '@/lib/utils';
 
 interface SidebarNavItem {
@@ -58,6 +59,14 @@ const emissionItems: SidebarNavItem[] = [
 
 const invoiceItems: SidebarNavItem[] = [...receptionItems, ...emissionItems];
 
+// URLs du socle « Flux » — masquées dans la version limitée (voir featureFlags).
+const FLUX_URLS = new Set<string>([
+  '/flux',
+  '/invoices/flux',
+  '/invoices/pdf-to-flux',
+  '/invoices/g2b-flux',
+]);
+
 const refItems: SidebarNavItem[] = [
   { title: 'Clients publics', url: '/references/customers', icon: Building2 },
   { title: 'Services destinataires', url: '/references/services', icon: ClipboardList },
@@ -84,6 +93,11 @@ export function AppSidebar() {
         ...baseAdminItems,
       ]
     : baseAdminItems;
+
+  // Version limitée : on retire les entrées flux du groupe « Émission ».
+  const visibleEmissionItems = FLUX_ENABLED
+    ? emissionItems
+    : emissionItems.filter((item) => !FLUX_URLS.has(item.url));
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';
@@ -197,9 +211,9 @@ export function AppSidebar() {
 
       <SidebarContent className="gap-1 py-3">
         {renderGroup('Principal', mainItems)}
-        {renderGroup('Flux', fluxItems)}
+        {FLUX_ENABLED && renderGroup('Flux', fluxItems)}
         {renderGroup('Réception', receptionItems)}
-        {renderGroup('Émission', emissionItems)}
+        {renderGroup('Émission', visibleEmissionItems)}
         {renderGroup('Référentiels', refItems)}
         {renderGroup('Administration', adminItems)}
       </SidebarContent>

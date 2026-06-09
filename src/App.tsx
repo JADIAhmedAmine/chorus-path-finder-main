@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { hasValidAuthSession } from "@/lib/auth/session";
 import { loadChorusConfig } from "@/lib/chorus/storage";
+import { FLUX_ENABLED } from "@/lib/featureFlags";
 import { ReferenceCatalogClient } from "@/lib/references/client";
 import Dashboard from "./pages/Dashboard";
 import InvoiceList from "./pages/InvoiceList";
@@ -124,7 +125,9 @@ const App = () => (
             <Route path="/login" element={<Login />} />
             <Route path="/" element={<RequireAuth><AppLayout><Dashboard /></AppLayout></RequireAuth>} />
             <Route path="/chorus-pilot" element={<RequireAuth><AppLayout><ChorusPilotPage /></AppLayout></RequireAuth>} />
-            <Route path="/flux" element={<RequireAuth><AppLayout><FluxHub /></AppLayout></RequireAuth>} />
+            {FLUX_ENABLED
+              ? <Route path="/flux" element={<RequireAuth><AppLayout><FluxHub /></AppLayout></RequireAuth>} />
+              : <Route path="/flux" element={<RequireAuth><Navigate to="/" replace /></RequireAuth>} />}
             <Route path="/invoices" element={<RequireAuth><AppLayout><InvoiceList /></AppLayout></RequireAuth>} />
             <Route path="/invoices/notifications" element={<RequireAuth><AppLayout><InvoiceNotificationsPage /></AppLayout></RequireAuth>} />
             <Route path="/invoices/rejections" element={<RequireAuth><AppLayout><EmissionRejectionsPage /></AppLayout></RequireAuth>} />
@@ -136,9 +139,19 @@ const App = () => (
             <Route path="/invoices/to-process" element={<RequireAuth><AppLayout><InvoicesToProcess /></AppLayout></RequireAuth>} />
             <Route path="/reception" element={<RequireAuth><Navigate to="/invoices/reception" replace /></RequireAuth>} />
             <Route path="/invoices/new" element={<RequireAuth><AppLayout><InvoiceCreate /></AppLayout></RequireAuth>} />
-            <Route path="/invoices/flux" element={<RequireAuth><AppLayout><FluxDepositPage /></AppLayout></RequireAuth>} />
-            <Route path="/invoices/pdf-to-flux" element={<RequireAuth><AppLayout><PdfToFluxPage /></AppLayout></RequireAuth>} />
-            <Route path="/invoices/g2b-flux" element={<RequireAuth><AppLayout><G2BFluxDepositPage /></AppLayout></RequireAuth>} />
+            {FLUX_ENABLED ? (
+              <>
+                <Route path="/invoices/flux" element={<RequireAuth><AppLayout><FluxDepositPage /></AppLayout></RequireAuth>} />
+                <Route path="/invoices/pdf-to-flux" element={<RequireAuth><AppLayout><PdfToFluxPage /></AppLayout></RequireAuth>} />
+                <Route path="/invoices/g2b-flux" element={<RequireAuth><AppLayout><G2BFluxDepositPage /></AppLayout></RequireAuth>} />
+              </>
+            ) : (
+              <>
+                <Route path="/invoices/flux" element={<RequireAuth><Navigate to="/invoices" replace /></RequireAuth>} />
+                <Route path="/invoices/pdf-to-flux" element={<RequireAuth><Navigate to="/invoices" replace /></RequireAuth>} />
+                <Route path="/invoices/g2b-flux" element={<RequireAuth><Navigate to="/invoices" replace /></RequireAuth>} />
+              </>
+            )}
             <Route path="/invoices/chorus/:id" element={<RequireAuth><AppLayout><ChorusInvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/invoices/:id" element={<RequireAuth><AppLayout><InvoiceDetail /></AppLayout></RequireAuth>} />
             <Route path="/references/customers" element={<RequireAuth><AppLayout><References /></AppLayout></RequireAuth>} />
