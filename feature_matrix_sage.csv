@@ -1,0 +1,27 @@
+module,feature,provider_role,priority,complexity,depends_on,status,notes
+onboarding,Connexion OAuth2 Sage (authorization code),ErpProvider,MVP,M,Compte dev Sage + redirect_uri,todo,Backend uniquement
+onboarding,Token manager refresh rotatif avec lock single-writer,ErpProvider,MVP,M,Connexion OAuth2,todo,TTL 5 min refresh invalide le precedent
+onboarding,Stockage chiffre des tokens par tenant,ErpProvider,MVP,M,Token manager,todo,Jamais cote navigateur
+entity configuration,Resolution et cache X-Business (GET /businesses),ErpProvider,MVP,S,Token manager,todo,Header obligatoire chaque requete
+entity configuration,Mapping entite Chorus Pilot vers business Sage,ErpProvider,MVP,S,X-Business,todo,1 entite = 1 business au MVP
+annuaire lookup,Resolution contact CUSTOMER (GET/POST /contacts),ErpProvider,MVP,M,X-Business,todo,Creer si absent
+annuaire lookup,Resolution ledger_account_id INCOME (GET /ledger_accounts),ErpProvider,MVP,M,X-Business,todo,Compte par defaut au MVP
+annuaire lookup,Resolution tax_rate_id FR (GET /tax_rates),ErpProvider,MVP,M,X-Business,todo,Jamais en dur
+invoice emission,Mapping draft existant vers payload sales_invoice,ErpProvider,MVP,M,Resolution references,todo,Reutilise modele extraction
+invoice emission,POST /sales_invoices avec Idempotency-Key,ErpProvider,MVP,M,Mapping payload,todo,Anti-doublon
+invoice emission,Gestion 429 et backoff exponentiel,ErpProvider,MVP,S,POST sales_invoices,todo,150 concurrentes max
+status tracking,GET /sales_invoices/{id} statut paiement,ErpProvider,MVP,S,POST sales_invoices,todo,Distinct du lifecycle PDP
+status tracking,Polling incremental updated_or_created_since + $next,ErpProvider,MVP,S,APScheduler existant,todo,Pas de webhooks Sage
+status tracking,Champ statut paiement separe du statut lifecycle PDP,ErpProvider,MVP,S,Modele DB,todo,Ne pas confondre
+audit logs,Traçage appels Sage sans secrets (x_request_id),ErpProvider,MVP,S,Appels API,todo,Pas de contenu facture
+admin settings,Ecran gestion connexions providers par tenant,ErpProvider,MVP,S,OAuth2,todo,Statut/reconnexion
+invoice emission,Action UI Emettre vers Sage,ErpProvider,MVP,S,POST sales_invoices,todo,Bouton sur detail facture
+dashboard,KPI factures par provider / par PDP,both,V1,S,provider_invoices,todo,Vue agregee
+orchestration,Interface generique Provider (ErpProvider/PdpProvider),both,MVP,M,-,todo,Socle multi-provider
+orchestration,Formaliser Chorus Pro derriere PdpProvider,PdpProvider,V1,S,Interface Provider,todo,Ne pas reecrire l existant
+orchestration,Moteur de routing ERP source x PDP destination,both,V1,M,Interface Provider,todo,Regles par client/type
+invoice reception,Import factures depuis Sage (listInvoices),ErpProvider,V1,M,Polling,todo,MVP = emission only
+orchestration,SageNetworkProvider (role PDP),PdpProvider,V2,L,API PDP Sage publique,blocked,API non documentee publiquement
+orchestration,CegidProvider,ErpProvider,V2,L,Interface Provider stable,todo,Nouveau connecteur
+orchestration,DocaposteProvider,PdpProvider,V2,L,Interface Provider stable,todo,Nouveau connecteur
+admin settings,Regles de routing configurables (UI),both,V2,M,Moteur de routing,todo,Par client/type/PDP
