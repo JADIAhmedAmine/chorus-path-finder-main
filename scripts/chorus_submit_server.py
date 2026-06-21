@@ -104,6 +104,7 @@ from chorus_python.chorus_flux_routes import router as flux_router
 from chorus_python.chorus_pdf_to_flux_routes import router as pdf_to_flux_router
 from chorus_python.g2b_routes_flux import router as g2b_flux_router
 from chorus_python.g2b_routes_annuaire import router as g2b_annuaire_router
+from chorus_python.providers.iopole.routes import router as iopole_router
 from chorus_python.client import ChorusClient, sanitize_debug_value
 from chorus_python.errors import normalize_chorus_error
 from chorus_python.extraction import extract_pdf_text_from_base64_docling
@@ -541,6 +542,7 @@ app.include_router(flux_router)
 app.include_router(pdf_to_flux_router)
 app.include_router(g2b_flux_router)
 app.include_router(g2b_annuaire_router)
+app.include_router(iopole_router)
 
 if _DB_ROUTER_AVAILABLE:
     app.include_router(db_router)
