@@ -95,11 +95,59 @@ export async function downloadIopoleInvoice(id: string, readable = false): Promi
   URL.revokeObjectURL(url);
 }
 
-// --- Réception (inbound, mode PULL) -----------------------------------------
-export async function listIopoleInbox(): Promise<{ notSeen: string[]; count: number }> {
-  const res = await fetch(`${BASE}/inbox`, { headers: authHeaders() });
+// --- Réception (inbound) ----------------------------------------------------
+export interface IopoleInbox {
+  received: IopoleInvoice[];
+  notSeen: string[];
+  count: number;
+}
+
+export async function listIopoleInbox(limit = 30): Promise<IopoleInbox> {
+  const res = await fetch(`${BASE}/inbox?limit=${limit}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`Iopole: réception (${res.status})`);
   return res.json();
+}
+
+export async function checkIopolePeppol(scheme: string, value: string): Promise<unknown> {
+  const res = await fetch(`${BASE}/directory/peppol/check?scheme=${encodeURIComponent(scheme)}&value=${encodeURIComponent(value)}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Iopole: vérification Peppol (${res.status})`);
+  const data = await res.json();
+  return data?.participant ?? data;
+}
+
+// --- PDF quelconque -> JSON Iopole -> émission -------------------------------
+export interface ConvertPdfResult {
+  draft: Record<string, unknown>;
+  iopoleJson: Record<string, unknown>;
+  warnings: string[];
+  confidence: Record<string, number>;
+}
+
+export async function convertPdfToIopole(file: File): Promise<ConvertPdfResult> {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${BASE}/convert-pdf`, { method: 'POST', headers: authHeaders(), body: form });
+  if (!res.ok) throw new Error(`Iopole: conversion PDF (${res.status})`);
+  return res.json();
+}
+
+export async function emitIopoleFromJson(
+  invoice: Record<string, unknown>,
+  kind: 'facturx' | 'ubl' = 'facturx',
+): Promise<{ id?: string; error?: string; detail?: unknown }> {
+  const res = await fetch(`${BASE}/emit-from-json`, {
+    method: 'POST',
+    headers: { ...authHeaders(), 'content-type': 'application/json' },
+    body: JSON.stringify({ invoice, kind }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const detail = data?.detail ? ` — ${JSON.stringify(data.detail).slice(0, 300)}` : '';
+    throw new Error((data?.error || `Iopole: émission (${res.status})`) + detail);
+  }
+  return data;
 }
 
 export async function markIopoleSeen(id: string): Promise<void> {

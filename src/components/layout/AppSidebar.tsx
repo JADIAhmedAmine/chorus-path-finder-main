@@ -57,7 +57,10 @@ const emissionItems: SidebarNavItem[] = [
 ];
 
 const providerItems: SidebarNavItem[] = [
-  { title: 'Iopole (PDP)', url: '/providers/iopole', icon: Workflow },
+  { title: 'Émission', url: '/providers/iopole', icon: Workflow },
+  { title: 'Réception', url: '/providers/iopole/reception', icon: Inbox },
+  { title: 'PDF → Facture', url: '/providers/iopole/pdf', icon: Sparkles },
+  { title: 'Annuaire', url: '/providers/iopole/annuaire', icon: Building2 },
 ];
 
 const invoiceItems: SidebarNavItem[] = [...receptionItems, ...emissionItems];
@@ -116,7 +119,7 @@ export function AppSidebar() {
           && location.pathname !== '/invoices/reception/responses'
         );
     }
-    if (invoiceItems.some((item) => item.url === path)) {
+    if (invoiceItems.some((item) => item.url === path) || providerItems.some((item) => item.url === path)) {
       return location.pathname === path;
     }
     return location.pathname.startsWith(path);
@@ -204,7 +207,7 @@ export function AppSidebar() {
         {renderGroup('Flux', fluxItems)}
         {renderGroup('Réception', receptionItems)}
         {renderGroup('Émission', emissionItems)}
-        {renderGroup('Plateformes', providerItems)}
+        {renderGroup('Iopole (PDP)', providerItems)}
         {renderGroup('Référentiels', refItems)}
         {renderGroup('Administration', adminItems)}
       </SidebarContent>
