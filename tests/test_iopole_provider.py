@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-import time
 import unittest
 from pathlib import Path
 
@@ -14,6 +13,7 @@ from chorus_python.providers import (  # noqa: E402
     OAuth2Config,
     OAuth2TokenManager,
     PdpProvider,
+    ProviderError,
 )
 from chorus_python.providers.iopole.config import IopoleConfig  # noqa: E402
 from chorus_python.providers.iopole.provider import IopolePdpProvider  # noqa: E402
@@ -37,7 +37,6 @@ class _FakeTokenSession:
 
     def post(self, url, data=None, headers=None, timeout=None):
         self.post_calls += 1
-        # client_credentials : pas de refresh_token dans la réponse.
         return _FakeResponse(200, {"access_token": f"tok-{self.post_calls}", "expires_in": self._expires_in})
 
 
@@ -66,14 +65,12 @@ class ClientCredentialsTest(unittest.TestCase):
     def test_no_refresh_token_required(self):
         session = _FakeTokenSession()
         manager = _manager(session)
-        token = manager.get_client_credentials_token("conn-1")
-        self.assertEqual(token, "tok-1")
-        # Deuxième appel : token encore valide -> pas de nouvel appel HTTP.
+        self.assertEqual(manager.get_client_credentials_token("conn-1"), "tok-1")
         self.assertEqual(manager.get_client_credentials_token("conn-1"), "tok-1")
         self.assertEqual(session.post_calls, 1)
 
     def test_refetch_when_expired(self):
-        session = _FakeTokenSession(expires_in=0)  # toujours expiré
+        session = _FakeTokenSession(expires_in=0)
         manager = _manager(session)
         manager.get_client_credentials_token("conn-1")
         manager.get_client_credentials_token("conn-1")
@@ -83,7 +80,10 @@ class ClientCredentialsTest(unittest.TestCase):
 class IopoleProviderTest(unittest.TestCase):
     def _provider(self, api_session):
         config = IopoleConfig(
-            client_id="c", client_secret="s", token_url="https://token.example/token"
+            client_id="c",
+            client_secret="s",
+            customer_id="cust-123",
+            token_url="https://auth.preprod.iopole.fr/realms/iopole/protocol/openid-connect/token",
         )
         return IopolePdpProvider(
             config,
@@ -95,21 +95,32 @@ class IopoleProviderTest(unittest.TestCase):
     def test_is_pdp_provider(self):
         self.assertTrue(issubclass(IopolePdpProvider, PdpProvider))
 
-    def test_deposit_returns_ref_with_bearer(self):
-        api = _FakeApiSession([_FakeResponse(201, {"id": "iop-789", "reference": "INV-1"})])
-        provider = self._provider(api)
-        ref = provider.deposit(b"%PDF-xxx", filename="f.pdf", format_flux="UBL", syntaxe_flux="UBL_INVOICE")
-        self.assertEqual(ref.external_id, "iop-789")
-        self.assertEqual(ref.provider, "iopole")
-        _, _, _, headers = api.requests[0]
-        self.assertTrue(headers["Authorization"].startswith("Bearer "))
-
-    def test_status_sets_lifecycle_not_payment(self):
-        api = _FakeApiSession([_FakeResponse(200, {"id": "iop-789", "status": "DELIVERED"})])
+    def test_status_maps_state_as_lifecycle(self):
+        api = _FakeApiSession([_FakeResponse(200, {"invoice": {"invoiceId": "iop-789", "state": "DELIVERED"}})])
         provider = self._provider(api)
         status = provider.get_lifecycle_status("iop-789")
         self.assertEqual(status.lifecycle_status, "DELIVERED")
         self.assertIsNone(status.payment_status)  # rôle PDP, pas ERP
+        method, url, _, headers = api.requests[0]
+        self.assertEqual(method, "GET")
+        self.assertTrue(url.endswith("/v1/api/operator/invoicing/v1/invoice/iop-789"))
+        self.assertTrue(headers["Authorization"].startswith("Bearer "))
+        self.assertEqual(headers["customer-id"], "cust-123")
+
+    def test_search_returns_refs(self):
+        api = _FakeApiSession([_FakeResponse(200, {"items": [{"invoice": {"invoiceId": "abc"}}]})])
+        provider = self._provider(api)
+        refs = provider.search_invoices(limit=1)
+        self.assertEqual(len(refs), 1)
+        self.assertEqual(refs[0].external_id, "abc")
+        _, url, _, _ = api.requests[0]
+        self.assertIn("/v1.1/invoice/search", url)
+
+    def test_deposit_pending_raises(self):
+        # L'endpoint d'émission n'est pas encore figé : deposit signale clairement.
+        provider = self._provider(_FakeApiSession([]))
+        with self.assertRaises(ProviderError):
+            provider.deposit(b"%PDF", filename="f.pdf", format_flux="UBL", syntaxe_flux="UBL_INVOICE")
 
 
 if __name__ == "__main__":

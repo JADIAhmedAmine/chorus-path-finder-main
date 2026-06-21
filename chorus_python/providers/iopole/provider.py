@@ -1,14 +1,17 @@
 """``IopolePdpProvider`` — implémentation PdpProvider pour Iopole.
 
-Iopole est une Plateforme Agréée (PDP) « API-first » : auth client_credentials,
-REST asynchrone, notifications de statut (webhooks), formats Factur-X/UBL/CII/
-Peppol. Ce provider incarne le **rôle PDP** (dépôt + lifecycle), exactement comme
-l'intégration Chorus Pro existante — qui pourra à terme se ranger derrière la
-même interface.
+Iopole est une Plateforme Agréée (PDP) « API-first » : auth client_credentials
+(Keycloak), REST asynchrone, statuts en **Push** (webhooks), formats Factur-X/
+UBL/CII/Peppol. Ce provider incarne le **rôle PDP** (dépôt + lifecycle), comme
+l'intégration Chorus Pro existante.
 
-⚠️ Les chemins d'endpoints exacts et le contrat de dépôt (multipart vs base64)
-restent à confirmer via ``api-doc-mapper`` sur l'OpenAPI Iopole : marqués
-``TODO(api-doc-mapper)``.
+Confirmé via l'OpenAPI public ``…/operator/invoicing`` :
+- consultation : ``GET /v1.1/invoice/search`` et ``GET /v1/invoice/{invoiceId}`` ;
+- header ``customer-id`` (UUID) ; statuts = enum ``INVOICE_STATES``.
+
+⚠️ Le service d'**émission/dépôt** (envoi au destinataire) est auth-gated et non
+exposé publiquement : ``deposit()`` reste provisoire (``TODO(api-doc-mapper)``) en
+attendant le Swagger authentifié.
 
 Sécurité : aucun token ni contenu de facture journalisé.
 """
@@ -19,6 +22,7 @@ import base64
 import logging
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlencode
 
 import requests
 
@@ -29,18 +33,35 @@ from ..base import (
     ProviderInvoiceRef,
 )
 from ..oauth import OAuth2TokenManager
-from .config import IopoleConfig
+from .config import IOPOLE_INVOICING_MOUNT, IopoleConfig
 
 logger = logging.getLogger("providers.iopole")
 
-# TODO(api-doc-mapper): confirmer les chemins exacts sur l'OpenAPI Iopole.
-_EMIT_INVOICE_PATH = "/api/invoices/emit"
-_INVOICE_STATUS_PATH = "/api/invoices/{external_id}/status"
-_HEALTH_PATH = "/api/ping"
+# Enum de statut confirmé (champ invoice.state).
+INVOICE_STATES = (
+    "PENDING",
+    "VALID",
+    "INVALID",
+    "DUPLICATED",
+    "WRONG_ROUTING",
+    "NOT_DELIVERED",
+    "DELIVERED",
+    "DELIVERY_PENDING",
+    "PROCESSING",
+    "CONVERTED",
+    "CONVERSION_FAILED",
+)
+
+# Chemins du service de consultation (montés sous IOPOLE_INVOICING_MOUNT).
+_INVOICE_SEARCH_PATH = "/v1.1/invoice/search"
+_INVOICE_GET_PATH = "/v1/invoice/{invoice_id}"
+
+# TODO(api-doc-mapper): service d'émission auth-gated -> figer depuis le Swagger.
+_EMIT_PATH: str | None = None
 
 
 class IopolePdpProvider(PdpProvider):
-    """Provider PDP Iopole (REST, auth client_credentials)."""
+    """Provider PDP Iopole (REST, auth client_credentials Keycloak)."""
 
     name = "iopole"
 
@@ -62,20 +83,19 @@ class IopolePdpProvider(PdpProvider):
     # --- HTTP --------------------------------------------------------------
     def _headers(self) -> dict[str, str]:
         token = self._tokens.get_client_credentials_token(self._connection_key)
-        return {
+        headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         }
+        if self._config.customer_id:
+            headers["customer-id"] = self._config.customer_id  # header confirmé (UUID)
+        return headers
 
-    def _request(
-        self,
-        method: str,
-        path: str,
-        *,
-        json_body: dict[str, Any] | None = None,
-    ) -> Any:
-        url = path if path.startswith("http") else f"{self._config.base_url.rstrip('/')}/{path.lstrip('/')}"
+    def _invoicing_url(self, path: str) -> str:
+        return f"{self._config.host.rstrip('/')}{IOPOLE_INVOICING_MOUNT}{path}"
+
+    def _request(self, method: str, url: str, *, json_body: dict[str, Any] | None = None) -> Any:
         try:
             response = self._session.request(
                 method,
@@ -99,14 +119,61 @@ class IopolePdpProvider(PdpProvider):
             return None
         return response.json()
 
-    # --- PdpProvider -------------------------------------------------------
+    # --- Consultation (confirmé) -------------------------------------------
+    def get_lifecycle_status(self, external_id: str) -> InvoiceStatus:
+        """Relit le statut lifecycle via ``GET /v1/invoice/{invoiceId}``."""
+        body = self._request("GET", self._invoicing_url(_INVOICE_GET_PATH.format(invoice_id=external_id)))
+        data = body if isinstance(body, dict) else {}
+        invoice = data.get("invoice") if isinstance(data.get("invoice"), dict) else data
+        state = invoice.get("state") if isinstance(invoice, dict) else None
+        return InvoiceStatus(
+            external_id=external_id,
+            lifecycle_status=state if isinstance(state, str) else None,
+            polled_at=datetime.utcnow(),
+            raw=data,
+        )
+
+    def search_invoices(
+        self,
+        *,
+        query: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+        expand: tuple[str, ...] = ("lastStatusData",),
+    ) -> list[ProviderInvoiceRef]:
+        """Liste/recherche via ``GET /v1.1/invoice/search`` (offset/limit/expand)."""
+        params: dict[str, Any] = {"offset": offset, "limit": min(limit, 200)}
+        if query:
+            params["q"] = query
+        for value in expand:
+            params.setdefault("expand", [])
+            params["expand"].append(value)  # type: ignore[union-attr]
+        url = f"{self._invoicing_url(_INVOICE_SEARCH_PATH)}?{urlencode(params, doseq=True)}"
+        body = self._request("GET", url)
+        items = body.get("items", body.get("data", [])) if isinstance(body, dict) else []
+        refs: list[ProviderInvoiceRef] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            invoice = item.get("invoice") if isinstance(item.get("invoice"), dict) else item
+            refs.append(
+                ProviderInvoiceRef(
+                    provider=self.name,
+                    external_id=str(invoice.get("invoiceId") or ""),
+                    reference=invoice.get("reference"),
+                    raw=item,
+                )
+            )
+        return refs
+
     def health_check(self) -> bool:
         try:
-            self._request("GET", _HEALTH_PATH)
+            self.search_invoices(limit=1)
             return True
         except ProviderError:
             return False
 
+    # --- Émission (provisoire) ---------------------------------------------
     def deposit(
         self,
         document: bytes,
@@ -115,38 +182,27 @@ class IopolePdpProvider(PdpProvider):
         format_flux: str,
         syntaxe_flux: str,
     ) -> ProviderInvoiceRef:
-        """Dépose un flux (UBL/CII/Factur-X) sur Iopole pour transmission.
+        """Dépose un flux pour transmission.
 
-        TODO(api-doc-mapper): confirmer le contrat exact (multipart vs base64,
-        champs de routing/destinataire). Le squelette envoie un JSON base64.
+        ⚠️ Le service d'émission est auth-gated : le chemin/contrat exact restent
+        à figer via le Swagger authentifié (``TODO(api-doc-mapper)``).
         """
+        if _EMIT_PATH is None:
+            raise ProviderError(
+                "Endpoint d'émission Iopole non encore figé (Swagger authentifié requis).",
+                provider=self.name,
+            )
         payload = {
             "filename": filename,
             "format": format_flux,
             "syntaxe": syntaxe_flux,
             "content_base64": base64.b64encode(document).decode("ascii"),
         }
-        body = self._request("POST", _EMIT_INVOICE_PATH, json_body=payload)
+        body = self._request("POST", self._invoicing_url(_EMIT_PATH), json_body=payload)
         data = body if isinstance(body, dict) else {}
-        external_id = str(data.get("id") or data.get("invoiceId") or "")
+        external_id = str(data.get("invoiceId") or data.get("id") or "")
         if not external_id:
             raise ProviderError("Réponse Iopole sans identifiant de dépôt.", provider=self.name)
         return ProviderInvoiceRef(
-            provider=self.name,
-            external_id=external_id,
-            reference=data.get("reference"),
-            raw=data,
-        )
-
-    def get_lifecycle_status(self, external_id: str) -> InvoiceStatus:
-        body = self._request("GET", _INVOICE_STATUS_PATH.format(external_id=external_id))
-        data = body if isinstance(body, dict) else {}
-        # Rôle PDP : on renseigne lifecycle_status (jamais payment_status).
-        # TODO(api-doc-mapper): confirmer le champ exact (status / lifecycleStatus / state).
-        lifecycle = data.get("status") or data.get("lifecycleStatus") or data.get("state")
-        return InvoiceStatus(
-            external_id=external_id,
-            lifecycle_status=lifecycle if isinstance(lifecycle, str) else None,
-            polled_at=datetime.utcnow(),
-            raw=data,
+            provider=self.name, external_id=external_id, reference=data.get("reference"), raw=data
         )
