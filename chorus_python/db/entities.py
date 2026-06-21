@@ -438,3 +438,47 @@ class ChorusFluxDeposit(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False, init=False
     )
+
+
+# ---------------------------------------------------------------------------
+# Provider connections & tokens (multi-tenant : Iopole, etc.)
+# ---------------------------------------------------------------------------
+
+
+class ProviderConnectionRecord(Base):
+    """Connexion d'un tenant à un provider (ex. Iopole), secret chiffré au repos."""
+
+    __tablename__ = "provider_connections"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "provider", name="uq_provider_connections_tenant_provider"),
+        Index("ix_provider_connections_tenant", "tenant_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)  # "<tenant_id>:<provider>"
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    environment: Mapped[str] = mapped_column(String(16), nullable=False, default="ppd")
+    customer_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    client_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    client_secret_enc: Mapped[str] = mapped_column(Text, nullable=False)  # chiffré (Fernet)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, init=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, init=False
+    )
+
+
+class ProviderTokenRecord(Base):
+    """Cache de token OAuth d'une connexion provider, chiffré au repos."""
+
+    __tablename__ = "provider_tokens"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)  # "<tenant_id>:<provider>"
+    token_enc: Mapped[str] = mapped_column(Text, nullable=False)  # JSON chiffré (Fernet)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False, init=False
+    )
