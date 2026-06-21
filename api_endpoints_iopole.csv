@@ -1,7 +1,9 @@
 name,category,method,path,environment,status,async,auth,notes
-Get token,authentication,POST,not visible publicly,both,to_confirm,no,client_credentials,URL exacte via Swagger Authorize dialog
-Emit invoice,invoice_submission,POST,/v1/api/operator/invoicing (base confirmed; exact path not visible publicly),sandbox+prod,to_confirm,yes,Bearer,Contrat multipart vs JSON base64 a confirmer
-Get invoice status,invoice_status_tracking,GET,/v1/api/operator/invoicing (base confirmed; exact path not visible publicly),sandbox+prod,to_confirm,no,Bearer,Champ de statut a confirmer
-Status webhook (Push),invoice_status_tracking,POST inbound,notre endpoint de notification,both,to_confirm,n/a,signature a confirmer,Mode Push: Iopole pousse les statuts
-Directory lookup,organization_entity_directory,GET,not visible publicly,both,to_confirm,no,Bearer,Recherche destinataire / routing
-E-reporting,reporting_statistics,not visible publicly,not visible publicly,both,to_confirm,yes,Bearer,Transmission donnees administration
+Get token (Keycloak),authentication,POST,https://auth.preprod.iopole.fr/realms/iopole/protocol/openid-connect/token,ppd,confirmed,no,client_credentials,scopes vides; header customer-id (UUID) sur les appels API
+Search invoices,invoice_status_tracking,GET,/v1/api/operator/invoicing/v1.1/invoice/search,ppd+prod,confirmed,no,Bearer,params q/offset/limit/expand[businessData,lastStatusData]
+Get invoice,invoice_status_tracking,GET,/v1/api/operator/invoicing/v1/invoice/{invoiceId},ppd+prod,confirmed,no,Bearer,retourne invoice.state (lifecycle) + businessData
+E-reporting B2B invoice,reporting_statistics,POST,/v1/api/operator/reporting/v1/reporting/transaction/invoice/scheme/{scheme}/value/{value},ppd+prod,confirmed,yes,Bearer,corps: invoice{invoiceId,invoiceDate,monetary,taxDetails,seller,buyer,lines...}
+E-reporting B2C transactions,reporting_statistics,POST,/v1/api/operator/reporting/v1/reporting/transaction/scheme/{scheme}/value/{value},ppd+prod,confirmed,yes,Bearer,corps: transactionDate,storeId,registerId,closureId,transactions
+Emit / send invoice,invoice_submission,POST,not visible publicly (service auth-gated),ppd+prod,to_confirm,yes,Bearer,figer depuis le Swagger authentifie (deposit())
+Status webhook (Push),invoice_status_tracking,POST inbound,notre endpoint de notification,both,to_confirm,n/a,signature a confirmer,Iopole pousse invoice.state; valeurs: PENDING/VALID/INVALID/DUPLICATED/WRONG_ROUTING/NOT_DELIVERED/DELIVERED/DELIVERY_PENDING/PROCESSING/CONVERTED/CONVERSION_FAILED
+Directory lookup,organization_entity_directory,GET,/v1/api/operator/directory (auth-gated),both,to_confirm,no,Bearer,recherche destinataire/routing

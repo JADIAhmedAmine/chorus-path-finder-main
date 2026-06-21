@@ -9,15 +9,15 @@
 - **Type** : OAuth2 **client_credentials** (machine-to-machine) → **token Bearer**
   dans l'en-tête `Authorization: Bearer <token>`. *(confirmé)*
 - **Credentials sandbox** (écran « Paramètres de la sandbox ») :
-  - `Api Client ID` — **not visible publicly** (propre au compte ; à mettre en env)
+  - `Api Client ID` — identifiant client (en env)
   - `Api Client Secret` — **secret** (en env uniquement ; **à régénérer** s'il a fui)
-  - `CustomerId` — identifiant client ; **rôle exact à confirmer** (header `CustomerId` ? scope ? corps de la requête de token ?)
+  - `CustomerId` — **transmis dans le header `customer-id`** (UUID) *(confirmé via OpenAPI)*
   - `Mode de connexion` = **Push** → réception des statuts par **webhook** (pas de polling)
-- **Token endpoint (URL exacte)** : **not visible publicly**
-  - À récupérer depuis le bouton **« Swagger API »** de la sandbox → dialogue **Authorize** (flow + tokenUrl), ou depuis la page doc *authentication*.
-  - Candidats NON confirmés (ne pas coder en dur) : `…/auth/token`, `…/connect/token`.
-- **Comment passer les credentials** (Basic header vs body) : **not visible publicly** → à confirmer.
-- **Durée de vie du token / scopes** : **not visible publicly** → à confirmer.
+- **Token endpoint (CONFIRMÉ, Keycloak)** :
+  - PPD : `https://auth.preprod.iopole.fr/realms/iopole/protocol/openid-connect/token`
+  - Prod : `https://auth.iopole.com/realms/iopole/protocol/openid-connect/token` *(par analogie — à confirmer)*
+  - Flow `clientCredentials`, **scopes vides**.
+- **Comment passer les credentials** : Keycloak accepte `client_id`/`client_secret` en body form OU Basic. *(à valider en sandbox)*
 
 ## Transport & limites *(confirmé)*
 - **HTTPS/TLS obligatoire** : toute requête non chiffrée échoue.

@@ -1,11 +1,12 @@
 """Configuration Iopole (PDP / Plateforme Agréée).
 
-Auth machine-to-machine : ``clientId`` + ``clientSecret`` (obtenus via
-support@iopole.com) -> token Bearer (flow OAuth2 client_credentials).
+Auth machine-to-machine : ``clientId`` + ``clientSecret`` (depuis l'écran sandbox)
+-> token Bearer via **Keycloak** (flow OAuth2 client_credentials). Le ``CustomerId``
+est transmis dans le header ``customer-id``.
 
-Deux environnements : PPD (pré-prod / sandbox) et production. Les URLs de base
-sont confirmées via la doc Iopole ; le ``token_url`` exact reste à confirmer
-(TODO(api-doc-mapper)) et est donc lu dans l'environnement.
+URLs confirmées via l'OpenAPI public ``…/v1/api/operator/invoicing`` :
+- token PPD : ``https://auth.preprod.iopole.fr/realms/iopole/protocol/openid-connect/token``
+- host API PPD : ``https://api.ppd.iopole.fr`` ; host API prod : ``https://api.iopole.com``
 
 Sécurité : credentials lus côté serveur uniquement (jamais ``VITE_*``).
 """
@@ -16,20 +17,29 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# Base URLs (source : doc/onboarding Iopole).
-IOPOLE_PPD_BASE_URL = "https://api.ppd.iopole.fr/v1"   # pré-prod / sandbox
-IOPOLE_PROD_BASE_URL = "https://api.iopole.com/v1"     # production
-
 IOPOLE_ENV_PPD = "ppd"
 IOPOLE_ENV_PROD = "prod"
+
+# Hosts API (confirmés).
+IOPOLE_PPD_HOST = "https://api.ppd.iopole.fr"
+IOPOLE_PROD_HOST = "https://api.iopole.com"
+
+# Token endpoints Keycloak. PPD confirmé ; prod par analogie -> TODO(confirmer).
+IOPOLE_PPD_TOKEN_URL = "https://auth.preprod.iopole.fr/realms/iopole/protocol/openid-connect/token"
+IOPOLE_PROD_TOKEN_URL = "https://auth.iopole.com/realms/iopole/protocol/openid-connect/token"
+
+# Montages des services operator (préfixes de chemin).
+IOPOLE_INVOICING_MOUNT = "/v1/api/operator/invoicing"
+IOPOLE_REPORTING_MOUNT = "/v1/api/operator/reporting"
 
 
 @dataclass
 class IopoleConfig:
     client_id: str
     client_secret: str
+    customer_id: str
     token_url: str
-    base_url: str = IOPOLE_PPD_BASE_URL
+    host: str = IOPOLE_PPD_HOST
     environment: str = IOPOLE_ENV_PPD
 
 
@@ -45,8 +55,9 @@ def load_iopole_config(env: dict[str, str] | None = None) -> IopoleConfig:
     """Charge la configuration Iopole depuis l'environnement.
 
     Variables attendues dans ``.env.local`` :
-        IOPOLE_CLIENT_ID, IOPOLE_CLIENT_SECRET, IOPOLE_TOKEN_URL
-        IOPOLE_ENV (ppd|prod, défaut ppd), IOPOLE_BASE_URL (optionnel)
+        IOPOLE_CLIENT_ID, IOPOLE_CLIENT_SECRET, IOPOLE_CUSTOMER_ID
+        IOPOLE_ENV (ppd|prod, défaut ppd)
+        IOPOLE_TOKEN_URL, IOPOLE_HOST (optionnels : défauts selon l'env)
     """
     if env is None:
         try:
@@ -58,12 +69,15 @@ def load_iopole_config(env: dict[str, str] | None = None) -> IopoleConfig:
         env = dict(os.environ)
 
     environment = _env(env, "IOPOLE_ENV", default=IOPOLE_ENV_PPD).lower()
-    default_base = IOPOLE_PROD_BASE_URL if environment == IOPOLE_ENV_PROD else IOPOLE_PPD_BASE_URL
+    is_prod = environment == IOPOLE_ENV_PROD
+    default_host = IOPOLE_PROD_HOST if is_prod else IOPOLE_PPD_HOST
+    default_token = IOPOLE_PROD_TOKEN_URL if is_prod else IOPOLE_PPD_TOKEN_URL
 
     return IopoleConfig(
         client_id=_env(env, "IOPOLE_CLIENT_ID"),
         client_secret=_env(env, "IOPOLE_CLIENT_SECRET"),
-        token_url=_env(env, "IOPOLE_TOKEN_URL"),  # TODO(api-doc-mapper): figer l'URL exacte
-        base_url=_env(env, "IOPOLE_BASE_URL", default=default_base),
+        customer_id=_env(env, "IOPOLE_CUSTOMER_ID"),
+        token_url=_env(env, "IOPOLE_TOKEN_URL", default=default_token),
+        host=_env(env, "IOPOLE_HOST", default=default_host),
         environment=environment,
     )
