@@ -17,17 +17,9 @@ from typing import Any, Optional
 from fastapi import APIRouter, Body, Depends, File, Query, UploadFile
 from fastapi.responses import JSONResponse
 
-from ...auth import get_current_auth_user
+from ...auth import get_current_auth_user, require_submit_permission
 from ..base import ProviderError
-from ..connections import (
-    EncryptedTokenStore,
-    InMemoryConnectionStore,
-    ProviderConnection,
-    ProviderRegistry,
-)
-from ..crypto import TokenCipher
-from ..oauth import InMemoryTokenStore
-from .config import load_iopole_config
+from ..connections import ProviderConnection, ProviderRegistry
 
 logger = logging.getLogger("providers.iopole.routes")
 
@@ -38,22 +30,10 @@ _registry: Optional[ProviderRegistry] = None
 
 
 def _build_registry() -> ProviderRegistry:
-    connections = InMemoryConnectionStore()
-    cfg = load_iopole_config()
-    if cfg.client_id and cfg.client_secret and cfg.customer_id:
-        connections.put(
-            ProviderConnection(
-                tenant_id=_DEFAULT_TENANT,
-                provider="iopole",
-                environment=cfg.environment,
-                customer_id=cfg.customer_id,
-                client_id=cfg.client_id,
-                client_secret=cfg.client_secret,
-            )
-        )
-    key = (os.getenv("PROVIDERS_ENCRYPTION_KEY") or "").strip()
-    token_store = EncryptedTokenStore(TokenCipher(key)) if key else InMemoryTokenStore()
-    return ProviderRegistry(connections, token_store)
+    # DB multi-tenant si dispo (clé + tables), sinon bridge .env.local.
+    from ..db_stores import build_provider_registry
+
+    return build_provider_registry()
 
 
 def _registry_instance() -> ProviderRegistry:
@@ -149,3 +129,43 @@ async def iopole_notifications(payload: dict[str, Any] = Body(default={})):
     """
     logger.info("Notification Iopole reçue (clés: %s)", sorted(payload.keys()))
     return {"received": True}
+
+
+@router.post("/connect")
+def iopole_connect(
+    body: dict[str, Any] = Body(default={}),
+    user: dict[str, Any] = Depends(require_submit_permission),
+):
+    """Provisionne (chiffré, en DB) la connexion Iopole du tenant courant.
+
+    Réservé aux rôles autorisés (``require_submit_permission``). Nécessite
+    ``PROVIDERS_ENCRYPTION_KEY`` + les tables ``provider_connections``.
+    """
+    from ..db_stores import provision_connection
+
+    global _registry
+    tenant = user.get("tenantId") or _DEFAULT_TENANT
+    connection = ProviderConnection(
+        tenant_id=tenant,
+        provider="iopole",
+        environment=(body.get("environment") or "ppd"),
+        customer_id=(body.get("customerId") or body.get("customer_id") or "").strip(),
+        client_id=(body.get("clientId") or body.get("client_id") or "").strip(),
+        client_secret=(body.get("clientSecret") or body.get("client_secret") or "").strip(),
+    )
+    if not (connection.customer_id and connection.client_id and connection.client_secret):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "customerId, clientId et clientSecret sont requis."},
+        )
+    try:
+        provision_connection(connection)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=503, content={"error": f"Provisioning indisponible: {exc}"})
+    _registry = None  # force la reconstruction avec la nouvelle connexion
+    return {
+        "connected": True,
+        "tenantId": tenant,
+        "provider": "iopole",
+        "environment": connection.environment,
+    }
