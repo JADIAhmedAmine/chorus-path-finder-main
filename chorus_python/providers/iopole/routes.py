@@ -148,9 +148,17 @@ def iopole_invoice_download(
 ):
     provider = _provider(user)
     try:
-        content = (
-            provider.download_readable(invoice_id) if readable else provider.download_invoice(invoice_id)
-        )
+        if readable:
+            try:
+                content = provider.download_readable(invoice_id)
+            except ProviderError as exc:
+                if exc.status_code == 404:
+                    content = provider.download_invoice(invoice_id)  # pas de lisible -> original
+                    readable = False
+                else:
+                    raise
+        else:
+            content = provider.download_invoice(invoice_id)
     except ProviderError as exc:
         return _error(exc)
     suffix = "lisible.pdf" if readable else "original"
@@ -162,13 +170,37 @@ def iopole_invoice_download(
 
 
 @router.get("/inbox")
-def iopole_inbox(user: dict[str, Any] = Depends(get_current_auth_user)):
-    """Factures reçues non encore vues (parallèle de la réception Chorus)."""
+def iopole_inbox(
+    limit: int = Query(default=30, ge=1, le=200),
+    user: dict[str, Any] = Depends(get_current_auth_user),
+):
+    """Réception : factures **reçues** (direction INBOUND) + IDs non vus (mode PULL)."""
+    provider = _provider(user)
     try:
-        ids = _provider(user).list_not_seen()
+        received = provider.search_invoices(
+            query='invoice.direction:"INBOUND"', limit=limit, expand=("businessData", "lastStatusData")
+        )
+        not_seen = provider.list_not_seen()
     except ProviderError as exc:
         return _error(exc)
-    return {"notSeen": ids, "count": len(ids)}
+    return {
+        "received": [{"id": r.external_id, "reference": r.reference, "raw": r.raw} for r in received],
+        "notSeen": not_seen,
+        "count": len(received),
+    }
+
+
+@router.get("/directory/peppol/check")
+def iopole_directory_peppol(
+    scheme: str = Query(...),
+    value: str = Query(...),
+    user: dict[str, Any] = Depends(get_current_auth_user),
+):
+    """Vérifie un participant Peppol + récupère ses métadonnées de routing."""
+    try:
+        return {"participant": _provider(user).check_peppol_participant(scheme, value)}
+    except ProviderError as exc:
+        return _error(exc)
 
 
 @router.post("/invoices/{invoice_id}/seen")
