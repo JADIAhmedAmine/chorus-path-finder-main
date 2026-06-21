@@ -148,6 +148,30 @@ class OAuth2TokenManager:
             return token.access_token
         return self._refresh(key).access_token
 
+    # --- client_credentials (machine-to-machine, ex. Iopole) ---------------
+    def get_client_credentials_token(
+        self, key: str, *, extra_params: dict[str, str] | None = None
+    ) -> str:
+        """Retourne un token via le flow ``client_credentials``.
+
+        Pas de refresh token : à l'expiration, on redemande simplement un token.
+        Le verrou par clé évite plusieurs requêtes simultanées inutiles.
+        """
+        token = self._store.load(key)
+        if token is not None and not token.is_expired():
+            return token.access_token
+
+        lock = self._lock_for(key)
+        with lock:
+            token = self._store.load(key)
+            if token is not None and not token.is_expired():
+                return token.access_token
+            new_token = self._post_token(
+                {"grant_type": "client_credentials", **(extra_params or {})}
+            )
+            self._store.save(key, new_token)
+            return new_token.access_token
+
     # --- Refresh sérialisé + double-vérification ---------------------------
     def _refresh(self, key: str) -> OAuth2Token:
         lock = self._lock_for(key)
@@ -194,9 +218,10 @@ class OAuth2TokenManager:
 
         body = response.json()
         access_token = body.get("access_token")
-        refresh_token = body.get("refresh_token") or data.get("refresh_token")
-        if not access_token or not refresh_token:
-            raise ProviderAuthError("Réponse OAuth2 incomplète (token manquant).")
+        if not access_token:
+            raise ProviderAuthError("Réponse OAuth2 incomplète (access_token manquant).")
+        # client_credentials ne renvoie pas de refresh_token : il reste vide.
+        refresh_token = body.get("refresh_token") or data.get("refresh_token") or ""
 
         expires_in = float(body.get("expires_in", 0) or 0)
         return OAuth2Token(
