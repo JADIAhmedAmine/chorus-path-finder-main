@@ -35,6 +35,14 @@ from .oauth import (
     OAuth2TokenManager,
     TokenStore,
 )
+from .connections import (
+    ConnectionStore,
+    EncryptedTokenStore,
+    InMemoryConnectionStore,
+    ProviderConnection,
+    ProviderRegistry,
+)
+from .crypto import TokenCipher
 
 __all__ = [
     "ErpProvider",
@@ -52,4 +60,10 @@ __all__ = [
     "OAuth2Token",
     "OAuth2TokenManager",
     "TokenStore",
+    "ConnectionStore",
+    "EncryptedTokenStore",
+    "InMemoryConnectionStore",
+    "ProviderConnection",
+    "ProviderRegistry",
+    "TokenCipher",
 ]
