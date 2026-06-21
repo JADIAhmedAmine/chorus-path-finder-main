@@ -1,0 +1,107 @@
+{
+  "type": 380,
+  "processType": "B1",
+  "invoiceId": "EXEMPLE-IOPOLE-001",
+  "invoiceDate": "2026-06-21",
+  "invoiceDueDate": "2026-07-21",
+  "taxPaymentOption": {
+    "code": 5
+  },
+  "seller": {
+    "name": "A.B. SERVICES CONSEILS",
+    "siren": "413142621",
+    "vatNumber": "FR93413142621",
+    "electronicAddress": "0225:413142621",
+    "postalAddress": {
+      "country": "FR",
+      "cityName": "Lyon",
+      "postalCode": "69001",
+      "addressLineOne": "2 rue du Conseil"
+    }
+  },
+  "buyer": {
+    "name": "ASSOCIATION SPORTIVE CHAPTAL",
+    "siren": "394211163",
+    "electronicAddress": "0225:394211163",
+    "postalAddress": {
+      "country": "FR",
+      "cityName": "Paris",
+      "postalCode": "75001",
+      "addressLineOne": "1 rue du Sport"
+    }
+  },
+  "lines": [
+    {
+      "id": "1",
+      "item": {
+        "name": "Prestation de conseil"
+      },
+      "billedQuantity": {
+        "unitCode": "EA",
+        "quantity": 1
+      },
+      "totalAmount": {
+        "amount": 1000,
+        "currency": "EUR"
+      },
+      "taxDetail": {
+        "taxType": "VAT",
+        "categoryCode": "S",
+        "percent": 20
+      },
+      "price": {
+        "netAmount": {
+          "amount": 1000,
+          "currency": "EUR"
+        }
+      }
+    }
+  ],
+  "taxDetails": [
+    {
+      "taxableAmount": {
+        "amount": 1000,
+        "currency": "EUR"
+      },
+      "taxAmount": {
+        "amount": 200,
+        "currency": "EUR"
+      },
+      "taxType": "VAT",
+      "categoryCode": "S",
+      "percent": 20
+    }
+  ],
+  "monetary": {
+    "invoiceAmount": {
+      "amount": 1200,
+      "currency": "EUR"
+    },
+    "taxBasisTotalAmount": {
+      "amount": 1000,
+      "currency": "EUR"
+    },
+    "taxTotalAmount": {
+      "amount": 200,
+      "currency": "EUR"
+    },
+    "payableAmount": {
+      "amount": 1200,
+      "currency": "EUR"
+    },
+    "lineTotalAmount": {
+      "amount": 1000,
+      "currency": "EUR"
+    },
+    "invoiceCurrency": "EUR"
+  },
+  "paymentMeans": [
+    {
+      "typeCode": "30",
+      "paymentReference": "EXEMPLE-IOPOLE-001",
+      "bankTransfer": {
+        "iban": "FR7612548254725698542587469"
+      }
+    }
+  ]
+}
