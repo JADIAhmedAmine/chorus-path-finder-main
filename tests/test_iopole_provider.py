@@ -148,5 +148,27 @@ class IopoleProviderTest(unittest.TestCase):
         self.assertTrue(api.requests[0]["url"].endswith("/v1/invoice/x/markAsSeen"))
 
 
+class IopoleMappingTest(unittest.TestCase):
+    def test_map_draft_to_iopole_json(self):
+        from chorus_python.providers.iopole.mapping import map_draft_to_iopole_json
+
+        draft = {
+            "supplier": {"name": "ACME", "siret": "41314262100045", "vat_number": "FR93413142621"},
+            "customer": {"name": "MAIRIE", "siret": "39421116300012"},
+            "invoice": {"invoice_number": "INV-1", "invoice_date": "2026-06-21", "currency": "EUR",
+                        "total_ht": 1000, "total_tva": 200, "total_ttc": 1200},
+            "lines": [{"description": "Conseil", "quantity": 1, "unit_price": 1000, "vat_rate": 20, "line_total_ht": 1000}],
+            "vat_breakdown": [{"vat_rate": 20, "base_amount": 1000, "vat_amount": 200}],
+        }
+        out = map_draft_to_iopole_json(draft)
+        self.assertEqual(out["invoiceId"], "INV-1")
+        self.assertEqual(out["seller"]["siren"], "413142621")
+        self.assertEqual(out["seller"]["electronicAddress"], "0225:413142621")
+        self.assertEqual(out["seller"]["vatNumber"], "FR93413142621")
+        self.assertEqual(out["buyer"]["siren"], "394211163")
+        self.assertEqual(out["monetary"]["payableAmount"]["amount"], 1200)
+        self.assertEqual(len(out["lines"]), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

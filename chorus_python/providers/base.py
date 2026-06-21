@@ -39,11 +39,13 @@ class ProviderError(Exception):
         provider: str | None = None,
         status_code: int | None = None,
         request_id: str | None = None,
+        detail: Any | None = None,
     ) -> None:
         super().__init__(message)
         self.provider = provider
         self.status_code = status_code
         self.request_id = request_id
+        self.detail = detail  # ex. erreurs de validation (schematron) renvoyées au owner
 
 
 class ProviderAuthError(ProviderError):
