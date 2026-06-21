@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, RefreshCw, Send, Upload } from 'lucide-react';
+import { Download, FileText, Inbox, Loader2, RefreshCw, Search, Send, Upload } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -7,12 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import {
+  downloadIopoleInvoice,
   emitIopoleInvoice,
+  getIopoleHistory,
   getIopoleStatus,
   iopoleHealth,
+  listIopoleInbox,
   listIopoleInvoices,
+  markIopoleSeen,
+  searchIopoleDirectory,
   type IopoleInvoice,
   type IopoleStatus,
+  type IopoleStatusHistoryEntry,
 } from '@/lib/providers/iopole';
 
 const DELIVERED = new Set(['DELIVERED', 'VALID', 'CONVERTED']);
@@ -32,15 +38,22 @@ export default function IopolePage() {
   const [invoices, setInvoices] = useState<IopoleInvoice[]>([]);
   const [loading, setLoading] = useState(false);
   const [emitting, setEmitting] = useState(false);
-  const [status, setStatus] = useState<IopoleStatus | null>(null);
+  const [status, setStatus] = useState<(IopoleStatus & { detailed?: IopoleStatusHistoryEntry[] }) | null>(null);
+  const [inbox, setInbox] = useState<{ notSeen: string[]; count: number } | null>(null);
+  const [dirQuery, setDirQuery] = useState('');
+  const [dirResults, setDirResults] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  function err(e: unknown, title: string) {
+    toast({ title, description: (e as Error).message, variant: 'destructive' });
+  }
 
   async function refresh() {
     setLoading(true);
     try {
       setInvoices(await listIopoleInvoices(query || undefined, 30));
     } catch (e) {
-      toast({ title: 'Erreur Iopole', description: (e as Error).message, variant: 'destructive' });
+      err(e, 'Erreur Iopole');
     } finally {
       setLoading(false);
     }
@@ -59,7 +72,7 @@ export default function IopolePage() {
       toast({ title: 'Facture envoyée à Iopole', description: `id: ${res.id}` });
       await refresh();
     } catch (e) {
-      toast({ title: 'Échec émission', description: (e as Error).message, variant: 'destructive' });
+      err(e, 'Échec émission');
     } finally {
       setEmitting(false);
       if (fileRef.current) fileRef.current.value = '';
@@ -68,9 +81,46 @@ export default function IopolePage() {
 
   async function onStatus(id: string) {
     try {
-      setStatus(await getIopoleStatus(id));
+      const [st, detailed] = await Promise.all([getIopoleStatus(id), getIopoleHistory(id).catch(() => [])]);
+      setStatus({ ...st, detailed });
     } catch (e) {
-      toast({ title: 'Erreur statut', description: (e as Error).message, variant: 'destructive' });
+      err(e, 'Erreur statut');
+    }
+  }
+
+  async function onDownload(id: string, readable: boolean) {
+    try {
+      await downloadIopoleInvoice(id, readable);
+    } catch (e) {
+      err(e, 'Téléchargement indisponible');
+    }
+  }
+
+  async function loadInbox() {
+    try {
+      setInbox(await listIopoleInbox());
+    } catch (e) {
+      err(e, 'Erreur réception');
+    }
+  }
+
+  async function onMarkSeen(id: string) {
+    try {
+      await markIopoleSeen(id);
+      toast({ title: 'Marquée comme vue', description: id });
+      await loadInbox();
+    } catch (e) {
+      err(e, 'Échec markAsSeen');
+    }
+  }
+
+  async function onDirectory() {
+    if (!dirQuery.trim()) return;
+    try {
+      const r = await searchIopoleDirectory(dirQuery.trim());
+      setDirResults(JSON.stringify(r, null, 2).slice(0, 4000));
+    } catch (e) {
+      err(e, 'Erreur annuaire');
     }
   }
 
@@ -80,7 +130,7 @@ export default function IopolePage() {
         <div>
           <h1 className="text-2xl font-semibold">Iopole — PDP</h1>
           <p className="text-sm text-muted-foreground">
-            Émission et suivi des factures électroniques via la Plateforme Agréée Iopole.
+            Émission, réception et suivi des factures électroniques via la Plateforme Agréée Iopole.
           </p>
         </div>
         <Badge variant={healthy ? 'default' : healthy === false ? 'destructive' : 'secondary'}>
@@ -88,6 +138,7 @@ export default function IopolePage() {
         </Badge>
       </div>
 
+      {/* Émission */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Émettre une facture</CardTitle>
@@ -111,6 +162,42 @@ export default function IopolePage() {
         </CardContent>
       </Card>
 
+      {/* Réception (inbound, PULL) */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Inbox className="h-4 w-4" /> Réception (factures reçues non vues)
+          </CardTitle>
+          <Button variant="outline" size="sm" onClick={loadInbox}>
+            <RefreshCw className="mr-1 h-3 w-3" /> Charger
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {inbox === null ? (
+            <p className="text-sm text-muted-foreground">Cliquez « Charger » pour récupérer la boîte de réception.</p>
+          ) : inbox.count === 0 ? (
+            <p className="text-sm text-muted-foreground">Aucune facture en attente (mode Push : statuts poussés par webhook).</p>
+          ) : (
+            <div className="divide-y">
+              {inbox.notSeen.map((id) => (
+                <div key={id} className="flex items-center justify-between py-2 text-sm">
+                  <span className="truncate font-mono text-xs">{id}</span>
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="sm" onClick={() => onDownload(id, false)}>
+                      <Download className="mr-1 h-3 w-3" /> Original
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => onMarkSeen(id)}>
+                      Marquer vue
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Liste / recherche */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Factures Iopole</CardTitle>
@@ -144,8 +231,14 @@ export default function IopolePage() {
                         {meta?.direction ?? '—'} {inv.reference ? `· ${inv.reference}` : ''}
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                       <Badge variant={statusVariant(meta?.state)}>{meta?.state ?? '—'}</Badge>
+                      <Button variant="ghost" size="icon" title="Télécharger l'original" onClick={() => onDownload(inv.id, false)}>
+                        <Download className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" title="Version lisible (Factur-X PDF)" onClick={() => onDownload(inv.id, true)}>
+                        <FileText className="h-4 w-4" />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => onStatus(inv.id)}>
                         <Send className="mr-1 h-3 w-3" /> Statut
                       </Button>
@@ -158,6 +251,7 @@ export default function IopolePage() {
         </CardContent>
       </Card>
 
+      {/* Détail statut + historique */}
       {status && (
         <Card>
           <CardHeader>
@@ -169,15 +263,48 @@ export default function IopolePage() {
             <div>
               Lifecycle : <Badge variant={statusVariant(status.lifecycleStatus)}>{status.lifecycleStatus ?? '—'}</Badge>
             </div>
-            <div className="text-sm text-muted-foreground">
-              Historique :{' '}
-              {status.history.length
-                ? status.history.map((h) => h.code).filter(Boolean).join(' → ')
-                : '—'}
+            <div className="text-sm">
+              <div className="mb-1 text-muted-foreground">Historique des accusés :</div>
+              {(status.detailed && status.detailed.length ? status.detailed : status.history).length ? (
+                <ul className="space-y-1">
+                  {(status.detailed && status.detailed.length ? status.detailed : status.history).map((h, i) => (
+                    <li key={i} className="flex items-center gap-2 text-xs">
+                      <Badge variant="outline">{h.code ?? '—'}</Badge>
+                      <span className="text-muted-foreground">{h.date ?? ''}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
             </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Annuaire */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Search className="h-4 w-4" /> Annuaire (français)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="SIREN, SIRET ou nom du destinataire"
+              value={dirQuery}
+              onChange={(e) => setDirQuery(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && onDirectory()}
+              className="w-80"
+            />
+            <Button variant="outline" onClick={onDirectory}>Rechercher</Button>
+          </div>
+          {dirResults && (
+            <pre className="max-h-72 overflow-auto rounded-md bg-muted p-3 text-xs">{dirResults}</pre>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
