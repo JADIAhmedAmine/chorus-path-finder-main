@@ -3,6 +3,14 @@
 > Branche `feature/sage-integration-layer`. Wedge retenu : **émission B2B via PDP (PME)**,
 > positionnement **OD (Opérateur de Dématérialisation) sur Iopole** (pas PDP soi-même).
 
+## 🆕 MAJ 2026-06-21 (suite) — tranche frontend + multi-tenant DB
+- **Frontend Iopole** : page [src/pages/IopolePage.tsx](src/pages/IopolePage.tsx) + client [src/lib/providers/iopole.ts](src/lib/providers/iopole.ts) + route `/providers/iopole` + **lien sidebar** (Plateformes > Iopole PDP).
+- **Routes backend** `/api/providers/iopole/*` (health, invoices, status, emit, notifications, **connect**) montées + scopées tenant.
+- **Stack complète lancée** (`docker compose up`) : page 200, route wirée, login OK → http://localhost:8081/providers/iopole.
+- **Multi-tenant DB activé** : tables `provider_connections`/`provider_tokens` (migration `20260621_0006`), stores chiffrés (Fernet), `POST /connect` de provisioning, registre DB-aware (fallback bridge). **Validé end-to-end** : provision tenant → secret chiffré au repos → lecture DB → health live True.
+- `PROVIDERS_ENCRYPTION_KEY` généré dans `.env.local`.
+- Reste : **webhook Push** (persistance `provider_invoices` + réconciliation), UI de provisioning `/connect`, archivage légal.
+
 ## ✅ Fait et validé
 - **Architecture générique** `ErpProvider` / `PdpProvider` (`chorus_python/providers/base.py`).
 - **OAuth** : `authorization_code` (Sage) + `client_credentials` (Iopole), refresh single-writer.
