@@ -1,0 +1,105 @@
+{
+  "context": "Sage integration layer for Chorus Pilot — branch feature/sage-integration-layer",
+  "built_at": "2026-06-21",
+  "objective": "Map the Sage ecosystem to specify a clean ERP/PDP provider connector (OAuth2, sales invoice create + status, PDP routing positioning).",
+  "key_findings": {
+    "target_product": "Sage Accounting (ex Sage Business Cloud Accounting) — modern public REST API, OAuth2, cloud, France supported",
+    "sage_network_is_pdp": "Sage Network = Sage's Plateforme Agréée (PA, ex-PDP), DGFiP-registered; distinct from the Sage Accounting ERP API",
+    "api_base_url": "https://api.accounting.sage.com/v3.1/",
+    "oauth_authorization_url": "https://www.sageone.com/oauth2/auth/central",
+    "oauth_token_url": "https://oauth.accounting.sage.com/token",
+    "oauth_flow": "authorization_code",
+    "oauth_scope": "full_access",
+    "access_token_ttl": "5 minutes",
+    "refresh_token": "rotates on every use (previous invalidated)",
+    "required_header": "X-Business (business GUID, discovered via GET /businesses)",
+    "sales_invoice_endpoint": "POST /v3.1/sales_invoices",
+    "invoice_status_endpoint": "GET /v3.1/sales_invoices/{id} (payment status, not PDP lifecycle)",
+    "reference_endpoints": ["GET /businesses", "GET /contacts", "GET /ledger_accounts (INCOME)", "GET /tax_rates"],
+    "webhooks": "none — polling required via updated_or_created_since",
+    "pagination": "follow $next URL (no offset)",
+    "idempotency": "Idempotency-Key header on POST",
+    "rate_limits": {"daily": 1296000, "concurrency": 150, "error": "HTTP 429 + exponential backoff"}
+  },
+  "sources": [
+    {
+      "url": "https://developer.sage.com/accounting",
+      "title": "Sage Accounting — Developer Portal (Overview)",
+      "type": "official",
+      "access": "blocked-403",
+      "used_for": "Authoritative API surface (OpenAPI spec to be retrieved with a dev account)",
+      "confidence": "high"
+    },
+    {
+      "url": "https://developer.sage.com/accounting/docs/v1.0.0/guides/learning/authenticating/authentication",
+      "title": "Authentication — Sage Accounting Developer Portal",
+      "type": "official",
+      "access": "blocked-403",
+      "used_for": "OAuth2 reference",
+      "confidence": "high"
+    },
+    {
+      "url": "https://developer.sage.com/accounting/guides/concepts/invoicing/",
+      "title": "Invoicing — Sage Developer",
+      "type": "official",
+      "access": "blocked-403",
+      "used_for": "Sales invoice concepts (contact CUSTOMER, INCOME ledger, tax rates)",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.sage.com/fr-fr/dematerialisation/facture-electronique/sage-plateforme-de-dematerialisation-partenaire/",
+      "title": "Sage Plateforme de Dématérialisation Partenaire (PA ex-PDP) — Sage France",
+      "type": "official",
+      "access": "blocked-403",
+      "used_for": "Sage Network PA/PDP status",
+      "confidence": "high"
+    },
+    {
+      "url": "https://truto.one/blog/how-to-create-a-full-technical-integration-guide-for-sage-business-cloud-accounting/",
+      "title": "How to Integrate with the Sage Business Cloud Accounting API (2026 Engineering Guide) — Truto",
+      "type": "secondary-technical",
+      "access": "ok",
+      "used_for": "Concrete OAuth2 URLs, token TTL, refresh rotation, X-Business header, base URL, rate limits, sales_invoices payload, polling/no-webhooks",
+      "confidence": "high"
+    },
+    {
+      "url": "https://www.apideck.com/blog/how-to-integrate-sage-business-cloud-accounting-api",
+      "title": "How To Integrate Sage Business Cloud Accounting API — Apideck",
+      "type": "secondary-technical",
+      "access": "ok",
+      "used_for": "OAuth2 registration steps, invoice objects (CUSTOMER, INCOME, line items, tax), rate limit 429",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.cleverence.com/articles/sage-dev-documentation/reference-sage-developer-4729/",
+      "title": "Sage Developer Reference: APIs, SDKs, Integration Patterns",
+      "type": "secondary-technical",
+      "access": "ok",
+      "used_for": "Cross-product API comparison (Accounting REST vs X3 vs Intacct vs 100/200/50)",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://www.partner-informatique.fr/sage-est-officiellement-immatricule-plateforme-agreee-anciennement-pdp/",
+      "title": "Sage officiellement immatriculé Plateforme Agréée (ex-PDP)",
+      "type": "secondary-fr",
+      "access": "ok",
+      "used_for": "Sage PA registration, B2B reception/transmission/conversion role, 2026 timeline",
+      "confidence": "medium"
+    },
+    {
+      "url": "https://medi.fr/actualites/sage-network-plateforme-dematerialisation-partenaire-pdp/",
+      "title": "Sage Network : la PDP de Sage",
+      "type": "secondary-fr",
+      "access": "ok",
+      "used_for": "Confirms 'Sage Network' branding as Sage's PDP/PA",
+      "confidence": "medium"
+    }
+  ],
+  "open_questions": [
+    "Exact PA immatriculation number of Sage Network on the DGFiP registered-platforms list.",
+    "Exact SIRET field on the Sage Accounting contact object.",
+    "Whether Sage Network exposes a public PDP API for third-party ERPs to send invoices (not documented in accessible sources).",
+    "Supported invoice formats by Sage Network (Factur-X/UBL/CII) — not confirmed in accessible sources.",
+    "Customer segment fit: Sage Accounting targets micro/SMB; larger customers run Sage X3/100."
+  ]
+}
