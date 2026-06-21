@@ -1,0 +1,94 @@
+{
+  "api_name": "Iopole API",
+  "provider": "Iopole",
+  "domain": "E-facturation France (PDP / Plateforme Agréée)",
+  "mapped_at": "2026-06-21",
+  "confidence_note": "Faits confirmés via docs publiques + onboarding sandbox. Chemins/schemas exacts = 'not visible publicly' (docs en rendu JS + Swagger protégé par auth). À figer depuis le Swagger authentifié.",
+  "environments": {
+    "sandbox_ppd": {
+      "base_url": "https://api.ppd.iopole.fr/v1",
+      "docs": "https://docs.ppd.iopole.fr/docs/iopole-api/reference"
+    },
+    "production": {
+      "base_url": "https://api.iopole.com/v1",
+      "docs": "https://docs.iopole.com/docs/iopole-api/"
+    }
+  },
+  "authentication": {
+    "type": "oauth2_client_credentials",
+    "token_in": "Authorization: Bearer <token>",
+    "token_url": "not visible publicly",
+    "credentials": ["Api Client ID", "Api Client Secret", "CustomerId (role to confirm)"],
+    "connection_mode": "Push (status via webhook)",
+    "token_ttl": "not visible publicly",
+    "scopes": "not visible publicly"
+  },
+  "constraints": {
+    "transport": "HTTPS/TLS required",
+    "rate_limit": "3600 requests/minute per source IP (TCP-level)",
+    "async_model": true,
+    "gateway_behavior": "401 on any unauthenticated request (all paths)"
+  },
+  "formats_supported": ["Factur-X", "UBL", "CII", "Peppol BIS", "Peppol PINT", "JSON", "EDIFACT"],
+  "endpoints": [
+    {
+      "name": "Get token",
+      "category": "authentication",
+      "method": "POST",
+      "path": "not visible publicly",
+      "status": "to_confirm",
+      "notes": "client_credentials -> Bearer. URL exacte via Swagger Authorize dialog."
+    },
+    {
+      "name": "Emit / send invoice",
+      "category": "invoice_submission",
+      "method": "POST",
+      "path_base_confirmed": "/v1/api/operator/invoicing",
+      "path_exact": "not visible publicly",
+      "status": "to_confirm",
+      "async": true,
+      "request_body": "not visible publicly (multipart vs JSON base64 to confirm; routing code/destinataire + format)",
+      "response": "deposit/invoice id (field name to confirm)",
+      "doc": "https://docs.iopole.com/docs/iopole-api/apiDescriptions/invoice/emitInvoice"
+    },
+    {
+      "name": "Get invoice status / lifecycle",
+      "category": "invoice_status_tracking",
+      "method": "GET",
+      "path_base_confirmed": "/v1/api/operator/invoicing",
+      "path_exact": "not visible publicly",
+      "status": "to_confirm",
+      "notes": "Statut aussi poussé en Push (webhook). Champ de statut + valeurs à confirmer."
+    },
+    {
+      "name": "Status notification (webhook Push)",
+      "category": "invoice_status_tracking",
+      "method": "POST (inbound, vers notre endpoint)",
+      "path": "URL de notification fournie par l'editeur",
+      "status": "to_confirm",
+      "notes": "Payload + champ de statut a confirmer. Rejet de validation -> notification."
+    },
+    {
+      "name": "Directory / annuaire lookup",
+      "category": "organization_entity_directory",
+      "method": "GET",
+      "path": "not visible publicly",
+      "status": "to_confirm",
+      "notes": "Recherche destinataire / routing (Peppol / point-to-point)."
+    },
+    {
+      "name": "E-reporting",
+      "category": "reporting_statistics",
+      "method": "not visible publicly",
+      "path": "not visible publicly",
+      "status": "to_confirm"
+    }
+  ],
+  "sources": [
+    "https://www.iopole.com/en/pdp-france",
+    "https://www.iopole.com/en/developpeurs",
+    "https://docs.iopole.com/docs/iopole-api/",
+    "https://docs.ppd.iopole.fr/docs/iopole-api/reference",
+    "https://docs.iopole.com/docs/iopole-api/apiDescriptions/invoice/emitInvoice"
+  ]
+}

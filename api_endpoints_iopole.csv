@@ -1,0 +1,7 @@
+name,category,method,path,environment,status,async,auth,notes
+Get token,authentication,POST,not visible publicly,both,to_confirm,no,client_credentials,URL exacte via Swagger Authorize dialog
+Emit invoice,invoice_submission,POST,/v1/api/operator/invoicing (base confirmed; exact path not visible publicly),sandbox+prod,to_confirm,yes,Bearer,Contrat multipart vs JSON base64 a confirmer
+Get invoice status,invoice_status_tracking,GET,/v1/api/operator/invoicing (base confirmed; exact path not visible publicly),sandbox+prod,to_confirm,no,Bearer,Champ de statut a confirmer
+Status webhook (Push),invoice_status_tracking,POST inbound,notre endpoint de notification,both,to_confirm,n/a,signature a confirmer,Mode Push: Iopole pousse les statuts
+Directory lookup,organization_entity_directory,GET,not visible publicly,both,to_confirm,no,Bearer,Recherche destinataire / routing
+E-reporting,reporting_statistics,not visible publicly,not visible publicly,both,to_confirm,yes,Bearer,Transmission donnees administration
