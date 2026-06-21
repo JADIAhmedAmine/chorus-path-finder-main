@@ -14,7 +14,7 @@ import logging
 import os
 from typing import Any, Optional
 
-from fastapi import APIRouter, Body, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Query, Response, UploadFile
 from fastapi.responses import JSONResponse
 
 from ...auth import get_current_auth_user, require_submit_permission
@@ -106,6 +106,90 @@ def iopole_status(
             if isinstance(h, dict)
         ],
     }
+
+
+@router.get("/invoices/{invoice_id}")
+def iopole_invoice_detail(
+    invoice_id: str, user: dict[str, Any] = Depends(get_current_auth_user)
+):
+    try:
+        return _provider(user).get_invoice(invoice_id)
+    except ProviderError as exc:
+        return _error(exc)
+
+
+@router.get("/invoices/{invoice_id}/history")
+def iopole_invoice_history(
+    invoice_id: str, user: dict[str, Any] = Depends(get_current_auth_user)
+):
+    try:
+        history = _provider(user).get_status_history(invoice_id)
+    except ProviderError as exc:
+        return _error(exc)
+    return {
+        "id": invoice_id,
+        "history": [
+            {
+                "code": (h.get("status") or {}).get("code"),
+                "date": h.get("date"),
+                "destType": h.get("destType"),
+            }
+            for h in history
+            if isinstance(h, dict)
+        ],
+    }
+
+
+@router.get("/invoices/{invoice_id}/download")
+def iopole_invoice_download(
+    invoice_id: str,
+    readable: bool = Query(default=False),
+    user: dict[str, Any] = Depends(get_current_auth_user),
+):
+    provider = _provider(user)
+    try:
+        content = (
+            provider.download_readable(invoice_id) if readable else provider.download_invoice(invoice_id)
+        )
+    except ProviderError as exc:
+        return _error(exc)
+    suffix = "lisible.pdf" if readable else "original"
+    return Response(
+        content=content,
+        media_type="application/pdf" if readable else "application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="iopole-{invoice_id}-{suffix}"'},
+    )
+
+
+@router.get("/inbox")
+def iopole_inbox(user: dict[str, Any] = Depends(get_current_auth_user)):
+    """Factures reçues non encore vues (parallèle de la réception Chorus)."""
+    try:
+        ids = _provider(user).list_not_seen()
+    except ProviderError as exc:
+        return _error(exc)
+    return {"notSeen": ids, "count": len(ids)}
+
+
+@router.post("/invoices/{invoice_id}/seen")
+def iopole_mark_seen(
+    invoice_id: str, user: dict[str, Any] = Depends(require_submit_permission)
+):
+    try:
+        _provider(user).mark_as_seen(invoice_id)
+    except ProviderError as exc:
+        return _error(exc)
+    return {"id": invoice_id, "seen": True}
+
+
+@router.get("/directory/french")
+def iopole_directory_french(
+    q: str = Query(...), user: dict[str, Any] = Depends(get_current_auth_user)
+):
+    try:
+        return {"results": _provider(user).search_french_directory(q)}
+    except ProviderError as exc:
+        return _error(exc)
 
 
 @router.post("/emit")

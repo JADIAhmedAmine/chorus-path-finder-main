@@ -130,6 +130,23 @@ class IopoleProviderTest(unittest.TestCase):
         self.assertEqual(refs[0].reference, "INV-9")
         self.assertIn("/v1.1/invoice/search", api.requests[0]["url"])
 
+    def test_get_invoice_takes_first_of_array(self):
+        # L'API renvoie un tableau ; get_invoice doit retourner la 1re entrée.
+        api = _FakeApiSession([_FakeResponse(200, [{"invoiceId": "x", "way": "EMITTED"}])])
+        inv = self._provider(api).get_invoice("x")
+        self.assertEqual(inv["invoiceId"], "x")
+        self.assertTrue(api.requests[0]["url"].endswith("/v1/invoice/x"))
+
+    def test_list_not_seen(self):
+        api = _FakeApiSession([_FakeResponse(200, ["a", "b"])])
+        self.assertEqual(self._provider(api).list_not_seen(), ["a", "b"])
+
+    def test_mark_as_seen_uses_put(self):
+        api = _FakeApiSession([_FakeResponse(204, None)])
+        self._provider(api).mark_as_seen("x")
+        self.assertEqual(api.requests[0]["method"], "PUT")
+        self.assertTrue(api.requests[0]["url"].endswith("/v1/invoice/x/markAsSeen"))
+
 
 if __name__ == "__main__":
     unittest.main()

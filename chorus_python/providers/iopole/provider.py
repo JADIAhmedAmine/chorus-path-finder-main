@@ -56,6 +56,9 @@ _SEARCH = "/v1.1/invoice/search"
 _GET = "/v1/invoice/{invoice_id}"
 _STATUS_HISTORY = "/v1/invoice/{invoice_id}/status-history"
 _DOWNLOAD = "/v1/invoice/{invoice_id}/download"
+_DOWNLOAD_READABLE = "/v1/invoice/{invoice_id}/download/readable"
+_NOT_SEEN = "/v1/invoice/notSeen"
+_MARK_SEEN = "/v1/invoice/{invoice_id}/markAsSeen"
 _DIRECTORY_FRENCH = "/v1/directory/french"
 _DIRECTORY_PEPPOL_CHECK = "/v1/directory/international/check/scheme/{scheme}/value/{value}"
 _TOOLS_GENERATE = "/v1/tools/{kind}/generate"
@@ -222,9 +225,33 @@ class IopolePdpProvider(PdpProvider):
             )
         return refs
 
+    def get_invoice(self, external_id: str) -> dict[str, Any]:
+        """Détail complet (metadata + businessData) — ``GET /v1/invoice/{id}``.
+
+        L'API renvoie un **tableau** (une entrée par version) : on retourne la 1re.
+        """
+        body = self._request("GET", _GET.format(invoice_id=external_id))
+        if isinstance(body, list):
+            return body[0] if body and isinstance(body[0], dict) else {}
+        return body if isinstance(body, dict) else {}
+
     def download_invoice(self, external_id: str) -> bytes:
         """Télécharge le fichier original (``GET …/download``)."""
         return self._request("GET", _DOWNLOAD.format(invoice_id=external_id), raw=True)
+
+    def download_readable(self, external_id: str) -> bytes:
+        """Télécharge la version lisible Factur-X PDF (``GET …/download/readable``)."""
+        return self._request("GET", _DOWNLOAD_READABLE.format(invoice_id=external_id), raw=True)
+
+    # --- Réception (inbound, mode PULL) — parallèle de la réception Chorus ---
+    def list_not_seen(self) -> list[str]:
+        """IDs des factures reçues non encore vues (``GET /v1/invoice/notSeen``)."""
+        body = self._request("GET", _NOT_SEEN)
+        return [str(x) for x in body] if isinstance(body, list) else []
+
+    def mark_as_seen(self, external_id: str) -> None:
+        """Marque une facture reçue comme intégrée (``PUT …/markAsSeen``)."""
+        self._request("PUT", _MARK_SEEN.format(invoice_id=external_id))
 
     def health_check(self) -> bool:
         try:
