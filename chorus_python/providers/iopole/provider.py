@@ -126,11 +126,17 @@ class IopolePdpProvider(PdpProvider):
 
         request_id = response.headers.get("X-Request-Id") or response.headers.get("x-request-id")
         if response.status_code >= 400:
+            detail = None
+            try:
+                detail = response.json()
+            except Exception:  # noqa: BLE001 - corps non JSON
+                detail = None
             raise ProviderError(
                 f"Erreur Iopole {response.status_code}.",
                 provider=self.name,
                 status_code=response.status_code,
                 request_id=request_id,
+                detail=detail,
             )
         if raw:
             return response.content

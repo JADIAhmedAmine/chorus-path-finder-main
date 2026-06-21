@@ -253,3 +253,57 @@ def iopole_connect(
         "provider": "iopole",
         "environment": connection.environment,
     }
+
+
+@router.post("/convert-pdf")
+async def iopole_convert_pdf(
+    file: UploadFile = File(...),
+    user: dict[str, Any] = Depends(get_current_auth_user),
+):
+    """N'IMPORTE QUEL PDF -> brouillon extrait + JSON Iopole (à relire/corriger).
+
+    Réutilise l'extraction existante (``chorus_pdf_invoice_extractor``) puis mappe
+    vers le modèle JSON Iopole. Ne génère ni ne dépose : étape de relecture.
+    """
+    from ...chorus_pdf_invoice_extractor import extract_invoice_draft
+    from .mapping import map_draft_to_iopole_json
+
+    content = await file.read()
+    result = extract_invoice_draft(content, file.filename or "facture.pdf")
+    draft = result.get("draft", {}) if isinstance(result, dict) else {}
+    return {
+        "draft": draft,
+        "iopoleJson": map_draft_to_iopole_json(draft),
+        "warnings": result.get("warnings", []) if isinstance(result, dict) else [],
+        "confidence": result.get("confidence", {}) if isinstance(result, dict) else {},
+    }
+
+
+@router.post("/emit-from-json")
+def iopole_emit_from_json(
+    body: dict[str, Any] = Body(...),
+    user: dict[str, Any] = Depends(require_submit_permission),
+):
+    """JSON Iopole (relu) -> génération Factur-X/UBL conforme -> dépôt.
+
+    En cas d'échec de validation EN16931, renvoie le détail (``detail``) pour que
+    l'utilisateur sache quoi corriger (ex. n° TVA vendeur manquant).
+    """
+    provider = _provider(user)
+    invoice = body.get("invoice") if isinstance(body.get("invoice"), dict) else body
+    kind = body.get("kind") or "facturx"
+    flavor = body.get("flavor") or "EN16931"
+    extra = {"language": "FRENCH"} if kind == "facturx" else {}
+    try:
+        document = provider.generate_invoice_document(invoice, kind=kind, flavor=flavor, **extra)
+    except ProviderError as exc:
+        return JSONResponse(
+            status_code=422,
+            content={"error": "Génération refusée (validation).", "detail": exc.detail},
+        )
+    try:
+        suffix = ".pdf" if kind == "facturx" else ".xml"
+        ref = provider.deposit(document, filename=(invoice.get("invoiceId") or "facture") + suffix)
+    except ProviderError as exc:
+        return _error(exc)
+    return {"id": ref.external_id, "generated": True}
