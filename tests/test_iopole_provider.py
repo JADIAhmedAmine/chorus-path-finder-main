@@ -13,7 +13,6 @@ from chorus_python.providers import (  # noqa: E402
     OAuth2Config,
     OAuth2TokenManager,
     PdpProvider,
-    ProviderError,
 )
 from chorus_python.providers.iopole.config import IopoleConfig  # noqa: E402
 from chorus_python.providers.iopole.provider import IopolePdpProvider  # noqa: E402
@@ -45,8 +44,8 @@ class _FakeApiSession:
         self._responses = list(responses)
         self.requests = []
 
-    def request(self, method, url, json=None, headers=None, timeout=None):
-        self.requests.append((method, url, json, headers))
+    def request(self, method, url, params=None, json=None, files=None, headers=None, timeout=None):
+        self.requests.append({"method": method, "url": url, "params": params, "json": json, "files": files, "headers": headers})
         return self._responses.pop(0)
 
 
@@ -95,32 +94,41 @@ class IopoleProviderTest(unittest.TestCase):
     def test_is_pdp_provider(self):
         self.assertTrue(issubclass(IopolePdpProvider, PdpProvider))
 
-    def test_status_maps_state_as_lifecycle(self):
-        api = _FakeApiSession([_FakeResponse(200, {"invoice": {"invoiceId": "iop-789", "state": "DELIVERED"}})])
+    def test_deposit_sends_multipart_file(self):
+        api = _FakeApiSession([_FakeResponse(201, {"type": "INVOICE", "id": "f47ac10b"})])
         provider = self._provider(api)
-        status = provider.get_lifecycle_status("iop-789")
+        ref = provider.deposit(b"%PDF-data", filename="facture.pdf", format_flux="FACTURX")
+        self.assertEqual(ref.external_id, "f47ac10b")
+        req = api.requests[0]
+        self.assertEqual(req["method"], "POST")
+        self.assertTrue(req["url"].endswith("/v1/invoice"))
+        self.assertIn("file", req["files"])  # multipart
+        self.assertNotIn("Content-Type", req["headers"])  # laissé à requests (boundary)
+        self.assertEqual(req["headers"]["customer-id"], "cust-123")
+
+    def test_status_via_metadata_state(self):
+        api = _FakeApiSession([_FakeResponse(200, {
+            "data": [{"metadata": {"invoiceId": "inv-1", "state": "DELIVERED"}}],
+            "meta": {"count": 1},
+        })])
+        provider = self._provider(api)
+        status = provider.get_lifecycle_status("inv-1")
         self.assertEqual(status.lifecycle_status, "DELIVERED")
         self.assertIsNone(status.payment_status)  # rôle PDP, pas ERP
-        method, url, _, headers = api.requests[0]
-        self.assertEqual(method, "GET")
-        self.assertTrue(url.endswith("/v1/api/operator/invoicing/v1/invoice/iop-789"))
-        self.assertTrue(headers["Authorization"].startswith("Bearer "))
-        self.assertEqual(headers["customer-id"], "cust-123")
+        self.assertIn("/v1.1/invoice/search", api.requests[0]["url"])
+        self.assertEqual(api.requests[0]["params"]["q"], 'invoice.invoiceId:"inv-1"')
 
-    def test_search_returns_refs(self):
-        api = _FakeApiSession([_FakeResponse(200, {"items": [{"invoice": {"invoiceId": "abc"}}]})])
+    def test_search_parses_metadata(self):
+        api = _FakeApiSession([_FakeResponse(200, {
+            "data": [{"metadata": {"invoiceId": "abc", "state": "VALID"}, "businessData": {"invoiceId": "INV-9"}}],
+            "meta": {"offset": 0, "limit": 50, "count": 1},
+        })])
         provider = self._provider(api)
         refs = provider.search_invoices(limit=1)
         self.assertEqual(len(refs), 1)
         self.assertEqual(refs[0].external_id, "abc")
-        _, url, _, _ = api.requests[0]
-        self.assertIn("/v1.1/invoice/search", url)
-
-    def test_deposit_pending_raises(self):
-        # L'endpoint d'émission n'est pas encore figé : deposit signale clairement.
-        provider = self._provider(_FakeApiSession([]))
-        with self.assertRaises(ProviderError):
-            provider.deposit(b"%PDF", filename="f.pdf", format_flux="UBL", syntaxe_flux="UBL_INVOICE")
+        self.assertEqual(refs[0].reference, "INV-9")
+        self.assertIn("/v1.1/invoice/search", api.requests[0]["url"])
 
 
 if __name__ == "__main__":
