@@ -64,3 +64,56 @@ export async function emitIopoleInvoice(file: File): Promise<{ id: string }> {
   }
   return data;
 }
+
+// --- Détail, historique, téléchargement (parallèles Chorus) -----------------
+export async function getIopoleInvoice(id: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`${BASE}/invoices/${encodeURIComponent(id)}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Iopole: détail (${res.status})`);
+  return res.json();
+}
+
+export async function getIopoleHistory(id: string): Promise<IopoleStatusHistoryEntry[]> {
+  const res = await fetch(`${BASE}/invoices/${encodeURIComponent(id)}/history`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Iopole: historique (${res.status})`);
+  const data = await res.json();
+  return Array.isArray(data?.history) ? data.history : [];
+}
+
+export async function downloadIopoleInvoice(id: string, readable = false): Promise<void> {
+  const res = await fetch(`${BASE}/invoices/${encodeURIComponent(id)}/download${readable ? '?readable=1' : ''}`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Iopole: téléchargement indisponible (${res.status})`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `iopole-${id}${readable ? '-lisible.pdf' : ''}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// --- Réception (inbound, mode PULL) -----------------------------------------
+export async function listIopoleInbox(): Promise<{ notSeen: string[]; count: number }> {
+  const res = await fetch(`${BASE}/inbox`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Iopole: réception (${res.status})`);
+  return res.json();
+}
+
+export async function markIopoleSeen(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/invoices/${encodeURIComponent(id)}/seen`, {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(`Iopole: markAsSeen (${res.status})`);
+}
+
+// --- Annuaire ---------------------------------------------------------------
+export async function searchIopoleDirectory(q: string): Promise<unknown> {
+  const res = await fetch(`${BASE}/directory/french?q=${encodeURIComponent(q)}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`Iopole: annuaire (${res.status})`);
+  const data = await res.json();
+  return data?.results ?? data;
+}
