@@ -56,6 +56,10 @@ const emissionItems: SidebarNavItem[] = [
   { title: 'Dépôt de flux G2B', url: '/invoices/g2b-flux', icon: Network },
 ];
 
+const providerItems: SidebarNavItem[] = [
+  { title: 'Iopole (PDP)', url: '/providers/iopole', icon: Workflow },
+];
+
 const invoiceItems: SidebarNavItem[] = [...receptionItems, ...emissionItems];
 
 const refItems: SidebarNavItem[] = [
@@ -200,6 +204,7 @@ export function AppSidebar() {
         {renderGroup('Flux', fluxItems)}
         {renderGroup('Réception', receptionItems)}
         {renderGroup('Émission', emissionItems)}
+        {renderGroup('Plateformes', providerItems)}
         {renderGroup('Référentiels', refItems)}
         {renderGroup('Administration', adminItems)}
       </SidebarContent>
