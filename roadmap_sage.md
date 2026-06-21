@@ -2,6 +2,12 @@
 
 > Branche `feature/sage-integration-layer`. Fil conducteur : **Sage Accounting (MVP) → routing → Sage Network → Cegid/Docaposte**.
 
+> ⚠️ **PIVOT (2026-06) — cible MVP = Iopole (PDP), pas Sage.**
+> Constats portail : l'API e-facturation **Sage Network (PDP) n'est pas live**, et **Sage Accounting (REST)** n'est pas accessible depuis le compte (seul **X3 GraphQL** l'est, qui exige un tenant prod). Décision : valider l'architecture multi-PDP **maintenant** avec **Iopole** — PDP « API-first » (REST, client_credentials, **sandbox sans tenant**, Swagger public, webhooks).
+> - **Sage reste un référentiel/cible future** : `SageAccountingProvider` (REST) sert d'exemple ERP ; X3 et Sage Network = backlog.
+> - **Iopole = Phase 1 active** : `IopolePdpProvider` (rôle PDP), même interface que l'intégration Chorus Pro existante.
+> - Bénéfice : la doc Iopole étant publique, **`api-doc-mapper` est exécutable** dès l'obtention de la sandbox.
+
 ---
 
 ## Phase 0 — Pré-requis (déblocage)
@@ -37,7 +43,10 @@
 - [ ] Lever le blocage : accès à l'**API PDP Sage Network** (partenariat / doc privée).
 - [ ] Implémenter `PdpProvider` Sage Network (deposit + lifecycle status).
 - [ ] Routing Chorus ↔ Sage Network selon B2G/B2B.
-- **Dépendance :** API publique/partenaire (aujourd'hui `[À VÉRIFIER]`).
+- **Dépendance / blocage confirmé (2026-06)** : l'API e-facturation Sage (send/receive,
+  lifecycle, formats) est annoncée « **not live for development yet** » sur le portail
+  développeur. On ne peut que **planifier**, pas coder dessus. La voie buildable
+  aujourd'hui est donc le **rôle ERP (Sage Accounting REST)**, pas le rôle PDP.
 
 ---
 
