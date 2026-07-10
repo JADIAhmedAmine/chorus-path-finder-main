@@ -49,6 +49,9 @@ annuaire_out/
 src/data/annuaire_out/
 config/auth-users.json
 config/audit-log*.jsonl
+config/chorus-credentials.json
+config/branding.json
+config/branding-logo.*
 vite.config.ts.timestamp-*.mjs
 output_base64.txt
 response.json

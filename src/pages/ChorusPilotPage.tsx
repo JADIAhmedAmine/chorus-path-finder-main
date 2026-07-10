@@ -22,6 +22,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { getAppLogoUrl, getAppName } from '@/lib/branding';
 
 interface FeatureCard {
   icon: React.ComponentType<{ className?: string }>;
@@ -196,8 +197,8 @@ export default function ChorusPilotPage() {
             <div className="relative">
               <div className="absolute inset-0 -m-4 rounded-3xl bg-gradient-to-br from-primary/20 to-[hsl(262_83%_58%)/_0.2] blur-2xl" />
               <img
-                src="/app-symbol.svg"
-                alt="Chorus Pilot"
+                src={getAppLogoUrl()}
+                alt={getAppName()}
                 className="relative h-32 w-32 md:h-40 md:w-40"
               />
             </div>
@@ -213,7 +214,7 @@ export default function ChorusPilotPage() {
 
           {/* Title */}
           <h1 className="mb-5 text-4xl font-bold leading-[1.05] tracking-tight md:text-5xl lg:text-[64px]">
-            Chorus Pilot
+            {getAppName()}
           </h1>
 
           {/* Subtitle */}
@@ -266,7 +267,7 @@ export default function ChorusPilotPage() {
               Fonctionnalités
             </Badge>
             <h2 className="text-3xl font-bold tracking-tight md:text-4xl">
-              Ce que fait Chorus Pilot
+              Ce que fait {getAppName()}
             </h2>
             <p className="mx-auto mt-3 max-w-2xl text-base text-muted-foreground md:text-lg">
               Une suite complète pour automatiser et piloter vos flux de facturation publique.
@@ -458,7 +459,7 @@ export default function ChorusPilotPage() {
                 Prêt à automatiser vos flux ?
               </h3>
               <p className="mx-auto mb-7 max-w-xl text-base leading-relaxed text-white/85 sm:text-lg">
-                Chorus Pilot vous accompagne à chaque étape : dépôt, suivi, correction, paiement.
+                {getAppName()} vous accompagne à chaque étape : dépôt, suivi, correction, paiement.
               </p>
               <div className="flex flex-col items-center justify-center gap-2.5 sm:flex-row">
                 <Button asChild size="lg" variant="secondary" className="h-11 gap-2 bg-white text-primary hover:bg-white/90">

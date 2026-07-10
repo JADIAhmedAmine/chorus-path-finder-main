@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { getAppName } from '@/lib/branding';
 
 interface Section {
   id: string;
@@ -153,6 +154,14 @@ const sections: Section[] = [
 
 export default function CGUPage() {
   const lastUpdate = 'mai 2026';
+  const appName = getAppName();
+  // Les CGU sont rédigées avec le nom par défaut ; on le substitue par la
+  // marque configurée (marque blanche).
+  const brandedSections = sections.map((section) => ({
+    ...section,
+    title: section.title.replace(/Chorus Pilot/g, appName),
+    content: section.content.map((paragraph) => paragraph.replace(/Chorus Pilot/g, appName)),
+  }));
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-card to-background">
@@ -175,7 +184,7 @@ export default function CGUPage() {
                 <Badge variant="secondary" className="shrink-0">Version provisoire</Badge>
               </div>
               <p className="text-lg text-muted-foreground">
-                Les présentes conditions encadrent l'utilisation de Chorus Pilot, solution de pilotage et d'automatisation des flux Chorus Pro / PISTE.
+                Les présentes conditions encadrent l'utilisation de {appName}, solution de pilotage et d'automatisation des flux Chorus Pro / PISTE.
               </p>
             </div>
           </div>
@@ -198,7 +207,7 @@ export default function CGUPage() {
             <div className="sticky top-24 space-y-2">
               <p className="text-sm font-semibold text-muted-foreground px-3 mb-4">Sommaire</p>
               <nav className="space-y-1">
-                {sections.map((section) => (
+                {brandedSections.map((section) => (
                   <a
                     key={section.id}
                     href={`#${section.id}`}
@@ -220,7 +229,7 @@ export default function CGUPage() {
 
           {/* Main Content */}
           <main className="lg:col-span-3 space-y-8">
-            {sections.map((section) => (
+            {brandedSections.map((section) => (
               <section key={section.id} id={section.id} className="scroll-mt-24">
                 <Card className="border border-border/60 hover:border-accent/50 transition-all">
                   <CardHeader>
@@ -247,7 +256,7 @@ export default function CGUPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-muted-foreground leading-relaxed">
-                  En accédant et en utilisant Chorus Pilot, vous acceptez les termes et conditions énoncés dans ce document. Si vous n'acceptez pas ces conditions, nous vous demandons de ne pas utiliser ce service.
+                  En accédant et en utilisant {appName}, vous acceptez les termes et conditions énoncés dans ce document. Si vous n'acceptez pas ces conditions, nous vous demandons de ne pas utiliser ce service.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-3 pt-4">
                   <Link to="/">

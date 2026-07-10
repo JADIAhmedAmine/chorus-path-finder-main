@@ -11,7 +11,7 @@ import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
   SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar,
 } from '@/components/ui/sidebar';
-import { APP_NAME, AppSymbol } from '@/components/common/AppSymbol';
+import { AppSymbol, getAppName } from '@/components/common/AppSymbol';
 import { loadAuthSession } from '@/lib/auth/session';
 import { loadChorusConfig } from '@/lib/chorus/storage';
 import { FLUX_ENABLED } from '@/lib/featureFlags';
@@ -24,8 +24,9 @@ interface SidebarNavItem {
   badge?: string;
 }
 
-const mainItems: SidebarNavItem[] = [
-  { title: 'Chorus Pilot', url: '/chorus-pilot', icon: Zap },
+// Le premier titre reprend le nom de marque configuré (résolu au rendu).
+const buildMainItems = (): SidebarNavItem[] => [
+  { title: getAppName(), url: '/chorus-pilot', icon: Zap },
   { title: 'Tableau de bord', url: '/', icon: LayoutDashboard },
 ];
 
@@ -87,8 +88,10 @@ export function AppSidebar() {
   const env = (config?.environment ?? 'qualif').toString().toLowerCase();
   const isProd = env === 'production' || env === 'prod';
 
+  const mainItems = buildMainItems();
   const adminItems: SidebarNavItem[] = session?.roleCode === 'ADMINISTRATEUR'
     ? [
+        { title: 'Mon organisation', url: '/organisation', icon: Building2 },
         { title: 'Monitoring', url: '/monitoring', icon: Activity },
         ...baseAdminItems,
       ]
@@ -195,7 +198,7 @@ export function AppSidebar() {
         <AppSymbol className="h-10 w-10 shrink-0 rounded-xl bg-white/5 ring-1 ring-white/10 transition-transform hover:scale-105" />
         {!collapsed && (
           <div className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate text-[15px] font-semibold tracking-tight text-white">{APP_NAME}</span>
+            <span className="truncate text-[15px] font-semibold tracking-tight text-white">{getAppName()}</span>
             <span className="mt-0.5 flex items-center gap-1.5 text-[10.5px] font-medium uppercase tracking-[0.08em] text-sidebar-foreground/55">
               <span
                 className={cn(

@@ -61,6 +61,7 @@ import {
 import { formatCurrency, formatDate, formatDateTime, getChorusRawStatusConfig } from '@/lib/status-utils';
 import type { Invoice } from '@/types';
 import { cn } from '@/lib/utils';
+import { getAppName } from '@/lib/branding';
 
 const ALL_FILTER_VALUE = '__all__';
 const MONTH_LABEL_FORMATTER = new Intl.DateTimeFormat('fr-FR', { month: 'short', year: 'numeric' });
@@ -363,7 +364,7 @@ export default function Dashboard() {
       {
         label: 'Réception traitée',
         value: processed,
-        description: 'Actions explicitement réalisées depuis Chorus Pilot.',
+        description: `Actions explicitement réalisées depuis ${getAppName()}.`,
         href: '/invoices/reception/processed',
       },
       {
@@ -539,7 +540,7 @@ export default function Dashboard() {
         eyebrow={
           <>
             <Sparkles className="h-3 w-3" />
-            Chorus Pilot · cockpit
+            {getAppName()} · cockpit
           </>
         }
         title="Tableau de bord"

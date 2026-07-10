@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .credentials_store import stored_credentials_env_overlay
+
 
 DEFAULT_ENV_FILES = (".env.local",)
 FIXED_SUPPLIER_ID = 26359578
@@ -186,6 +188,9 @@ def load_chorus_settings(
     environment_override: str | None = None,
 ) -> ChorusSettings:
     env = load_env_values(env_files)
+    # Les identifiants saisis dans l'interface (stockés côté serveur) priment
+    # sur les variables d'environnement.
+    env.update(stored_credentials_env_overlay())
     if environment_override is not None:
         forced = environment_override.strip().lower()
         if forced == "production":
