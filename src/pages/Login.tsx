@@ -8,7 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2 } from 'lucide-react';
 import { loadAuthSession, saveAuthSession, syncAuthSessionToChorusConfig } from '@/lib/auth/session';
 import { useToast } from '@/hooks/use-toast';
-import { APP_NAME, APP_TAGLINE, AppSymbol } from '@/components/common/AppSymbol';
+import { AppSymbol, getAppName, getAppTagline } from '@/components/common/AppSymbol';
 
 interface LoginResponse {
   access_token: string;
@@ -95,8 +95,8 @@ export default function Login() {
             <AppSymbol className="h-24 w-24 rounded-2xl shadow-lg ring-1 ring-border/40" />
           </div>
           <div className="space-y-2">
-            <CardTitle className="text-3xl font-semibold tracking-tight">{APP_NAME}</CardTitle>
-            <p className="text-sm text-muted-foreground">{APP_TAGLINE}</p>
+            <CardTitle className="text-3xl font-semibold tracking-tight">{getAppName()}</CardTitle>
+            <p className="text-sm text-muted-foreground">{getAppTagline()}</p>
           </div>
         </CardHeader>
         <CardContent>

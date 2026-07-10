@@ -17,6 +17,7 @@ Le projet contient :
 - [Déploiement Docker](#déploiement-docker)
 - [Accès réseau](#accès-réseau)
 - [Authentification](#authentification)
+- [Marque blanche et configuration par l'interface](#marque-blanche-et-configuration-par-linterface)
 - [Configuration Chorus](#configuration-chorus)
 - [Mode d'emploi applicatif](#mode-demploi-applicatif)
 - [Base de données et synchronisation](#base-de-données-et-synchronisation)
@@ -283,9 +284,23 @@ Usage multi-utilisateurs actuel :
 - les données restent principalement mono-tenant par défaut ;
 - pour un multi-tenant strict, chaque utilisateur doit porter le bon `tenantId`.
 
+## Marque blanche et configuration par l'interface
+
+L'application est utilisable en marque blanche par n'importe quelle entreprise ou entité publique. Un compte `ADMINISTRATEUR` dispose d'une page dédiée **Mon organisation** (`/organisation`) qui permet, sans toucher au code ni au serveur :
+
+- de personnaliser le **nom de l'application**, le **slogan**, le **logo** et la **couleur principale** (thèmes clair/sombre dérivés automatiquement) ;
+- de saisir les **identifiants techniques PISTE** (`client_id` / `client_secret` OAuth2) et le **compte technique Chorus Pro** (login / mot de passe), par environnement (qualification ou production).
+
+Ces valeurs sont stockées côté serveur (`config/branding.json`, `config/chorus-credentials.json` — permissions restreintes, exclues de git) et **priment sur les variables d'environnement** `CHORUS_*`. Les secrets ne sont jamais renvoyés au navigateur : l'API n'expose que leur statut (configuré ou non).
+
+Pour obtenir ces identifiants :
+
+1. **PISTE** : créer une application sur [piste.gouv.fr](https://piste.gouv.fr) et souscrire à l'API Chorus Pro « Factures » pour récupérer le couple `client_id` / `client_secret`.
+2. **Chorus Pro** : sur [portail.chorus-pro.gouv.fr](https://portail.chorus-pro.gouv.fr), déclarer un compte technique (raccordement API) rattaché à la structure.
+
 ## Configuration Chorus
 
-Les variables Chorus sont lues dans `.env.local`.
+Les variables Chorus sont lues dans `.env.local`. Elles restent le mécanisme de base pour un déploiement automatisé ; les valeurs saisies dans la page « Mon organisation » les surchargent.
 
 Variables de sélection d'environnement :
 

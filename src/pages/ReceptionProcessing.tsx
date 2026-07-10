@@ -62,6 +62,7 @@ import type {
 } from '@/types/chorus';
 import type { Invoice, PublicCustomer, SupplierOrganization } from '@/types';
 import { toDisplayInvoiceFromReception } from '@/lib/chorus/invoiceDisplay';
+import { getAppName } from '@/lib/branding';
 
 const BULK_HINT_PLACEHOLDER = '8424327\n8424328\n8424329';
 const CONSULT_CHUNK_SIZE = 50;
@@ -1249,7 +1250,7 @@ export default function ReceptionProcessing() {
           ok: false,
           success: false,
           category: 'NETWORK',
-          human_message: 'Le backend Chorus Pilot est injoignable.',
+          human_message: `Le backend ${getAppName()} est injoignable.`,
           raw_message: message,
           recommended_action: 'Vérifier que le bridge FastAPI est démarré et accessible.',
         },

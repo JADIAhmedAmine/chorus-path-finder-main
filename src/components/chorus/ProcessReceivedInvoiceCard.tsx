@@ -15,6 +15,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
 import { loadChorusConfig, resolveChorusRuntimeConfig } from '@/lib/chorus/storage';
+import { getAppName } from '@/lib/branding';
 import {
   RECEPTION_PROCESS_MOTIF_REQUIRED,
   RECEPTION_PROCESS_STATUSES,
@@ -103,7 +104,7 @@ export function ProcessReceivedInvoiceCard({
           success: false,
           identifiantFactureCPP,
           category: 'NETWORK',
-          human_message: 'Le backend Chorus Pilot est injoignable.',
+          human_message: `Le backend ${getAppName()} est injoignable.`,
           raw_message: message,
           recommended_action: 'Vérifier que le bridge FastAPI est démarré et accessible.',
         },
