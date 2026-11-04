@@ -1,0 +1,20 @@
+module,feature,user_value,api_dependency,repo_status,mvp,priority,effort,risk,source
+dashboard,Operational KPIs (rejects/corrections/success),Orientation at a glance,invoice search/history,partial,yes,P1,M,low,R5
+flux hub,Unified /flux cockpit + pipeline + pedagogy,Single guided entry point,derived,started,yes,P1,M,low,repo
+onboarding,PISTE OAuth2 + Chorus account setup,Get connected without friction,oauth token + utilisateurs,partial,yes,P1,L,med,R1/S4
+entity configuration,Supplier structures selection,Correct issuer,recuperer/structures/actives/fournisseur,partial,yes,P2,S,low,R2
+annuaire lookup,Recipient + service + engagement obligations,Prevent recipient rejects,rechercher/destinataire+serviceexecutant,done,yes,P1,M,low,R2/R4
+invoice emission,Create & submit invoice,Core action,deposer/pdf + soumettre,done,yes,P1,M,med,R2/S9
+depot de flux,Deposit structured flux (XML/Factur-X),Core action,deposer/flux,done,yes,P1,M,med,S8/R2
+syntax validation,Format & syntax detection,Prevent format rejects,recuperer/formatflux+syntaxeflux,done,yes,P1,S,low,R2
+business validation,Pre-deposit checks (SIRET/TVA/amount/number),Reduce rejects,recuperer/tauxtva+devises+cadrefacturation,partial,yes,P1,L,med,R2/R4
+pdf to flux,OCR extraction reviewed before deposit,Onboard PDF-only suppliers,deposer/pdf,done,yes,P2,L,med,S9
+status tracking,Flux CR + invoice lifecycle,Visibility to payment,consulterCR + history,partial,yes,P1,M,med,S6/R5
+rejection correction,Guided reject fix + resubmit,Recovery,consulterCR + recycle,partial,yes,P1,M,med,S6/R2
+suspension handling,Complement (comment/attachment),Unblock suspended invoices,transverses/reception,partial,yes,P2,M,med,S5/S9
+invoice reception,Process received invoices,Recipient-side flow,invoices/* bridge,done,no,P2,M,med,R2/S9
+audit logs,Action history per user,Compliance,app-side,done,no,P2,S,low,R2
+reports,Reject rate / time-to-payment analytics,Management insight,derived,missing,no,P3,L,med,R5
+admin settings,Env presets + keys,Operate safely,storage,done,yes,P2,S,low,R1
+flux history,Persisted deposit history for flux KPIs,Real flux-level metrics,app persistence (no public endpoint),missing,no,P2,M,med,R5
+b2b reform,PDP/PPF readiness,Future obligation,external,missing,no,P3,XL,high,à vérifier

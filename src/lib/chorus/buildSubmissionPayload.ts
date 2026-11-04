@@ -11,6 +11,7 @@ import type {
   ChorusPayloadBuildContext,
   ChorusSubmissionMainAttachment,
   ChorusSubmissionPayload,
+  ChorusVatType,
   InvoiceDraftFormData,
   NormalizedInvoiceDraftData,
 } from '@/lib/chorus/types';
@@ -39,6 +40,11 @@ function inferMainAttachmentDesignation(mainFileName: string | undefined): strin
   const sanitized = sanitizeText(mainFileName);
   return sanitized?.startsWith('GCU_') ? sanitized : DEFAULT_MAIN_ATTACHMENT_DESIGNATION;
 }
+
+function normalizeSubmissionVatType(value: ChorusVatType): ChorusVatType {
+  return value === 'TVA_SUR_ENCAISSEMENT' ? 'TVA_SUR_DEBIT' : value;
+}
+
 export function buildChorusSubmissionPayload(
   normalized: NormalizedInvoiceDraftData,
   context: ChorusPayloadBuildContext = {},
@@ -53,8 +59,9 @@ export function buildChorusSubmissionPayload(
     normalized,
   );
   const totals = computeSubmissionTotals(normalized, ligneTva);
-  const typeTva = chorusContext.typeTva
-    ?? inferChorusVatType(totals.montantTVA, chorusContext.motifExonerationTva);
+  const typeTva = normalizeSubmissionVatType(
+    chorusContext.typeTva ?? inferChorusVatType(totals.montantTVA, chorusContext.motifExonerationTva),
+  );
   const modeDepot = chorusContext.submissionMode ?? 'SAISIE_API';
   const pieceJointePrincipale: ChorusSubmissionMainAttachment[] = modeDepot === 'SAISIE_API'
     ? []
@@ -78,8 +85,9 @@ export function buildChorusSubmissionPayload(
     },
     fournisseur: {
       codeCoordonneesBancairesFournisseur: asInteger(chorusContext.codeCoordonneesBancairesFournisseur),
-      idFournisseur: FIXED_CHORUS_SUPPLIER_ID,
+      idFournisseur: asInteger(chorusContext.idFournisseur) ?? FIXED_CHORUS_SUPPLIER_ID,
     },
+    idUtilisateurCourant: asInteger(chorusContext.idUtilisateurCourant),
     lignePoste,
     ligneTva,
     modeDepot,
@@ -94,7 +102,12 @@ export function buildChorusSubmissionPayload(
     pieceJointePrincipale,
     references: {
       deviseFacture: sanitizeText(normalized.currencyCode) || 'EUR',
-      modePaiement: chorusContext.modePaiement ?? normalized.paymentMode ?? 'VIREMENT',
+      modePaiement: normalized.paymentMode ?? chorusContext.modePaiement ?? 'VIREMENT',
+      motifExonerationTva: sanitizeText(chorusContext.motifExonerationTva),
+      numeroBonCommande: sanitizeText(normalized.engagementNumber),
+      numeroFactureOrigine: sanitizeText(chorusContext.numeroFactureOrigine)
+        ?? sanitizeText(context.extraction?.fields.supplierInvoiceNumber),
+      numeroMarche: sanitizeText(normalized.marketNumber),
       typeFacture: chorusContext.typeFacture ?? 'FACTURE',
       typeTva,
     },

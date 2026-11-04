@@ -9,12 +9,14 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full">
+      <div className="min-h-screen flex w-full bg-background">
         <AppSidebar />
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="relative flex flex-1 flex-col min-w-0">
           <AppHeader />
-          <main className="flex-1 p-6 overflow-auto">
-            {children}
+          <main className="surface-aurora flex-1 overflow-auto">
+            <div className="mx-auto w-full max-w-[1480px] px-5 py-6 sm:px-8 sm:py-8">
+              {children}
+            </div>
           </main>
         </div>
       </div>

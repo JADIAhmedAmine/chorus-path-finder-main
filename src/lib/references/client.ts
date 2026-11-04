@@ -1,5 +1,6 @@
 import type { ChorusConfig } from '@/types/chorus';
 import type { PublicCustomer, PublicService, SupplierOrganization } from '@/types';
+import { authHeaders } from '@/lib/auth/session';
 import { parseChorusAnnuaireXml, type ChorusAnnuaireCatalog } from '@/lib/references/annuaire';
 
 export interface ReferenceCatalog {
@@ -32,6 +33,12 @@ export interface ReferenceCatalogMetadata {
 const annuaireCache = new Map<string, Promise<ChorusAnnuaireCatalog>>();
 const referenceCatalogCache = new Map<string, ReferenceCatalog>();
 const referenceCatalogPromiseCache = new Map<string, Promise<ReferenceCatalog>>();
+
+export function clearReferenceCatalogCaches(): void {
+  annuaireCache.clear();
+  referenceCatalogCache.clear();
+  referenceCatalogPromiseCache.clear();
+}
 
 function getDefaultFetchImpl(): typeof fetch {
   return ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init)) as typeof fetch;
@@ -153,9 +160,9 @@ export class ReferenceCatalogClient {
 
     const response = await this.fetchImpl(joinUrl(baseUrl, relativePath), {
       method: 'GET',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
-      },
+      }),
     });
 
     if (!response.ok) {
@@ -277,7 +284,7 @@ export class ReferenceCatalogClient {
     const includeAnnuaire = options.includeAnnuaire ?? true;
 
     const nextPromise = (async () => {
-      const [suppliers, publicCustomers, publicServices, annuaireCatalog] = await Promise.all([
+      const [suppliers, publicCustomers, publicServices] = await Promise.all([
         includeSuppliers
           ? this.fetchCollection(this.config.referenceSuppliersPath, 'API fournisseurs', normalizeSupplier)
           : Promise.resolve([]),
@@ -287,15 +294,17 @@ export class ReferenceCatalogClient {
         includePublicServices
           ? this.fetchCollection(this.config.referencePublicServicesPath, 'API services publics', normalizePublicService)
           : Promise.resolve([]),
-        includeAnnuaire
-          ? this.fetchAnnuaireCatalog()
-          : Promise.resolve({
-              publicCustomers: [],
-              publicServices: [],
-              structureCount: 0,
-              serviceCount: 0,
-            }),
       ]);
+      const needsAnnuaireFallback = includeAnnuaire
+        && ((includePublicCustomers && publicCustomers.length === 0) || (includePublicServices && publicServices.length === 0));
+      const annuaireCatalog = needsAnnuaireFallback
+        ? await this.fetchAnnuaireCatalog()
+        : {
+            publicCustomers: [],
+            publicServices: [],
+            structureCount: 0,
+            serviceCount: 0,
+          };
 
       const nextCatalog: ReferenceCatalog = {
         suppliers,

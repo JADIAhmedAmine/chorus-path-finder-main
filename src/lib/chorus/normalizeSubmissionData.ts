@@ -268,10 +268,10 @@ export function computeSubmissionTotals(
   };
 }
 
-export function inferChorusVatType(totalVat: number, motifExonerationTva?: string): 'TVA_SUR_ENCAISSEMENT' | 'EXONERATION' | 'SANS_TVA' {
+export function inferChorusVatType(totalVat: number, motifExonerationTva?: string): 'TVA_SUR_DEBIT' | 'EXONERATION' | 'SANS_TVA' {
   if (totalVat <= 0) {
     return motifExonerationTva ? 'EXONERATION' : 'SANS_TVA';
   }
 
-  return 'TVA_SUR_ENCAISSEMENT';
+  return 'TVA_SUR_DEBIT';
 }

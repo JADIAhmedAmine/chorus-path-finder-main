@@ -1,0 +1,38 @@
+api_layer,domain,path,http_method,environment,auth,business_use_case,constraints,source
+Chorus Pro (PISTE),Factures,/v1/deposer/flux,POST,sandbox+prod,OAuth2 + cpro-account,Deposit structured invoice flux (deposerFluxFacture),file <= 10 Mo / 30 Mo compressé,S8/R2/R6
+Chorus Pro (PISTE),Factures,/v1/deposer/pdf,POST,sandbox+prod,OAuth2 + cpro-account,Deposit PDF invoice triggering OCR (deposerPDFFacture),OCR -> INTERPRETEE_OCR,R2/S9
+Chorus Pro (PISTE),Factures,/v1/soumettre,POST,sandbox+prod,OAuth2 + cpro-account,Submit interpreted/structured invoice (soumettreFacture),,R2/S9
+Chorus Pro (PISTE),Factures,/v1/consulterCR,POST,sandbox+prod,OAuth2 + cpro-account,Consult flux integration report / compte rendu (consulterCR),,R6/S6
+Chorus Pro (PISTE),Factures,/v1/recuperer/formatflux,POST,sandbox+prod,OAuth2 + cpro-account,List accepted flux formats,,R2/R6
+Chorus Pro (PISTE),Factures,/v1/recuperer/syntaxeflux,POST,sandbox+prod,OAuth2 + cpro-account,List accepted XML syntaxes for a format,,R2/R6
+Chorus Pro (PISTE),Factures,/v1/recuperer/modedepot,POST,sandbox+prod,OAuth2 + cpro-account,List deposit modes,,R2
+Chorus Pro (PISTE),Factures,/v1/recuperer/cadrefacturation,POST,sandbox+prod,OAuth2 + cpro-account,List billing frameworks (typologies),,R2
+Chorus Pro (PISTE),Factures,/v1/recuperer/tauxtva,POST,sandbox+prod,OAuth2 + cpro-account,List valid VAT rates,,R2
+Chorus Pro (PISTE),Factures,/v1/recuperer/devises,POST,sandbox+prod,OAuth2 + cpro-account,List currencies,,R2
+Chorus Pro (PISTE),Factures,/v1/recuperer/modereglements,POST,sandbox+prod,OAuth2 + cpro-account,List payment modes,,R2
+Chorus Pro (PISTE),Factures,/v1/recuperer/coordbanc/valides,POST,sandbox+prod,OAuth2 + cpro-account,List valid bank details,,R2
+Chorus Pro (PISTE),Factures,/v1/recuperer/structures/actives/fournisseur,POST,sandbox+prod,OAuth2 + cpro-account,List active supplier structures,,R2
+Chorus Pro (PISTE),Annuaire,/v1/rechercher/destinataire,POST,sandbox+prod,OAuth2 + cpro-account,Search public recipient (annuaire),,R2
+Chorus Pro (PISTE),Annuaire,/v1/rechercher/serviceexecutant,POST,sandbox+prod,OAuth2 + cpro-account,Search recipient service exécutant,,R2
+Chorus Pro (PISTE),Factures,/v1/health-check,GET,sandbox+prod,OAuth2,Service health probe,,R2
+Chorus Pro (PISTE),Utilisateurs,/cpro/utilisateurs/v1/consulter/compte,POST,sandbox+prod,OAuth2 + cpro-account,Consult connected Chorus Pro account,,R2
+Chorus Pro (PISTE),Utilisateurs,/cpro/utilisateurs/v1/monCompte/recuperer/rattachements,POST,sandbox+prod,OAuth2 + cpro-account,List account attachments/structures,,R2
+Chorus Pro (PISTE),Transverses,/cpro/transverses,POST,sandbox+prod,OAuth2 + cpro-account,Cross-cutting reference services,paths not fully enumerated (see S7),R2
+PISTE,OAuth,/api/oauth/token,POST,sandbox+prod,client_id+client_secret,Obtain OAuth2 bearer token,grant_type=client_credentials [à vérifier],R1/S4
+App bridge (internal),Chorus,/api/chorus/oauth-token,POST,n/a,server,Server-side PISTE token retrieval,internal adapter,R2
+App bridge (internal),Chorus,/api/chorus/submit,POST,n/a,server,Submit invoice to Chorus Pro,internal adapter,R2
+App bridge (internal),Flux,/api/chorus/flux/detect,POST,n/a,server,Detect flux format,internal adapter,R2
+App bridge (internal),Flux,/api/chorus/flux/business-validate,POST,n/a,server,Business validation before deposit,internal adapter,R2
+App bridge (internal),Flux,/api/chorus/flux/deposer,POST,n/a,server,Deposit flux,internal adapter,R2
+App bridge (internal),PDF,/api/chorus/pdf-to-flux/extract,POST,n/a,server,Extract invoice data from PDF,internal adapter,R2
+App bridge (internal),PDF,/api/chorus/pdf-to-flux/generate-xml,POST,n/a,server,Generate UBL XML from reviewed data,internal adapter,R2
+App bridge (internal),Invoices,/api/chorus/invoices/supplier/search,POST,n/a,server,Search issued invoices,internal adapter,R2
+App bridge (internal),Invoices,/api/chorus/invoices/history,POST,n/a,server,Invoice status history,internal adapter,R2
+App bridge (internal),Invoices,/api/chorus/invoices/download,POST,n/a,server,Download invoice PDF/XML,internal adapter,R2
+App bridge (internal),Annuaire,/api/chorus/siret/info,POST,n/a,server,SIRET information lookup,internal adapter,R2
+App bridge (internal),Annuaire,/api/chorus/annuaire/sync,POST,n/a,server,Sync annuaire,internal adapter,R2
+App bridge (internal),Correction,/api/chorus/recycle,POST,n/a,server,Recycle a rejected invoice,internal adapter,R2
+App bridge (internal),G2B,/api/g2b/flux/detect,POST,n/a,server,G2B detect,FSO3110A/FSO3117A/FSO3300A/FSO6000A,R3
+App bridge (internal),G2B,/api/g2b/flux/business-validate,POST,n/a,server,G2B business validation,internal adapter,R3
+App bridge (internal),G2B,/api/g2b/flux/deposit,POST,n/a,server,G2B deposit (code_interface+force+checksum),internal adapter,R3
+App bridge (internal),G2B,/api/g2b/annuaire/validate-recipient,POST,n/a,server,G2B recipient validation + obligations,internal adapter,R4

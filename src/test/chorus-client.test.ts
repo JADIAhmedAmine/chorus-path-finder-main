@@ -80,7 +80,7 @@ afterEach(() => {
 });
 
 describe('chorus connector', () => {
-  it('retrieves an oauth token and calls the connection endpoint with cpro-account', async () => {
+  it('retrieves an oauth token from the backend and calls the connection endpoint', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({ access_token: 'token-123456789' }))
       .mockResolvedValueOnce(jsonResponse({ status: 'ok' }));
@@ -105,17 +105,16 @@ describe('chorus connector', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const tokenCall = fetchMock.mock.calls[0];
-    expect(tokenCall?.[0]).toBe('https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token');
+    expect(tokenCall?.[0]).toBe('/api/chorus/oauth-token');
     expect((tokenCall?.[1] as RequestInit).method).toBe('POST');
-    expect(String((tokenCall?.[1] as RequestInit).body)).toContain('grant_type=client_credentials');
-    expect(String((tokenCall?.[1] as RequestInit).body)).toContain('client_id=client-id');
+    expect(JSON.parse(String((tokenCall?.[1] as RequestInit).body))).toEqual({ environment: 'qualif' });
 
     const apiCall = fetchMock.mock.calls[1];
     expect(apiCall?.[0]).toBe('https://sandbox-api.example.test/health');
     const headers = (apiCall?.[1] as RequestInit).headers as Record<string, string>;
     expect((apiCall?.[1] as RequestInit).method).toBe('GET');
     expect(headers.Authorization).toBe('Bearer token-123456789');
-    expect(headers['cpro-account']).toBe(window.btoa('tech-user:tech-pass'));
+    expect(headers['cpro-account']).toBeUndefined();
   });
 
   it('uses POST for the connection test when configured', async () => {
@@ -267,14 +266,21 @@ describe('chorus connector', () => {
     expect(result.supplierServiceId).toBe(436);
   });
 
-  it('uploads files then submits a validated Chorus payload', async () => {
+  it('sends files and a validated Chorus payload to the Python submission bridge', async () => {
     const fetchMock = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-upload-1' }))
-      .mockResolvedValueOnce(jsonResponse({ fileId: 'main-file-id' }))
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-upload-2' }))
-      .mockResolvedValueOnce(jsonResponse({ fileId: 'attachment-id' }))
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-submit' }))
-      .mockResolvedValueOnce(jsonResponse({ invoiceId: 'CHORUS-INV-001' }));
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        externalId: 'CHORUS-INV-001',
+        uploadedFiles: [{ id: 'main-file-id', filename: 'invoice.pdf' }],
+        payload: createValidPayload(),
+        response: { invoiceId: 'CHORUS-INV-001' },
+        apiCalls: [{
+          label: 'Soumission facture Chorus',
+          method: 'POST',
+          url: 'https://chorus-python.test/soumettre',
+          responseStatus: 200,
+        }],
+      }));
 
     const connector = new DirectChorusConnector({
       ...getDefaultChorusConfig(),
@@ -286,6 +292,7 @@ describe('chorus connector', () => {
       clientSecret: 'client-secret',
       uploadFilePath: '/files/upload',
       submitInvoicePath: '/factures/soumettre',
+      submissionBridgeUrl: 'https://bridge.example.test/submit',
     }, fetchMock);
 
     const result = await connector.submitInvoice({
@@ -296,37 +303,60 @@ describe('chorus connector', () => {
 
     expect(result.ok).toBe(true);
     expect(result.externalId).toBe('CHORUS-INV-001');
-    expect(result.apiCalls).toHaveLength(3);
+    expect(result.apiCalls).toHaveLength(2);
     expect(result.apiCalls[0]).toMatchObject({
-      label: 'Upload fichier Chorus: invoice.pdf',
+      label: 'Bridge Python local',
       method: 'POST',
-      url: 'https://api.example.test/files/upload',
+      url: 'https://bridge.example.test/api/chorus/submit',
     });
-    expect(result.apiCalls[2]).toMatchObject({
-      label: 'Soumission facture Chorus',
-      method: 'POST',
-      url: 'https://api.example.test/factures/soumettre',
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const bridgeCall = fetchMock.mock.calls[0];
+    expect(bridgeCall?.[0]).toBe('https://bridge.example.test/api/chorus/submit');
+    const bridgePayload = JSON.parse(String((bridgeCall?.[1] as RequestInit).body));
+    expect(bridgePayload.payload.numeroFactureSaisi).toBe('FAC-2026-001');
+    expect(bridgePayload.payload.destinataire.codeDestinataire).toBe('23440003400026');
+    expect(bridgePayload.payload.modeDepot).toBe('SAISIE_API');
+    expect(bridgePayload.mainFile).toMatchObject({
+      name: 'invoice.pdf',
+      mimeType: 'application/pdf',
+      base64: 'bWFpbg==',
     });
-    expect(fetchMock).toHaveBeenCalledTimes(6);
-
-    const uploadCall = fetchMock.mock.calls[1];
-    expect(uploadCall?.[0]).toBe('https://api.example.test/files/upload');
-    expect((uploadCall?.[1] as RequestInit).body).toBeInstanceOf(FormData);
-
-    const submitCall = fetchMock.mock.calls[5];
-    expect(submitCall?.[0]).toBe('https://api.example.test/factures/soumettre');
-    const submitPayload = JSON.parse(String((submitCall?.[1] as RequestInit).body));
-    expect(submitPayload.numeroFactureSaisi).toBe('FAC-2026-001');
-    expect(submitPayload.destinataire.codeDestinataire).toBe('23440003400026');
-    expect(submitPayload.modeDepot).toBe('SAISIE_API');
+    expect(bridgePayload.attachments[0]).toMatchObject({
+      name: 'attachment.xml',
+      mimeType: 'text/xml',
+      base64: 'YXR0',
+    });
   });
 
-  it('uses the official Chorus PDF deposit contract for /v1/deposer/pdf and finalizes the submission payload', async () => {
+  it('returns the Python bridge submission details for a PDF deposit', async () => {
     const fetchMock = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-upload-pdf' }))
-      .mockResolvedValueOnce(jsonResponse({ pieceJointeId: 28093 }))
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-submit-pdf' }))
-      .mockResolvedValueOnce(jsonResponse({ invoiceId: 'CHORUS-PDF-001' }));
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        externalId: 'CHORUS-PDF-001',
+        uploadedFiles: [{ id: '28093', filename: 'invoice.pdf' }],
+        payload: {
+          ...createValidPayload(),
+          modeDepot: 'DEPOT_PDF_SIGNE_API',
+          pieceJointePrincipale: [{
+            pieceJointePrincipaleDesignation: 'GCU_MSG_01_000',
+            pieceJointePrincipaleId: 28093,
+          }],
+        },
+        response: { invoiceId: 'CHORUS-PDF-001' },
+        apiCalls: [
+          {
+            label: 'Upload fichier Chorus: invoice.pdf',
+            method: 'POST',
+            url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/deposer/pdf',
+          },
+          {
+            label: 'Soumission facture Chorus',
+            method: 'POST',
+            url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/soumettre',
+          },
+        ],
+      }));
 
     const connector = new DirectChorusConnector({
       ...getDefaultChorusConfig(),
@@ -338,6 +368,7 @@ describe('chorus connector', () => {
       clientSecret: 'client-secret',
       uploadFilePath: '/v1/deposer/pdf',
       submitInvoicePath: '/v1/soumettre',
+      submissionBridgeUrl: 'https://bridge.example.test/submit',
     }, fetchMock);
 
     await expect(connector.submitInvoice({
@@ -348,6 +379,11 @@ describe('chorus connector', () => {
       ok: true,
       externalId: 'CHORUS-PDF-001',
       apiCalls: [
+        {
+          label: 'Bridge Python local',
+          method: 'POST',
+          url: 'https://bridge.example.test/api/chorus/submit',
+        },
         {
           label: 'Upload fichier Chorus: invoice.pdf',
           method: 'POST',
@@ -361,35 +397,25 @@ describe('chorus connector', () => {
       ],
     });
 
-    const uploadCall = fetchMock.mock.calls[1];
-    expect(uploadCall?.[0]).toBe('https://sandbox-api.piste.gouv.fr/cpro/factures/v1/deposer/pdf');
-    const uploadHeaders = (uploadCall?.[1] as RequestInit).headers as Record<string, string>;
-    expect(uploadHeaders['content-type']).toContain('application/json');
-
-    const uploadBody = JSON.parse(String((uploadCall?.[1] as RequestInit).body));
-    expect(uploadBody.pieceJointeNom).toBe('invoice.pdf');
-    expect(uploadBody.pieceJointeExtension).toBe('pdf');
-    expect(uploadBody.pieceJointeTypeMime).toBe('application/pdf');
-    expect(typeof uploadBody.pieceJointeFichier).toBe('string');
-    expect(uploadBody.pieceJointeFichier.length).toBeGreaterThan(0);
-
-    const submitCall = fetchMock.mock.calls[3];
-    const submitBody = JSON.parse(String((submitCall?.[1] as RequestInit).body));
-    expect(submitBody.modeDepot).toBe('DEPOT_PDF_API');
-    expect(submitBody.pieceJointePrincipale).toEqual([
-      {
-        pieceJointePrincipaleDesignation: 'invoice.pdf',
-        pieceJointePrincipaleId: 28093,
-      },
-    ]);
+    const bridgeCall = fetchMock.mock.calls[0];
+    expect(bridgeCall?.[0]).toBe('https://bridge.example.test/api/chorus/submit');
+    const bridgeBody = JSON.parse(String((bridgeCall?.[1] as RequestInit).body));
+    expect(bridgeBody.payload.numeroFactureSaisi).toBe('FAC-2026-001');
+    expect(bridgeBody.mainFile.name).toBe('invoice.pdf');
   });
 
-  it('adds a Chorus-specific hint when /v1/soumettre returns a 500 after PDF deposit', async () => {
+  it('propagates Chorus-specific bridge errors with debug calls', async () => {
     const fetchMock = vi.fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-upload-pdf' }))
-      .mockResolvedValueOnce(jsonResponse({ pieceJointeId: 28093 }))
-      .mockResolvedValueOnce(jsonResponse({ access_token: 'token-submit-pdf' }))
-      .mockResolvedValueOnce(jsonResponse({ codeRetour: 500, libelle: 'Erreur interne' }, 500));
+      .mockResolvedValueOnce(jsonResponse({
+        ok: false,
+        error: 'Erreur Chorus après upload de la piece jointe 28093.',
+        apiCalls: [{
+          label: 'Soumission facture Chorus',
+          method: 'POST',
+          url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/soumettre',
+          responseStatus: 500,
+        }],
+      }, 500));
 
     const connector = new DirectChorusConnector({
       ...getDefaultChorusConfig(),
@@ -401,6 +427,7 @@ describe('chorus connector', () => {
       clientSecret: 'client-secret',
       uploadFilePath: '/v1/deposer/pdf',
       submitInvoicePath: '/v1/soumettre',
+      submissionBridgeUrl: 'https://bridge.example.test/submit',
     }, fetchMock);
 
     await expect(connector.submitInvoice({
@@ -408,6 +435,51 @@ describe('chorus connector', () => {
       mainFile: new File(['PDF'], 'invoice.pdf', { type: 'application/pdf' }),
       attachments: [],
     })).rejects.toThrow(/piece jointe 28093/i);
+  });
+
+  it('rejects Chorus business failures returned with HTTP 200', async () => {
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({
+        ok: true,
+        uploadedFiles: [],
+        payload: createValidPayload(),
+        response: {
+          codeRetour: 42,
+          libelle: 'TRA_MSG_TEST.KO',
+          statutFacture: 'REJETEE',
+          numeroFacture: 'FAC-2026-001',
+        },
+        apiCalls: [{
+          label: 'Soumission facture Chorus',
+          method: 'POST',
+          url: 'https://sandbox-api.piste.gouv.fr/cpro/factures/v1/soumettre',
+          responseStatus: 200,
+          responseBody: {
+            codeRetour: 42,
+            libelle: 'TRA_MSG_TEST.KO',
+            statutFacture: 'REJETEE',
+          },
+        }],
+      }));
+
+    const connector = new DirectChorusConnector({
+      ...getDefaultChorusConfig(),
+      mode: 'direct',
+      enabled: true,
+      tokenUrl: 'https://oauth.example.test/token',
+      apiBaseUrl: 'https://sandbox-api.piste.gouv.fr/cpro/factures',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      uploadFilePath: '/v1/deposer/pdf',
+      submitInvoicePath: '/v1/soumettre',
+      submissionBridgeUrl: 'https://bridge.example.test/submit',
+    }, fetchMock);
+
+    await expect(connector.submitInvoice({
+      invoiceData: createValidPayload(),
+      mainFile: new File(['PDF'], 'invoice.pdf', { type: 'application/pdf' }),
+      attachments: [],
+    })).rejects.toThrow(/Code retour Chorus 42.*TRA_MSG_TEST\.KO.*REJETEE/i);
   });
 
   it('fails fast when the payload is invalid before the HTTP POST', async () => {

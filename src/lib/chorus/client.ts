@@ -1,10 +1,23 @@
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
+import { CHORUS_OAUTH_TOKEN_PATH, CHORUS_SUBMIT_PATH, resolveChorusBridgeUrl } from '@/lib/chorus/backendAutomation';
+import { authHeaders } from '@/lib/auth/session';
+import {
+  describeChorusSubmissionApiReturn,
+  formatChorusApiReturnFailureMessage,
+  isChorusApiReturnFailure,
+} from '@/lib/chorus/submissionApiReturn';
+import { validateChorusSubmissionPayload } from '@/lib/chorus/validateSubmissionPayload';
+import {
+  ChorusSubmissionStateError,
+  parseChorusSubmissionStateErrorPayload,
+} from '@/lib/chorus/submissionState';
 import type {
   ChorusApiDebugEntry,
   ChorusConfig,
   ChorusConnectionResult,
   ChorusResolvedAttachmentService,
   ChorusResolvedStructureAttachment,
+  ChorusSubmitAttachmentInput,
   ChorusSubmitInvoiceInput,
   ChorusSubmitInvoiceResult,
   ChorusTechnicalContextResolutionInput,
@@ -36,9 +49,6 @@ function ensureDirectConfig(config: ChorusConfig): void {
   const missing: string[] = [];
 
   if (!config.enabled) missing.push('enabled');
-  if (!config.tokenUrl) missing.push('tokenUrl');
-  if (!config.clientId) missing.push('clientId');
-  if (!config.clientSecret) missing.push('clientSecret');
 
   if (missing.length > 0) {
     throw new Error(`Configuration Chorus incomplète: ${missing.join(', ')}`);
@@ -113,6 +123,20 @@ function stripCurrentUserIdFromSubmissionPayload(input: ChorusSubmitInvoiceInput
   return payloadWithoutCurrentUserId;
 }
 
+function normalizeSubmitAttachment(input: ChorusSubmitAttachmentInput): {
+  file: File;
+  designation?: string;
+  type?: string;
+  lineNumber?: number;
+  liaisonId?: number;
+} {
+  if (input instanceof File) {
+    return { file: input };
+  }
+
+  return input;
+}
+
 function inferPieceJointeId(response: unknown): string | undefined {
   if (!response || typeof response !== 'object') {
     return undefined;
@@ -124,6 +148,29 @@ function inferPieceJointeId(response: unknown): string | undefined {
 
   if (typeof candidate === 'string' && candidate.trim()) {
     return candidate;
+  }
+
+  if (typeof candidate === 'number' && Number.isFinite(candidate)) {
+    return String(candidate);
+  }
+
+  return undefined;
+}
+
+function inferSubmissionExternalId(response: unknown): string | undefined {
+  if (!response || typeof response !== 'object') {
+    return undefined;
+  }
+
+  const record = response as Record<string, unknown>;
+  const candidate = record.invoiceId
+    ?? record.numeroFactureChorus
+    ?? record.identifiantFactureCPP
+    ?? record.numeroFacture
+    ?? record.id;
+
+  if (typeof candidate === 'string' && candidate.trim()) {
+    return candidate.trim();
   }
 
   if (typeof candidate === 'number' && Number.isFinite(candidate)) {
@@ -225,8 +272,33 @@ function parseStructureAttachments(body: unknown): ChorusResolvedStructureAttach
     .filter((item): item is ChorusResolvedStructureAttachment => item !== null);
 }
 
+async function readFileAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  if (typeof file.arrayBuffer === 'function') {
+    return file.arrayBuffer();
+  }
+
+  if (typeof FileReader !== 'undefined') {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error('Impossible de lire le fichier.'));
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(reader.result);
+          return;
+        }
+
+        reject(new Error('Lecture fichier invalide.'));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  const text = typeof file.text === 'function' ? await file.text() : '';
+  return new TextEncoder().encode(text).buffer;
+}
+
 async function readFileAsBase64(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
+  const buffer = await readFileAsArrayBuffer(file);
   const bytes = new Uint8Array(buffer);
   const chunkSize = 0x8000;
   let binary = '';
@@ -261,32 +333,31 @@ export class DirectChorusConnector implements ChorusConnector {
   private async getAccessToken(): Promise<string> {
     ensureDirectConfig(this.config);
 
-    const params = new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
-      scope: this.config.scope || 'openid',
-    });
+    const tokenUrl = resolveChorusBridgeUrl(this.config, CHORUS_OAUTH_TOKEN_PATH);
 
-    const response = await this.performFetch(this.config.tokenUrl, {
+    const response = await this.performFetch(tokenUrl, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-      },
-      body: params.toString(),
-    }, 'Récupération du token OAuth2');
+      headers: authHeaders({
+        accept: 'application/json',
+        'content-type': 'application/json; charset=UTF-8',
+      }),
+      body: JSON.stringify({ environment: this.config.environment }),
+    }, 'Récupération du token OAuth2 via backend Chorus');
+
+    const body = await parseResponseBody(response);
 
     if (!response.ok) {
-      const body = await parseResponseBody(response);
-      throw new Error(`Échec OAuth2 (${response.status}): ${typeof body === 'string' ? body : JSON.stringify(body)}`);
+      throw new Error(`Échec OAuth2 backend (${response.status}): ${stringifyResponseBody(body)}`);
     }
 
-    const data = await response.json() as { access_token?: string };
-    if (!data.access_token) {
-      throw new Error('Réponse OAuth2 invalide: access_token absent.');
+    const accessToken = body && typeof body === 'object'
+      ? (body as Record<string, unknown>).access_token
+      : undefined;
+    if (typeof accessToken !== 'string' || !accessToken.trim()) {
+      throw new Error('Réponse OAuth2 backend invalide: access_token absent.');
     }
 
-    return data.access_token;
+    return accessToken;
   }
 
   private async buildApiHeaders(extraHeaders?: HeadersInit): Promise<HeadersInit> {
@@ -299,10 +370,6 @@ export class DirectChorusConnector implements ChorusConnector {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',
     };
-
-    if (this.config.technicalLogin && this.config.technicalPassword) {
-      headers['cpro-account'] = window.btoa(`${this.config.technicalLogin}:${this.config.technicalPassword}`);
-    }
 
     const normalizedExtra = extraHeaders instanceof Headers
       ? Object.fromEntries(extraHeaders.entries())
@@ -436,14 +503,13 @@ export class DirectChorusConnector implements ChorusConnector {
   private async submitInvoiceViaPythonBridge(
     input: ChorusSubmitInvoiceInput,
   ): Promise<ChorusSubmitInvoiceResult> {
-    const bridgeUrl = this.config.submissionBridgeUrl.trim();
-    if (!bridgeUrl) {
-      throw new Error('submissionBridgeUrl manquant.');
-    }
+    const bridgeUrl = resolveChorusBridgeUrl(this.config, CHORUS_SUBMIT_PATH);
 
     const debugEnabled = import.meta.env.DEV || input.debugBypassValidation === true;
     const apiCalls: ChorusApiDebugEntry[] = [];
+    const trimmedCurrentState = typeof input.currentState === 'string' ? input.currentState.trim() : '';
     const requestBody = {
+      environment: this.config.environment,
       payload: stripCurrentUserIdFromSubmissionPayload(input.invoiceData),
       mainFile: {
         name: input.mainFile.name,
@@ -451,12 +517,21 @@ export class DirectChorusConnector implements ChorusConnector {
         base64: await readFileAsBase64(input.mainFile),
       },
       attachments: await Promise.all(
-        input.attachments.map(async (file) => ({
-          name: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          base64: await readFileAsBase64(file),
-        })),
+        input.attachments.map(async (attachmentInput) => {
+          const attachment = normalizeSubmitAttachment(attachmentInput);
+
+          return {
+            name: attachment.file.name,
+            mimeType: attachment.file.type || 'application/octet-stream',
+            base64: await readFileAsBase64(attachment.file),
+            designation: attachment.designation,
+            type: attachment.type,
+            lineNumber: attachment.lineNumber,
+            liaisonId: attachment.liaisonId,
+          };
+        }),
       ),
+      currentState: trimmedCurrentState || undefined,
     };
     const requestBodyForDebug = {
       ...requestBody,
@@ -479,10 +554,10 @@ export class DirectChorusConnector implements ChorusConnector {
     try {
       response = await this.performFetch(bridgeUrl, {
         method: 'POST',
-        headers: {
+        headers: authHeaders({
           'content-type': 'application/json; charset=UTF-8',
           accept: 'application/json',
-        },
+        }),
         body: JSON.stringify(requestBody),
       }, 'Soumission via backend Python Chorus');
     } catch (error) {
@@ -504,10 +579,19 @@ export class DirectChorusConnector implements ChorusConnector {
     const combinedApiCalls = [bridgeCallEntry, ...bridgeApiCalls];
 
     if (!response.ok || record?.ok === false) {
+      const stateErrorPayload = parseChorusSubmissionStateErrorPayload(record);
+      if (stateErrorPayload) {
+        throw new ChorusSubmissionStateError(stateErrorPayload);
+      }
       const message = typeof record?.error === 'string'
         ? record.error
         : `Soumission backend Python échouée (${response.status}): ${stringifyResponseBody(body)}`;
       throw new ChorusSubmitApiError(message, combinedApiCalls);
+    }
+
+    const apiReturnSummary = describeChorusSubmissionApiReturn(record?.response ?? body, combinedApiCalls);
+    if (isChorusApiReturnFailure(apiReturnSummary)) {
+      throw new ChorusSubmitApiError(formatChorusApiReturnFailureMessage(apiReturnSummary), combinedApiCalls);
     }
 
     const uploadedFiles = Array.isArray(record?.uploadedFiles)
@@ -515,7 +599,7 @@ export class DirectChorusConnector implements ChorusConnector {
       : [];
     const externalId = typeof record?.externalId === 'string'
       ? record.externalId
-      : undefined;
+      : inferSubmissionExternalId(record?.response);
 
     return {
       ok: true,
@@ -528,13 +612,14 @@ export class DirectChorusConnector implements ChorusConnector {
   }
 
   async submitInvoice(input: ChorusSubmitInvoiceInput): Promise<ChorusSubmitInvoiceResult> {
-    if (this.config.submissionBridgeUrl.trim()) {
-      return this.submitInvoiceViaPythonBridge(input);
+    if (input.debugBypassValidation !== true) {
+      const validation = validateChorusSubmissionPayload(input.invoiceData);
+      if (!validation.valid) {
+        throw new Error(`Payload Chorus invalide: ${validation.errors.map((error) => `${error.path} ${error.message}`).join('; ')}`);
+      }
     }
 
-    throw new Error(
-      'La soumission facture doit passer par l’API Python locale. Configure VITE_CHORUS_SUBMISSION_BRIDGE_URL et démarre scripts/chorus_submit_server.py.',
-    );
+    return this.submitInvoiceViaPythonBridge(input);
   }
 }
 
@@ -562,11 +647,25 @@ export class MockChorusConnector implements ChorusConnector {
   }
 
   async submitInvoice(input: ChorusSubmitInvoiceInput): Promise<ChorusSubmitInvoiceResult> {
-    const uploadedFiles: ChorusUploadedFile[] = [input.mainFile, ...input.attachments].map((file, index) => ({
-      id: `mock-file-${index + 1}`,
-      filename: file.name,
-      response: { mocked: true },
-    }));
+    const complementaryAttachments = input.attachments.map(normalizeSubmitAttachment);
+    const uploadedFiles: ChorusUploadedFile[] = [
+      {
+        id: 'mock-file-1',
+        filename: input.mainFile.name,
+        role: 'MAIN',
+        response: { mocked: true },
+      },
+      ...complementaryAttachments.map((attachment, index) => ({
+        id: `mock-file-${index + 2}`,
+        filename: attachment.file.name,
+        role: 'COMPLEMENTARY' as const,
+        designation: attachment.designation || attachment.file.name,
+        type: attachment.type,
+        lineNumber: attachment.lineNumber,
+        liaisonId: attachment.liaisonId,
+        response: { mocked: true },
+      })),
+    ];
 
     return {
       ok: true,

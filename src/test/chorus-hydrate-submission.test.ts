@@ -112,24 +112,24 @@ describe('hydrateChorusSubmissionPayloadWithSnapshot', () => {
     expect(result.payload.fournisseur.idFournisseur).toBe(26359578);
     expect(result.payload.fournisseur.codeCoordonneesBancairesFournisseur).toBe(132);
     expect(result.payload.destinataire.codeDestinataire).toBe('23440003400026');
-    expect(result.payload.destinataire.codeServiceExecutant).toBe('SE001');
+    expect(result.payload.destinataire.codeServiceExecutant).toBeUndefined();
     expect(result.payload.lignePoste[0]?.lignePosteTauxTva).toBe('TVA20');
     expect(result.payload.ligneTva[0]?.ligneTvaTaux).toBe('TVA20');
     expect(result.changes.map((change) => change.path)).toEqual(expect.arrayContaining([
       'fournisseur.codeCoordonneesBancairesFournisseur',
       'destinataire.codeDestinataire',
-      'destinataire.codeServiceExecutant',
     ]));
   });
 
-  it('keeps explicit unresolved fields visible when they cannot come from the PDF or transverses', () => {
+  it('does not require an idServiceFournisseur on the supplier payload', () => {
     const result = hydrateChorusSubmissionPayloadWithSnapshot(
       createPayload(),
       createSnapshot(),
       createNormalized(),
     );
 
-    expect(result.unresolved.some((issue) => issue.path === 'fournisseur.idServiceFournisseur')).toBe(true);
+    expect(result.payload.fournisseur).not.toHaveProperty('idServiceFournisseur');
+    expect(result.unresolved.some((issue) => issue.path === 'fournisseur.idServiceFournisseur')).toBe(false);
     expect(result.validation.valid).toBe(true);
   });
 });

@@ -32,10 +32,14 @@ describe('chorus storage', () => {
 
     saveChorusConfig(config);
 
-    expect(window.localStorage.getItem(CHORUS_CONFIG_STORAGE_KEY)).toContain('client-id');
+    expect(window.localStorage.getItem(CHORUS_CONFIG_STORAGE_KEY)).not.toContain('super-secret');
     expect(loadChorusConfig()).toMatchObject({
-      ...config,
-      submissionSupplierId: '26359578',
+      mode: 'direct',
+      enabled: true,
+      clientId: '',
+      clientSecret: '',
+      technicalLogin: '',
+      submissionSupplierId: getDefaultChorusConfig().submissionSupplierId,
     });
   });
 
@@ -54,6 +58,24 @@ describe('chorus storage', () => {
     expect(config.submissionSupplierId).toBe(fallback.submissionSupplierId);
     expect(config.submissionCadreCode).toBe(fallback.submissionCadreCode);
     expect(config.clientId).toBe(fallback.clientId);
+  });
+
+  it('uses the build environment when persisted config was saved for another environment', () => {
+    window.localStorage.setItem(CHORUS_CONFIG_STORAGE_KEY, JSON.stringify({
+      environment: 'prod',
+      tokenUrl: 'https://oauth.piste.gouv.fr/api/oauth/token',
+      apiBaseUrl: 'https://api.piste.gouv.fr/cpro/factures',
+      userAccountPath: 'https://chorus-pro.gouv.fr:5443/service/utilisateurs/consulter/compte',
+      userConnectionsPath: 'https://chorus-pro.gouv.fr:5443/service/utilisateurs/monCompte/recuperer/rattachements',
+    }));
+
+    const config = loadChorusConfig();
+
+    expect(config.environment).toBe('qualif');
+    expect(config.tokenUrl).toBe('https://sandbox-oauth.piste.gouv.fr/api/oauth/token');
+    expect(config.apiBaseUrl).toBe('https://sandbox-api.piste.gouv.fr/cpro/factures');
+    expect(config.userAccountPath).toContain('/service-qualif/');
+    expect(config.userConnectionsPath).toContain('/service-qualif/');
   });
 
   it('migrates legacy user service endpoints stored in localStorage', () => {

@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import { ChorusApiReturnSummaryPanel } from '@/components/common/ChorusApiReturnSummaryPanel';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { StatusTimeline } from '@/components/common/StatusTimeline';
 import { formatCurrency, formatDate, formatDateTime } from '@/lib/status-utils';
@@ -22,8 +25,34 @@ import {
   getSupplier,
 } from '@/data/mock-data';
 import { markInvoiceReadyForSubmission, submitInvoiceFromDetail } from '@/data/invoice-actions';
+import { ChorusSubmitApiError } from '@/lib/chorus/client';
+import { describeChorusSubmissionApiReturn } from '@/lib/chorus/submissionApiReturn';
 import { useAsyncResource } from '@/hooks/use-async-resource';
 import { ArrowLeft, Edit, CheckCircle, Send, RotateCcw, Download, FileText, Paperclip, AlertTriangle, Loader2 } from 'lucide-react';
+import type { ChorusApiDebugEntry, ChorusSubmitInvoiceResult } from '@/types/chorus';
+
+const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
+
+function formatJsonForDisplay(value: unknown): string {
+  if (value === undefined) {
+    return '';
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return '';
+    }
+
+    try {
+      return JSON.stringify(JSON.parse(trimmed), null, 2);
+    } catch {
+      return trimmed;
+    }
+  }
+
+  return JSON.stringify(value, null, 2);
+}
 
 export default function InvoiceDetail() {
   const navigate = useNavigate();
@@ -113,6 +142,14 @@ export default function InvoiceDetail() {
   );
   const invoice = data.invoice;
   const [actionLoading, setActionLoading] = useState<'validate' | 'submit' | null>(null);
+  const [showSubmissionApiReturn, setShowSubmissionApiReturn] = useState(false);
+  const [lastSubmissionResult, setLastSubmissionResult] = useState<ChorusSubmitInvoiceResult | null>(null);
+  const [lastSubmissionApiCalls, setLastSubmissionApiCalls] = useState<ChorusApiDebugEntry[]>([]);
+  const [lastSubmissionApiError, setLastSubmissionApiError] = useState<string | null>(null);
+  const submissionApiReturnSummary = useMemo(
+    () => describeChorusSubmissionApiReturn(lastSubmissionResult?.response, lastSubmissionApiCalls),
+    [lastSubmissionResult?.response, lastSubmissionApiCalls],
+  );
 
   if (!invoice) {
     return (
@@ -142,6 +179,13 @@ export default function InvoiceDetail() {
   const extraction = data.extraction;
   const invoiceAudit = data.invoiceAudit;
   const isRejected = invoice.statusInternal === 'REJECTED_BUSINESS' || invoice.statusInternal === 'REJECTED_TECHNICAL';
+  const hasStoredApiReturn = apiLogs.some((log) => Boolean(log.responseBodyRedacted));
+  const canShowApiReturnOption = SHOW_DEV_TOOLS && (
+    invoice.statusInternal === 'READY_FOR_SUBMISSION'
+    || lastSubmissionResult !== null
+    || lastSubmissionApiCalls.length > 0
+    || hasStoredApiReturn
+  );
 
   const handleEdit = () => {
     navigate(`/invoices/new?invoiceId=${invoice.id}`);
@@ -169,8 +213,13 @@ export default function InvoiceDetail() {
 
   const handleSubmit = async () => {
     setActionLoading('submit');
+    setLastSubmissionResult(null);
+    setLastSubmissionApiCalls([]);
+    setLastSubmissionApiError(null);
     try {
       const result = await submitInvoiceFromDetail(invoice.id);
+      setLastSubmissionResult(result);
+      setLastSubmissionApiCalls(result.apiCalls);
       await reload();
       toast({
         title: 'Facture soumise',
@@ -179,9 +228,14 @@ export default function InvoiceDetail() {
           : 'La facture a été soumise depuis la page détail.',
       });
     } catch (actionError) {
+      const message = actionError instanceof Error ? actionError.message : 'Erreur inconnue';
+      if (actionError instanceof ChorusSubmitApiError) {
+        setLastSubmissionApiCalls(actionError.apiCalls);
+      }
+      setLastSubmissionApiError(message);
       toast({
         title: 'Soumission impossible',
-        description: actionError instanceof Error ? actionError.message : 'Erreur inconnue',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -204,6 +258,18 @@ export default function InvoiceDetail() {
           </div>
         </div>
         <div className="flex gap-2">
+          {canShowApiReturnOption && (
+            <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-2">
+              <Switch
+                id="show-detail-submission-api-return"
+                checked={showSubmissionApiReturn}
+                onCheckedChange={setShowSubmissionApiReturn}
+              />
+              <Label htmlFor="show-detail-submission-api-return" className="text-sm">
+                Afficher retour API
+              </Label>
+            </div>
+          )}
           {['DRAFT_UPLOADED', 'DRAFT_STRUCTURED', 'PENDING_HUMAN_REVIEW'].includes(invoice.statusInternal) && (
             <Button variant="outline" onClick={handleEdit} disabled={actionLoading !== null}>
               <Edit className="mr-2 h-4 w-4" /> Éditer
@@ -222,7 +288,12 @@ export default function InvoiceDetail() {
             </Button>
           )}
           {isRejected && (
-            <Button><RotateCcw className="mr-2 h-4 w-4" /> Resoumettre</Button>
+            <Button asChild>
+              <Link to={`/invoices/new?invoiceId=${encodeURIComponent(invoice.id)}&correction=1`}>
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Créer une facture corrigée
+              </Link>
+            </Button>
           )}
         </div>
       </div>
@@ -233,15 +304,85 @@ export default function InvoiceDetail() {
         </Alert>
       )}
 
+      {lastSubmissionApiError && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertDescription>{lastSubmissionApiError}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Rejection Banner */}
       {isRejected && invoice.statusReasonLabel && (
         <Card className="border-destructive/30 bg-destructive/5">
           <CardContent className="py-4 flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
             <div>
-              <p className="font-medium text-destructive">Rejet : {invoice.statusReasonCode}</p>
+              <p className="font-medium text-destructive">
+                {invoice.statusReasonCode ? `Rejet : ${invoice.statusReasonCode}` : 'Rejet'}
+              </p>
               <p className="text-sm text-muted-foreground">{invoice.statusReasonLabel}</p>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {SHOW_DEV_TOOLS && showSubmissionApiReturn && (lastSubmissionResult || lastSubmissionApiCalls.length > 0 || lastSubmissionApiError) && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Retour API après soumission</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            {lastSubmissionResult && (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <InfoRow label="Traitement" value={lastSubmissionResult.ok ? 'Réussi' : 'Échoué'} />
+                <InfoRow label="Référence Chorus" value={lastSubmissionResult.externalId || '-'} />
+                <InfoRow label="Appels API" value={String(lastSubmissionApiCalls.length)} />
+              </div>
+            )}
+
+            {submissionApiReturnSummary && (
+              <ChorusApiReturnSummaryPanel summary={submissionApiReturnSummary} />
+            )}
+
+            {lastSubmissionResult && (
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <p className="text-sm font-medium">Réponse finale /v1/soumettre</p>
+                <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                  {formatJsonForDisplay(lastSubmissionResult.response ?? null)}
+                </pre>
+              </div>
+            )}
+
+            {lastSubmissionResult?.uploadedFiles.length > 0 && (
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <p className="text-sm font-medium">Retours upload des pièces jointes</p>
+                <div className="mt-3 space-y-3">
+                  {lastSubmissionResult.uploadedFiles.map((uploadedFile) => (
+                    <div key={`${uploadedFile.id}-${uploadedFile.filename}`} className="rounded-lg border bg-background p-3">
+                      <p className="text-sm font-medium">{uploadedFile.filename}</p>
+                      <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                        {formatJsonForDisplay(uploadedFile.response ?? null)}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {lastSubmissionApiCalls.length > 0 && (
+              <div className="space-y-3">
+                {lastSubmissionApiCalls.map((apiCall, index) => (
+                  <div key={`${apiCall.label}-${apiCall.url}-${index}`} className="rounded-lg border bg-muted/20 p-4">
+                    <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <p className="text-sm font-medium">{apiCall.label}</p>
+                      <span className="text-xs text-muted-foreground">{apiCall.method} · HTTP {apiCall.responseStatus ?? 'n/a'}</span>
+                    </div>
+                    <p className="mt-2 break-all text-xs text-muted-foreground">{apiCall.url}</p>
+                    <pre className="mt-3 whitespace-pre-wrap break-words text-xs">
+                      {formatJsonForDisplay(apiCall.responseBody ?? null)}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -252,9 +393,9 @@ export default function InvoiceDetail() {
           <TabsTrigger value="lines">Lignes ({lines.length})</TabsTrigger>
           <TabsTrigger value="attachments">Pièces jointes ({attachments.length})</TabsTrigger>
           <TabsTrigger value="history">Historique</TabsTrigger>
-          <TabsTrigger value="api">Logs API ({apiLogs.length})</TabsTrigger>
+          {SHOW_DEV_TOOLS && <TabsTrigger value="api">Logs API ({apiLogs.length})</TabsTrigger>}
           {extraction && <TabsTrigger value="extraction">Extraction</TabsTrigger>}
-          <TabsTrigger value="audit">Audit</TabsTrigger>
+          {SHOW_DEV_TOOLS && <TabsTrigger value="audit">Audit</TabsTrigger>}
         </TabsList>
 
         {/* Summary */}
@@ -391,7 +532,8 @@ export default function InvoiceDetail() {
         </TabsContent>
 
         {/* API Logs */}
-        <TabsContent value="api" className="mt-4">
+        {SHOW_DEV_TOOLS && (
+          <TabsContent value="api" className="mt-4">
           <Card>
             <CardContent className="p-0">
               <table className="w-full text-sm">
@@ -407,28 +549,55 @@ export default function InvoiceDetail() {
                 </thead>
                 <tbody>
                   {apiLogs.map(log => (
-                    <tr key={log.id} className="border-b">
-                      <td className="p-3 font-mono text-xs">{log.operationName}</td>
-                      <td className="p-3">{log.targetSystem}</td>
-                      <td className="p-3 text-right">
-                        <span className={log.success ? 'text-success' : 'text-destructive'}>{log.httpStatus}</span>
-                      </td>
-                      <td className="p-3">
-                        {log.success ? (
-                          <span className="text-xs px-2 py-0.5 rounded bg-success/10 text-success">Succès</span>
-                        ) : (
-                          <span className="text-xs px-2 py-0.5 rounded bg-destructive/10 text-destructive">Échec</span>
-                        )}
-                      </td>
-                      <td className="p-3 text-right text-muted-foreground">{log.latencyMs} ms</td>
-                      <td className="p-3 text-xs text-muted-foreground">{formatDateTime(log.createdAt)}</td>
-                    </tr>
+                    <Fragment key={log.id}>
+                      <tr className="border-b">
+                        <td className="p-3 font-mono text-xs">{log.operationName}</td>
+                        <td className="p-3">{log.targetSystem}</td>
+                        <td className="p-3 text-right">
+                          <span className={log.success ? 'text-success' : 'text-destructive'}>{log.httpStatus}</span>
+                        </td>
+                        <td className="p-3">
+                          {log.success ? (
+                            <span className="text-xs px-2 py-0.5 rounded bg-success/10 text-success">Succès</span>
+                          ) : (
+                            <span className="text-xs px-2 py-0.5 rounded bg-destructive/10 text-destructive">Échec</span>
+                          )}
+                        </td>
+                        <td className="p-3 text-right text-muted-foreground">{log.latencyMs} ms</td>
+                        <td className="p-3 text-xs text-muted-foreground">{formatDateTime(log.createdAt)}</td>
+                      </tr>
+                      {showSubmissionApiReturn && (log.requestBodyRedacted || log.responseBodyRedacted) && (
+                        <tr className="border-b bg-muted/10">
+                          <td colSpan={6} className="p-3">
+                            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                              {log.requestBodyRedacted && (
+                                <div>
+                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Body envoyé</p>
+                                  <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-background p-3 text-xs">
+                                    {formatJsonForDisplay(log.requestBodyRedacted)}
+                                  </pre>
+                                </div>
+                              )}
+                              {log.responseBodyRedacted && (
+                                <div>
+                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Retour API</p>
+                                  <pre className="mt-2 whitespace-pre-wrap break-words rounded-md border bg-background p-3 text-xs">
+                                    {formatJsonForDisplay(log.responseBodyRedacted)}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
             </CardContent>
           </Card>
-        </TabsContent>
+          </TabsContent>
+        )}
 
         {/* Extraction */}
         {extraction && (
@@ -444,9 +613,10 @@ export default function InvoiceDetail() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {Object.entries(extraction.extractedPayload).map(([key, val]: [string, any]) => {
-                    const confidence = typeof val?.confidence === 'number' ? val.confidence : undefined;
-                    const displayValue = typeof val?.value !== 'undefined' ? val.value : val;
+                  {Object.entries(extraction.extractedPayload).map(([key, val]) => {
+                    const payloadRecord = typeof val === 'object' && val !== null ? val as Record<string, unknown> : undefined;
+                    const confidence = typeof payloadRecord?.confidence === 'number' ? payloadRecord.confidence : undefined;
+                    const displayValue = payloadRecord && 'value' in payloadRecord ? payloadRecord.value : val;
 
                     return (
                       <div key={key} className="flex items-center justify-between p-2 rounded border">
@@ -469,7 +639,8 @@ export default function InvoiceDetail() {
         )}
 
         {/* Audit */}
-        <TabsContent value="audit" className="mt-4">
+        {SHOW_DEV_TOOLS && (
+          <TabsContent value="audit" className="mt-4">
           <Card>
             <CardContent className="p-0">
               <table className="w-full text-sm">
@@ -497,7 +668,8 @@ export default function InvoiceDetail() {
               </table>
             </CardContent>
           </Card>
-        </TabsContent>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

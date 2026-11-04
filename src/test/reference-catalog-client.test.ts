@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
-import { ReferenceCatalogClient } from '@/lib/references/client';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearReferenceCatalogCaches, ReferenceCatalogClient } from '@/lib/references/client';
 import { getDefaultChorusConfig } from '@/lib/chorus/storage';
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -12,6 +12,10 @@ function jsonResponse(payload: unknown, status = 200): Response {
 }
 
 describe('ReferenceCatalogClient', () => {
+  beforeEach(() => {
+    clearReferenceCatalogCaches();
+  });
+
   it('loads suppliers, public customers and public services from configured APIs', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse([{ id: 's1', legalName: 'Gigalis', siret: '25440253000011', active: true }]))
@@ -41,6 +45,7 @@ describe('ReferenceCatalogClient', () => {
     const fetchMock = vi.fn<typeof fetch>();
     const client = new ReferenceCatalogClient({
       ...getDefaultChorusConfig(),
+      referenceAnnuaireJsonUrl: '',
       referenceAnnuaireXmlUrl: '',
     }, fetchMock);
 
@@ -91,6 +96,7 @@ describe('ReferenceCatalogClient', () => {
     const client = new ReferenceCatalogClient({
       ...getDefaultChorusConfig(),
       referenceApiBaseUrl: '',
+      referenceAnnuaireJsonUrl: '',
       referenceAnnuaireXmlUrl: '/src/data/annuaire_out/FAR00001',
     }, fetchMock);
 

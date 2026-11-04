@@ -1,4 +1,4 @@
-export type GenerationProvider = 'ollama' | '';
+export type GenerationProvider = 'ollama' | 'vllm' | '';
 
 export interface LlmRuntimeConfig {
   provider: GenerationProvider;
@@ -10,6 +10,7 @@ export interface LlmRuntimeConfig {
 }
 
 const DEV_OLLAMA_PROXY_PREFIX = '/__gen-proxy/ollama';
+const DEV_VLLM_PROXY_PREFIX = '/__gen-proxy/vllm';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
@@ -22,7 +23,9 @@ function envNumber(key: string, fallback: number): number {
 }
 
 export function loadLlmConfig(): LlmRuntimeConfig {
-  const provider = envValue('GEN_PROVIDER', '').toLowerCase() === 'ollama' ? 'ollama' : '';
+  const rawProvider = envValue('GEN_PROVIDER', '').toLowerCase();
+  const provider: GenerationProvider =
+    rawProvider === 'ollama' ? 'ollama' : rawProvider === 'vllm' ? 'vllm' : '';
 
   return {
     provider,
@@ -35,16 +38,17 @@ export function loadLlmConfig(): LlmRuntimeConfig {
 }
 
 export function resolveLlmRuntimeConfig(config: LlmRuntimeConfig, devMode = import.meta.env.DEV): LlmRuntimeConfig {
-  if (!devMode || config.provider !== 'ollama' || !config.baseUrl) {
+  if (!devMode || !config.baseUrl || (config.provider !== 'ollama' && config.provider !== 'vllm')) {
     return config;
   }
 
   try {
     const parsed = new URL(config.baseUrl);
     if (/^https?:$/i.test(parsed.protocol)) {
+      const prefix = config.provider === 'vllm' ? DEV_VLLM_PROXY_PREFIX : DEV_OLLAMA_PROXY_PREFIX;
       return {
         ...config,
-        baseUrl: `${DEV_OLLAMA_PROXY_PREFIX}${parsed.pathname === '/' ? '' : parsed.pathname}`,
+        baseUrl: `${prefix}${parsed.pathname === '/' ? '' : parsed.pathname}`,
       };
     }
   } catch {
@@ -55,5 +59,7 @@ export function resolveLlmRuntimeConfig(config: LlmRuntimeConfig, devMode = impo
 }
 
 export function canUseLlmExtraction(config: LlmRuntimeConfig): boolean {
-  return config.provider === 'ollama' && Boolean(config.baseUrl) && Boolean(config.model);
+  return (config.provider === 'ollama' || config.provider === 'vllm')
+    && Boolean(config.baseUrl)
+    && Boolean(config.model);
 }

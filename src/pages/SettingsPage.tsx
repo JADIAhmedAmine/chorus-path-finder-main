@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Badge } from '@/components/ui/badge';
@@ -10,15 +10,28 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { useReferenceCatalog } from '@/hooks/use-reference-catalog';
 import { createChorusConnector } from '@/lib/chorus/client';
-import { loadAuthSession } from '@/lib/auth/session';
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
-import { loadChorusConfig, maskSecret, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
-import type { ChorusConfig, ChorusConnectionResult, ChorusTechnicalContextResolutionResult } from '@/types/chorus';
-import { Loader2, PlugZap } from 'lucide-react';
+import { ChorusBackendAutomationClient } from '@/lib/chorus/backendAutomation';
+import { authenticatedFetch, loadAuthSession } from '@/lib/auth/session';
+import { applyEnvironmentPreset, getDefaultChorusConfig, loadChorusConfig, resolveChorusRuntimeConfig, saveChorusConfig } from '@/lib/chorus/storage';
+import type {
+  ChorusConfig,
+  ChorusConnectionResult,
+  ChorusEnvironment,
+  ChorusTechnicalContextResolutionResult,
+} from '@/types/chorus';
+import { BookOpen, Loader2, PlugZap, Settings as SettingsIcon } from 'lucide-react';
+import { PageHeader } from '@/components/common/PageHeader';
+
+const SHOW_DEV_TOOLS = import.meta.env.VITE_SHOW_DEV_TOOLS === 'true';
 
 const connectorModeLabels = {
   mock: 'Mock / démonstration',
   direct: 'Connexion directe (dev uniquement)',
+} as const;
+
+const environmentLabels = {
+  qualif: 'Qualification (sandbox PISTE)',
+  prod: 'Production (PISTE)',
 } as const;
 
 const connectionMethodLabels = {
@@ -55,9 +68,14 @@ export default function SettingsPage() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [lastConnectionResult, setLastConnectionResult] = useState<ChorusConnectionResult | null>(null);
   const [resolvingTechnicalContext, setResolvingTechnicalContext] = useState(false);
+  const [resolvingSupplierId, setResolvingSupplierId] = useState(false);
   const [lastTechnicalContextResult, setLastTechnicalContextResult] = useState<ChorusTechnicalContextResolutionResult | null>(null);
   const [technicalContextEmail, setTechnicalContextEmail] = useState(authSession?.email ?? '');
   const [technicalContextSupplierId, setTechnicalContextSupplierId] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
   const { suppliers, loading: loadingReferenceSuppliers, error: referenceSuppliersError } = useReferenceCatalog(config, {
     includeSuppliers: true,
     includePublicCustomers: false,
@@ -86,13 +104,25 @@ export default function SettingsPage() {
     setConfig((previous) => {
       const nextConfig = {
         ...previous,
-        [field]: field === 'submissionSupplierId'
-          ? FIXED_CHORUS_SUPPLIER_ID_TEXT as ChorusConfig[K]
-          : value,
+        [field]: value,
       };
 
       saveChorusConfig(nextConfig);
       return nextConfig;
+    });
+  };
+
+  const handleEnvironmentChange = (env: ChorusEnvironment) => {
+    setConfig((previous) => {
+      const nextConfig = applyEnvironmentPreset(previous, env);
+      saveChorusConfig(nextConfig);
+      return nextConfig;
+    });
+    toast({
+      title: 'Environnement changé',
+      description: env === 'prod'
+        ? 'URLs PISTE de production appliquées. Pense à renseigner des credentials prod.'
+        : 'URLs PISTE qualification (sandbox) appliquées.',
     });
   };
 
@@ -102,6 +132,63 @@ export default function SettingsPage() {
       title: 'Configuration sauvegardée',
       description: 'Le connecteur Chorus Pro a été mis à jour dans ce navigateur.',
     });
+  };
+
+  const handleResetFromEnv = () => {
+    const nextConfig = getDefaultChorusConfig();
+    setConfig(nextConfig);
+    saveChorusConfig(nextConfig);
+    toast({
+      title: 'Configuration rechargée',
+      description: 'Le connecteur Chorus Pro utilise maintenant les valeurs du build local.',
+    });
+  };
+
+  const handleChangePassword = async (event: FormEvent) => {
+    event.preventDefault();
+
+    if (newPassword !== confirmPassword) {
+      toast({
+        title: 'Mot de passe non confirmé',
+        description: 'Les deux saisies du nouveau mot de passe doivent être identiques.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const response = await authenticatedFetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const detail = typeof body?.detail === 'string' ? body.detail : 'Changement de mot de passe impossible.';
+        throw new Error(detail);
+      }
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast({
+        title: 'Mot de passe modifié',
+        description: 'Le nouveau mot de passe sera demandé à la prochaine connexion.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Échec changement mot de passe',
+        description: error instanceof Error ? error.message : 'Erreur inconnue.',
+        variant: 'destructive',
+      });
+    } finally {
+      setChangingPassword(false);
+    }
   };
 
   const handleTestConnection = async () => {
@@ -147,7 +234,7 @@ export default function SettingsPage() {
       const nextConfig: ChorusConfig = {
         ...config,
         submissionCurrentUserId: result.userId !== undefined ? String(result.userId) : config.submissionCurrentUserId,
-        submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
+        submissionSupplierId: result.supplierStructureId !== undefined ? String(result.supplierStructureId) : config.submissionSupplierId,
         submissionSupplierServiceId: result.supplierServiceId !== undefined ? String(result.supplierServiceId) : config.submissionSupplierServiceId,
       };
 
@@ -171,12 +258,132 @@ export default function SettingsPage() {
     }
   };
 
+  const handleResolveSupplierId = async () => {
+    setResolvingSupplierId(true);
+
+    try {
+      const client = new ChorusBackendAutomationClient(config);
+      const result = await client.getActiveRecipientStructures(config.submissionSupplierId || undefined);
+      const nextConfig: ChorusConfig = {
+        ...config,
+        submissionSupplierId: String(result.idFournisseur),
+      };
+
+      setConfig(nextConfig);
+      saveChorusConfig(nextConfig);
+      toast({
+        title: 'idFournisseur récupéré',
+        description: `${result.idFournisseur} depuis les structures actives destinataire.`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erreur inconnue';
+      toast({
+        title: 'Échec récupération idFournisseur',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setResolvingSupplierId(false);
+    }
+  };
+
   return (
-    <div className="max-w-5xl space-y-6 animate-fade-in">
-      <div>
-        <h1 className="text-2xl font-semibold">Paramètres</h1>
-        <p className="text-sm text-muted-foreground">Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro</p>
-      </div>
+    <div className="max-w-5xl space-y-7 animate-fade-in">
+      <PageHeader
+        eyebrow={<><SettingsIcon className="h-3 w-3" /> Configuration</>}
+        title="Paramètres"
+        description="Configuration de l'organisation, de l'utilisateur et du connecteur Chorus Pro."
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Compte utilisateur</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleChangePassword} className="grid grid-cols-1 gap-4 md:grid-cols-3">
+            <div className="space-y-2">
+              <Label htmlFor="current-password">Mot de passe actuel</Label>
+              <Input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                autoComplete="current-password"
+                disabled={changingPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-password">Nouveau mot de passe</Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                autoComplete="new-password"
+                disabled={changingPassword}
+                minLength={10}
+                onChange={(event) => setNewPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirm-password">Confirmation</Label>
+              <Input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                autoComplete="new-password"
+                disabled={changingPassword}
+                minLength={10}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="md:col-span-3">
+              <Button type="submit" disabled={changingPassword}>
+                {changingPassword ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Changer le mot de passe
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <BookOpen className="h-4 w-4" />
+            Mode d'emploi utilisateur
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <GuideTile
+              title="1. Se connecter"
+              body="Ouvre l'application, saisis l'identifiant fourni par l'administrateur, puis vérifie que ton profil apparaît dans l'en-tête."
+              action="Connexion"
+            />
+            <GuideTile
+              title="2. Préparer une facture"
+              body="Va dans la création de facture, importe le PDF, puis laisse l'application extraire les informations utiles."
+              action="Factures -> Nouvelle facture"
+            />
+            <GuideTile
+              title="3. Contrôler les données"
+              body="Relis le fournisseur, le destinataire public, le service, les montants, la TVA et les références avant tout envoi."
+              action="Contrôle avant soumission"
+            />
+            <GuideTile
+              title="4. Soumettre et suivre"
+              body="Après validation, envoie la facture vers Chorus puis suis son retour dans le détail de facture et les journaux."
+              action="Soumettre à Chorus"
+            />
+          </div>
+          <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
+            En cas d'erreur, conserve le message affiché, le numéro de facture et l'heure de l'action avant de contacter l'administrateur. Ne soumets pas deux fois la même facture sans avoir vérifié son statut.
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -199,17 +406,36 @@ export default function SettingsPage() {
               />
             </div>
 
-            <div className="space-y-2">
-              <Label>Mode de connexion</Label>
-              <Select value={config.mode} onValueChange={(value: ChorusConfig['mode']) => handleFieldChange('mode', value)}>
+            {SHOW_DEV_TOOLS && (
+              <div className="space-y-2">
+                <Label>Mode de connexion</Label>
+                <Select value={config.mode} onValueChange={(value: ChorusConfig['mode']) => handleFieldChange('mode', value)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mock">{connectorModeLabels.mock}</SelectItem>
+                    <SelectItem value="direct">{connectorModeLabels.direct}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="space-y-2 md:col-span-2">
+              <Label>Environnement Chorus</Label>
+              <Select value={config.environment} onValueChange={(value: ChorusEnvironment) => handleEnvironmentChange(value)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mock">{connectorModeLabels.mock}</SelectItem>
-                  <SelectItem value="direct">{connectorModeLabels.direct}</SelectItem>
+                  <SelectItem value="qualif">{environmentLabels.qualif}</SelectItem>
+                  <SelectItem value="prod">{environmentLabels.prod}</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                Bascule automatiquement les URLs OAuth2, API factures et services utilisateurs Chorus.
+                Les secrets PISTE et le compte technique sont lus par l&apos;API serveur, jamais par le navigateur.
+              </p>
             </div>
 
+            {SHOW_DEV_TOOLS && (
+              <>
             <div className="space-y-2">
               <Label htmlFor="token-url">URL OAuth2</Label>
               <Input id="token-url" value={config.tokenUrl} onChange={(e) => handleFieldChange('tokenUrl', e.target.value)} placeholder="https://sandbox-oauth.aife.economie.gouv.fr/api/oauth/token" />
@@ -218,26 +444,6 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <Label htmlFor="api-base-url">Base API</Label>
               <Input id="api-base-url" value={config.apiBaseUrl} onChange={(e) => handleFieldChange('apiBaseUrl', e.target.value)} placeholder="https://..." />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="client-id">Client ID PISTE</Label>
-              <Input id="client-id" value={config.clientId} onChange={(e) => handleFieldChange('clientId', e.target.value)} placeholder="client-id" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="client-secret">Client secret PISTE</Label>
-              <Input id="client-secret" type="password" value={config.clientSecret} onChange={(e) => handleFieldChange('clientSecret', e.target.value)} placeholder="client-secret" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="technical-login">Login compte technique</Label>
-              <Input id="technical-login" value={config.technicalLogin} onChange={(e) => handleFieldChange('technicalLogin', e.target.value)} placeholder="login technique" />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="technical-password">Mot de passe compte technique</Label>
-              <Input id="technical-password" type="password" value={config.technicalPassword} onChange={(e) => handleFieldChange('technicalPassword', e.target.value)} placeholder="mot de passe technique" />
             </div>
 
             <div className="space-y-2">
@@ -349,8 +555,12 @@ export default function SettingsPage() {
                 Fallback XML si le JSON normalisé n&apos;est pas encore disponible.
               </p>
             </div>
+              </>
+            )}
           </div>
 
+          {SHOW_DEV_TOOLS && (
+          <>
           <Separator />
 
           <div className="space-y-4">
@@ -424,8 +634,8 @@ export default function SettingsPage() {
                   <p className="mt-1 text-muted-foreground">
                     Les endpoints configurés pointent vers la qualification / sandbox. Dans ton contexte actuel, la récupération automatique
                     via `consulter/compte` et `monCompte/recuperer/rattachements` doit être considérée comme indisponible.
-                    Renseigne donc `idUtilisateurCourant` et `idServiceFournisseur` manuellement dans ce bloc.
-                    `idFournisseur` reste fixé à `26359578`.
+                    Renseigne donc `idUtilisateurCourant`, `idFournisseur` et `idServiceFournisseur` manuellement dans ce bloc
+                    ou via `.env.local`.
                   </p>
                 </div>
               )}
@@ -435,15 +645,9 @@ export default function SettingsPage() {
                   <p className="font-medium">{lastTechnicalContextResult.message}</p>
                   <p className="text-muted-foreground">
                     `idUtilisateurCourant`: {lastTechnicalContextResult.userId ?? 'non trouvé'} ·
-                    `idFournisseur`: {FIXED_CHORUS_SUPPLIER_ID_TEXT} (fixe) ·
+                    `idFournisseur`: {(lastTechnicalContextResult.supplierStructureId ?? config.submissionSupplierId) || 'non trouvé'} ·
                     `idServiceFournisseur`: {lastTechnicalContextResult.supplierServiceId ?? 'non trouvé'}
                   </p>
-                  {lastTechnicalContextResult.supplierStructureId !== undefined
-                    && String(lastTechnicalContextResult.supplierStructureId) !== FIXED_CHORUS_SUPPLIER_ID_TEXT && (
-                    <p className="text-xs text-muted-foreground">
-                      Chorus a retourné `{lastTechnicalContextResult.supplierStructureId}`, mais l&apos;application conserve la valeur fixe `{FIXED_CHORUS_SUPPLIER_ID_TEXT}`.
-                    </p>
-                  )}
                   <p className="text-xs text-muted-foreground">
                     Le rapprochement du fournisseur par SIRET est {lastTechnicalContextResult.matchedOnSupplierSiret ? 'réussi' : 'approximatif'}.
                   </p>
@@ -459,9 +663,15 @@ export default function SettingsPage() {
 
               <div className="space-y-2">
                 <Label htmlFor="submission-supplier-id">idFournisseur</Label>
-                <Input id="submission-supplier-id" value={config.submissionSupplierId} readOnly />
+                <div className="flex gap-2">
+                  <Input id="submission-supplier-id" value={config.submissionSupplierId} onChange={(e) => handleFieldChange('submissionSupplierId', e.target.value)} placeholder="Auto via Chorus" />
+                  <Button type="button" variant="outline" onClick={handleResolveSupplierId} disabled={resolvingSupplierId}>
+                    {resolvingSupplierId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Récupérer
+                  </Button>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Valeur fixee pour toutes les soumissions: `26359578`.
+                  Appelle `recuperer/structures/actives/destinataire` côté serveur si le champ est vide.
                 </p>
               </div>
 
@@ -546,13 +756,15 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+          </>
+          )}
 
           <Separator />
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <InfoTile label="Mode" value={connectorModeLabels[config.mode]} />
             <InfoTile label="Statut" value={connectorStatus} />
-            <InfoTile label="Client secret" value={maskSecret(config.clientSecret)} />
+            <InfoTile label="Secrets Chorus" value="Côté serveur" />
           </div>
 
           <div className="rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -562,6 +774,7 @@ export default function SettingsPage() {
 
           <div className="flex flex-wrap gap-3">
             <Button onClick={handleSave}>Enregistrer la configuration</Button>
+            <Button variant="secondary" onClick={handleResetFromEnv}>Recharger depuis .env.local</Button>
             <Button variant="outline" onClick={handleTestConnection} disabled={testingConnection}>
               {testingConnection ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Tester la connexion
@@ -579,7 +792,7 @@ export default function SettingsPage() {
                   {lastConnectionResult.ok ? 'OK' : 'KO'}
                 </Badge>
               </div>
-              {lastConnectionResult.tokenPreview ? (
+              {SHOW_DEV_TOOLS && lastConnectionResult.tokenPreview ? (
                 <p className="text-xs text-muted-foreground mt-3">Token: {lastConnectionResult.tokenPreview}</p>
               ) : null}
             </div>
@@ -595,6 +808,20 @@ function InfoTile({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg border p-4">
       <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
       <div className="font-medium text-sm mt-1">{value}</div>
+    </div>
+  );
+}
+
+function GuideTile({ title, body, action }: { title: string; body: string; action: string }) {
+  return (
+    <div className="rounded-lg border p-4 space-y-3">
+      <div>
+        <div className="font-medium text-sm">{title}</div>
+        <p className="text-xs text-muted-foreground mt-1">{body}</p>
+      </div>
+      <div className="rounded-md bg-muted px-3 py-2 text-xs font-medium text-muted-foreground break-words">
+        {action}
+      </div>
     </div>
   );
 }

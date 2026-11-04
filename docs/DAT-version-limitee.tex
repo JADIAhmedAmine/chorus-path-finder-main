@@ -1,0 +1,538 @@
+\documentclass[11pt,a4paper]{article}
+
+% ---------------------------------------------------------------------------
+% Encodage / langue
+% ---------------------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[french]{babel}
+\usepackage{lmodern}
+
+% ---------------------------------------------------------------------------
+% Mise en page
+% ---------------------------------------------------------------------------
+\usepackage[margin=2.3cm]{geometry}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,backgrounds}
+\usepackage[hidelinks,colorlinks=true,linkcolor=black!70,urlcolor=blue!60!black]{hyperref}
+
+% Couleurs
+\definecolor{primary}{HTML}{2563EB}
+\definecolor{codebg}{HTML}{F3F4F6}
+
+% En-têtes / pieds
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\small DAT --- Chorus Path Finder (version limitée)}
+\rhead{\small v1.0}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% Style code
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  rulecolor=\color{black!20},
+  backgroundcolor=\color{codebg},
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  xleftmargin=4pt,
+  framexleftmargin=4pt,
+}
+
+\titleformat{\section}{\Large\bfseries\color{primary}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.6em}{}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+% ---------------------------------------------------------------------------
+\begin{document}
+
+% ===========================================================================
+% Page de garde
+% ===========================================================================
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\Huge\bfseries\color{primary} Document d'Architecture Technique\par}
+\vspace{0.6cm}
+{\LARGE Chorus Path Finder --- \emph{Version limitée}\par}
+\vspace{2cm}
+
+\begin{tabular}{ll}
+\toprule
+\textbf{Projet} & Chorus Path Finder (gestion de factures Chorus Pro) \\
+\textbf{Périmètre} & Version limitée (branche \code{feature/version-limitee}) \\
+\textbf{Version du document} & 1.0 \\
+\textbf{Date} & 10 juin 2026 \\
+\textbf{Statut} & Diffusable \\
+\textbf{Auteur} & Équipe Gigalis \\
+\bottomrule
+\end{tabular}
+
+\vfill
+{\small Document interne --- ne pas diffuser hors du périmètre projet.}
+\end{titlepage}
+
+% ===========================================================================
+\tableofcontents
+\newpage
+
+% ===========================================================================
+\section*{Historique des révisions}
+\addcontentsline{toc}{section}{Historique des révisions}
+\begin{longtable}{p{1.5cm} p{2.2cm} p{3cm} p{6.5cm}}
+\toprule
+\textbf{Version} & \textbf{Date} & \textbf{Auteur} & \textbf{Modifications} \\
+\midrule
+\endhead
+1.0 & 10/06/2026 & Équipe Gigalis & Création initiale du DAT pour la version limitée. \\
+\bottomrule
+\end{longtable}
+
+% ===========================================================================
+\section{Introduction}
+
+\subsection{Objet du document}
+Ce document décrit l'architecture technique de la \textbf{version limitée} de
+l'application \textbf{Chorus Path Finder}, une solution de gestion du cycle de
+vie des factures émises et reçues via \textbf{Chorus Pro} (portail de
+facturation électronique du secteur public français), exposé par la passerelle
+\textbf{PISTE}. Il a pour but de fournir aux équipes techniques une vision
+complète des composants, des technologies, des intégrations externes, du
+modèle de données et des modalités de déploiement et d'exploitation.
+
+\subsection{Périmètre}
+La présente version est dite \emph{limitée} car elle restreint le périmètre
+fonctionnel exposé par rapport à la version complète~:
+\begin{itemize}[nosep]
+  \item le socle « \textbf{Flux} » (dépôt de flux, PDF\,$\rightarrow$\,flux, dépôt G2B) est
+        \textbf{masqué} dans l'interface (réactivable par configuration)~;
+  \item l'extraction de factures PDF est \textbf{assistée par LLM} (vLLM)~;
+  \item la page « Rejets / refus » propose une \textbf{analyse LLM du motif} avec
+        suggestion d'action.
+\end{itemize}
+Le backend reste fonctionnellement complet~: seules des surfaces de l'interface
+sont masquées.
+
+\subsection{Acronymes et définitions}
+\begin{longtable}{p{2.6cm} p{12.5cm}}
+\toprule
+\textbf{Terme} & \textbf{Définition} \\
+\midrule
+\endhead
+DAT & Document d'Architecture Technique. \\
+Chorus Pro & Portail public de facturation électronique (DGFiP). \\
+PISTE & Plateforme d'Intermédiation des Services pour la Transformation de l'État (passerelle API + OAuth2). \\
+DAT & Document d'Architecture Technique. \\
+SIRET & Identifiant d'établissement (14 chiffres). \\
+LLM & \emph{Large Language Model} (modèle de langage). \\
+vLLM & Moteur d'inférence LLM exposant une API compatible OpenAI. \\
+Docling & Service de conversion/structuration de documents (OCR / mise en page). \\
+Avoir & Facture à montant négatif (note de crédit). \\
+\bottomrule
+\end{longtable}
+
+% ===========================================================================
+\section{Contexte et objectifs}
+
+\subsection{Contexte}
+L'application permet de~: synchroniser depuis Chorus Pro les fournisseurs,
+clients publics et factures~; consulter et filtrer les factures émises et
+reçues~; soumettre, recycler et compléter des factures~; et gérer les rejets.
+La version limitée vise un \textbf{déploiement de démonstration / pré-production}
+recentré sur le parcours « factures », tout en introduisant l'assistance LLM.
+
+\subsection{Objectifs de la version limitée}
+\begin{enumerate}[nosep]
+  \item Réduire la surface fonctionnelle visible (masquage du socle Flux) sans
+        supprimer de code, de façon \textbf{réversible}.
+  \item Brancher un \textbf{LLM} (vLLM / \code{gpt-oss-20b}) sur l'extraction des
+        factures PDF.
+  \item Fournir, sur les factures rejetées / à recycler / suspendues, une
+        \textbf{suggestion de traitement} générée par le LLM (avec repli
+        heuristique).
+\end{enumerate}
+
+% ===========================================================================
+\section{Vue d'ensemble de l'architecture}
+
+L'application suit une architecture \textbf{3-tiers} conteneurisée~: un frontend
+statique (SPA) servi par Nginx, une API applicative Python, et une base de
+données PostgreSQL. Les intégrations externes (Chorus Pro via PISTE, vLLM,
+Docling) sont appelées par l'API et, pour le LLM côté navigateur, directement
+par le frontend.
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=1.1cm and 1.4cm,
+  box/.style={draw, rounded corners, align=center, minimum height=1cm, minimum width=2.6cm, fill=blue!5},
+  ext/.style={draw, dashed, rounded corners, align=center, minimum height=0.9cm, minimum width=2.6cm, fill=orange!8},
+  arr/.style={-{Latex}, thick}, every node/.style={font=\small}
+]
+\node[box] (nav) {Navigateur\\(SPA React)};
+\node[box, right=of nav] (front) {Frontend\\Nginx + dist};
+\node[box, right=of front] (api) {API\\FastAPI (uvicorn)};
+\node[box, right=of api] (db) {PostgreSQL\\16};
+
+\draw[-{Latex}, thick] (nav) -- node[above]{HTTP} (front);
+\draw[-{Latex}, thick] (front) -- node[above]{\,/api\,} (api);
+\draw[-{Latex}, thick] (api) -- node[above]{SQL} (db);
+
+\node[ext, below=1.4cm of api] (piste) {Chorus Pro\\/ PISTE (OAuth2)};
+\node[ext, left=of piste] (docling) {Docling\\(PDF)};
+\node[ext, right=of piste] (vllm) {vLLM\\\code{gpt-oss-20b}};
+
+\draw[-{Latex}, dashed] (api) -- (piste);
+\draw[-{Latex}, dashed] (api) -- (docling);
+\draw[-{Latex}, dashed] (nav.south) to[bend right=20] (vllm.north);
+\end{tikzpicture}
+\end{center}
+
+\begin{itemize}[nosep]
+  \item \textbf{Frontend} : SPA compilée (Vite) servie en statique par Nginx, qui
+        proxifie \code{/api} vers l'API.
+  \item \textbf{API} : FastAPI/uvicorn ; logique métier Chorus, synchronisation,
+        extraction PDF, authentification.
+  \item \textbf{Base} : PostgreSQL, schéma géré par Alembic.
+  \item \textbf{LLM} : l'extraction appelle vLLM (API OpenAI) ; appel émis côté
+        navigateur (proxy en développement).
+\end{itemize}
+
+% ===========================================================================
+\section{Architecture applicative}
+
+\subsection{Frontend (SPA)}
+Application React mono-page, organisée par pages (\code{src/pages}), composants
+réutilisables (\code{src/components}, dont la bibliothèque shadcn/ui) et une
+couche d'accès données (\code{src/lib}, \code{src/data}). La récupération des
+données passe par TanStack Query vers l'API \code{/api/db/\dots}. Le routage est
+assuré par React Router.
+
+Points structurants de la version limitée~:
+\begin{itemize}[nosep]
+  \item \code{src/lib/featureFlags.ts} : drapeau \code{FLUX\_ENABLED} (défaut
+        \emph{off}) qui conditionne l'affichage du socle Flux.
+  \item \code{src/lib/llm/} : configuration LLM (\code{config.ts}), client chat
+        partagé (\code{client.ts}, \emph{provider-aware}), prompt d'extraction
+        (\code{ollama.ts}).
+  \item \code{src/lib/chorus/rejectionAnalysis.ts} et
+        \code{src/components/chorus/RejectionSuggestionCard.tsx} : analyse et
+        suggestion de traitement des rejets.
+\end{itemize}
+
+\subsection{Backend (API)}
+Serveur FastAPI (\code{scripts/chorus\_submit\_server.py}) qui expose~:
+\begin{itemize}[nosep]
+  \item une \textbf{API de données} (\code{/api/db/\dots}) adossée à PostgreSQL
+        (factures, fournisseurs, clients/services publics, synchronisation)~;
+  \item un \textbf{pont Chorus / PISTE} (\code{/api/chorus/\dots},
+        \code{/api/reception/\dots}) pour la soumission, le recyclage, la
+        complétion, la consultation et le téléchargement~;
+  \item des services transverses~: extraction PDF (\code{/api/extract-pdf-text}),
+        jeton OAuth (\code{/api/chorus/oauth-token}), annuaire, SIRET.
+\end{itemize}
+La logique Chorus est centralisée dans \code{chorus\_python/} (client API,
+synchronisation \code{db/sync.py}, ordonnanceur \code{db/scheduler.py},
+configuration \code{config.py}, entités \code{db/entities.py}).
+
+\subsection{Persistance}
+PostgreSQL~16. Le schéma est versionné par Alembic (répertoire
+\code{alembic/versions}). L'accès se fait via SQLAlchemy~2 et psycopg~3.
+
+% ===========================================================================
+\section{Stack technique}
+
+\subsection{Frontend}
+\begin{longtable}{p{4.5cm} p{4cm} p{6cm}}
+\toprule
+\textbf{Composant} & \textbf{Version} & \textbf{Rôle} \\
+\midrule
+\endhead
+React / React DOM & 18.3 & Bibliothèque UI \\
+Vite & 6.x & Bundler / serveur de dev \\
+TypeScript & 5.8 & Typage statique \\
+shadcn/ui + Radix UI & --- & Composants d'interface \\
+Tailwind CSS & 3.4 & Styles utilitaires \\
+TanStack Query & 5.x & Cache / requêtes serveur \\
+React Router & 6.x & Routage SPA \\
+react-hook-form + zod & --- & Formulaires + validation \\
+recharts, sonner, lucide & --- & Graphes, toasts, icônes \\
+\bottomrule
+\end{longtable}
+
+\subsection{Backend}
+\begin{longtable}{p{4.5cm} p{4cm} p{6cm}}
+\toprule
+\textbf{Composant} & \textbf{Version} & \textbf{Rôle} \\
+\midrule
+\endhead
+Python & 3.12 & Langage \\
+FastAPI & $\geq$0.110 & Framework API \\
+uvicorn & $\geq$0.29 & Serveur ASGI \\
+SQLAlchemy & 2.x & ORM \\
+Alembic & 1.13+ & Migrations de schéma \\
+psycopg & 3.x & Pilote PostgreSQL \\
+pydantic / pydantic-settings & 2.x & Validation / configuration \\
+APScheduler & 3.10+ & Synchronisation planifiée \\
+PyJWT + bcrypt & --- & Authentification (jetons + hash) \\
+PyMuPDF, pdfplumber, pypdf & --- & Extraction PDF locale \\
+requests / httpx & --- & Appels HTTP (PISTE, Docling, vLLM) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Infrastructure}
+PostgreSQL~16 (alpine), Nginx~1.27 (alpine), Docker \& Docker Compose.
+
+% ===========================================================================
+\section{Modèle de données}
+
+Le schéma principal (PostgreSQL) est composé des tables suivantes~:
+
+\begin{longtable}{p{4cm} p{11cm}}
+\toprule
+\textbf{Table} & \textbf{Description} \\
+\midrule
+\endhead
+\code{tenants} & Locataires (multi-tenant) ; tenant par défaut configurable. \\
+\code{suppliers} & Fournisseurs synchronisés depuis Chorus. \\
+\code{public\_customers} & Clients publics (structures destinataires). \\
+\code{public\_services} & Services exécutants rattachés aux clients publics. \\
+\code{invoices} & Factures (émission/réception) ; métadonnées Chorus, statuts, montants. \\
+\code{invoice\_lines} & Lignes de facture. \\
+\code{sync\_runs} & Journal des exécutions de synchronisation Chorus\,$\rightarrow$\,DB. \\
+\code{chorus\_flux\_deposits} & Dépôts de flux et comptes rendus (module Flux). \\
+\code{invoice\_events}, \code{api\_logs} & Module \emph{invoicepilot} (événements, journaux d'API). \\
+\bottomrule
+\end{longtable}
+
+\paragraph{Point d'attention --- montants négatifs.}
+La migration \code{20260609\_0006} \textbf{supprime les contraintes}
+\code{total\_ht/total\_vat/total\_ttc $\geq$ 0} sur \code{invoices}. En effet,
+Chorus Pro renvoie des \textbf{avoirs} et des factures \textbf{rejetées} à
+montants négatifs~; ces contraintes bloquaient la synchronisation.
+
+% ===========================================================================
+\section{Intégrations externes}
+
+\subsection{Chorus Pro via PISTE (OAuth2)}
+L'API obtient un jeton OAuth2 (\code{oauth.piste.gouv.fr}) à partir d'un
+\code{client\_id}/\code{client\_secret}, et émet les appels métier vers
+\code{api.piste.gouv.fr} avec, en en-tête, le jeton \code{Bearer} et le compte
+technique Chorus (\code{cpro-account}, base64 de \code{login:password}).
+L'environnement (\textbf{qualif} / \textbf{prod}) est piloté par \code{CHORUS\_ENV} ;
+les identifiants sont sélectionnés par suffixe (\code{CHORUS\_PROD\_*} /
+\code{CHORUS\_QUALIF\_*}, avec repli sur \code{VITE\_CHORUS\_*}).
+
+\subsection{vLLM (extraction LLM)}
+Moteur d'inférence exposant une API compatible OpenAI
+(\code{/v1/chat/completions}). Configuré via \code{GEN\_PROVIDER=vllm},
+\code{GEN\_BASE\_URL}, \code{GEN\_MODEL} (\code{gpt-oss-20b}). Le client est
+\emph{provider-aware} et gère également Ollama (\code{/api/chat}).
+
+\subsection{Docling (conversion PDF)}
+Service externe de structuration de documents PDF (\code{DOCLING\_SERVER\_URL}),
+utilisé en complément de l'extraction locale (PyMuPDF / pdfplumber).
+
+% ===========================================================================
+\section{Flux fonctionnels clés}
+
+\subsection{Synchronisation Chorus $\rightarrow$ DB}
+Assurée par APScheduler (\code{db/scheduler.py})~: une \textbf{synchronisation
+complète au démarrage} (\code{SYNC\_STARTUP\_FULL\_SYNC}, activée par défaut) et
+une \textbf{synchronisation périodique} optionnelle
+(\code{SYNC\_CRON\_ENABLED}, intervalle \code{SYNC\_CRON\_INTERVAL\_SECONDS}).
+Le déclenchement manuel passe par \code{POST /api/db/sync/suppliers} puis
+\code{/sync/invoices}. L'environnement utilisé est résolu via \code{CHORUS\_ENV}
+ou l'\code{environment} transmis par le frontend.
+
+\subsection{Extraction PDF assistée par LLM}
+Le frontend extrait d'abord les champs par heuristiques
+(\code{src/lib/chorus/extraction.ts})~; si un LLM est configuré
+(\code{canUseLlmExtraction}), il \textbf{affine} le résultat via vLLM, avec
+\textbf{repli automatique} sur les heuristiques en cas d'échec/timeout. Côté
+backend, l'extraction repose sur PyMuPDF/pdfplumber et, optionnellement, Docling.
+
+\subsection{Traitement des rejets (suggestion LLM)}
+Sur les factures rejetées / à recycler / suspendues, le module
+\code{rejectionAnalysis.ts} analyse le \textbf{motif Chorus} et propose une action
+structurée~:
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Action} & \textbf{Aiguillage} \\
+\midrule
+\code{RESOUMETTRE} & \code{/invoices/new?invoiceId=X\&correction=1} (pré-remplie) \\
+\code{RECYCLER} & Fiche facture (formulaire de recyclage) \\
+\code{COMPLETER} & Fiche facture (complétion d'une suspendue) \\
+\code{CONTACTER\_CLIENT} & Information (blocage côté client) \\
+\code{AUCUNE} & Information (ex.~doublon) \\
+\bottomrule
+\end{tabular}
+\end{center}
+La suggestion s'affiche dans le panneau de la liste « Rejets » et sur la fiche
+facture. En l'absence de LLM, un \textbf{repli heuristique} (mots-clés) fournit
+la même structure.
+
+% ===========================================================================
+\section{Spécificités de la version limitée}
+
+\begin{longtable}{p{4cm} p{11cm}}
+\toprule
+\textbf{Aspect} & \textbf{Mise en œuvre} \\
+\midrule
+\endhead
+Masquage du socle Flux & Drapeau \code{FLUX\_ENABLED} (\code{src/lib/featureFlags.ts}, défaut \emph{off}, surcharge \code{VITE\_FLUX\_ENABLED=true}). Masque le groupe de navigation « Flux » et redirige les routes flux. Backend inchangé. \\
+Extraction LLM (vLLM) & Provider \code{vllm} ajouté (API OpenAI), variables \code{GEN\_*} exposées au build (\code{envPrefix}), appel branché en fin d'extraction. \\
+Suggestion de rejets & Analyse LLM + repli heuristique ; bouton « Resoumettre » pré-rempli. \\
+\bottomrule
+\end{longtable}
+
+% ===========================================================================
+\section{Sécurité}
+
+\begin{itemize}[nosep]
+  \item \textbf{Authentification} : jetons JWT (PyJWT, secret \code{APP\_AUTH\_JWT\_SECRET},
+        durée \code{APP\_AUTH\_TOKEN\_TTL\_SECONDS}). Comptes en mode fichier
+        (\code{config/auth-users.json}, mots de passe \textbf{hachés bcrypt}) ou
+        utilisateur unique par variables \code{APP\_AUTH\_EMAIL} /
+        \code{APP\_AUTH\_PASSWORD\_HASH}.
+  \item \textbf{Secrets} : \code{.env}, \code{.env.local} et
+        \code{config/auth-users.json} sont \textbf{exclus du dépôt}
+        (\code{.gitignore}) et fournis à chaque déploiement.
+  \item \textbf{Chorus / PISTE} : identifiants OAuth2 et compte technique stockés
+        en variables d'environnement, jamais committés.
+  \item \textbf{CORS / réseau} : l'appel vLLM est émis côté navigateur ; en
+        développement il transite par un proxy Vite (\code{/\_\_gen-proxy/vllm}).
+\end{itemize}
+
+% ===========================================================================
+\section{Déploiement et exploitation}
+
+\subsection{Topologie Docker}
+\code{docker-compose.yml} (développement / déploiement simple) définit trois
+services~:
+\begin{longtable}{p{3cm} p{5.5cm} p{5.5cm}}
+\toprule
+\textbf{Service} & \textbf{Image / build} & \textbf{Port hôte (défaut)} \\
+\midrule
+\endhead
+\code{postgres} & postgres:16-alpine & \code{POSTGRES\_HOST\_PORT} (5432) \\
+\code{chorus-api} & \code{Dockerfile.backend} (uvicorn) & \code{CHORUS\_API\_HOST\_PORT} (8008) \\
+\code{frontend} & \code{Dockerfile.frontend} (build Node $\rightarrow$ Nginx) & \code{APP\_HTTP\_PORT} (8081) \\
+\bottomrule
+\end{longtable}
+\code{docker-compose.prod.yml} ajoute un service \code{migrate}
+(\code{alembic upgrade head}) et un service de préparation des volumes.
+
+\subsection{Lancement}
+\begin{lstlisting}[language=bash]
+# Construction + démarrage
+docker compose up -d --build
+
+# Migrations (base neuve)
+docker compose run --rm chorus-api alembic upgrade heads
+
+# Suivi des logs
+docker compose logs -f chorus-api
+\end{lstlisting}
+
+\subsection{Configuration (variables principales)}
+\begin{lstlisting}
+# Environnement Chorus (backend) + badge (frontend, build)
+CHORUS_ENV=prod
+VITE_CHORUS_ENV=prod
+
+# LLM (extraction)
+GEN_PROVIDER=vllm
+GEN_BASE_URL=http://<hote-vllm>:8003/v1
+GEN_MODEL=openai/gpt-oss-20b
+
+# Synchronisation
+SYNC_CRON_ENABLED=true
+SYNC_STARTUP_FULL_SYNC=true
+
+# Ports hôtes (isolation multi-instances)
+COMPOSE_PROJECT_NAME=chorus-limited
+POSTGRES_HOST_PORT=5433
+CHORUS_API_HOST_PORT=8009
+APP_HTTP_PORT=8090
+\end{lstlisting}
+
+\subsection{Migrations}
+Le graphe Alembic présente un \emph{branchpoint} (module \emph{invoicepilot})~;
+sur une base neuve, utiliser \code{alembic upgrade heads} (au pluriel) pour
+appliquer toutes les têtes.
+
+% ===========================================================================
+\section{Points d'attention et limites connues}
+
+\begin{itemize}[nosep]
+  \item \textbf{Compte technique PISTE partagé} : exécuter deux instances qui
+        synchronisent simultanément avec le \emph{même} compte technique
+        provoque des rejets d'authentification (HTTP 401) côté PISTE.
+        Recommandation~: une instance de synchronisation active par compte
+        technique~; les instances de test restent passives
+        (\code{SYNC\_CRON\_ENABLED=false}, \code{SYNC\_STARTUP\_FULL\_SYNC=false}).
+  \item \textbf{Badge environnement} : le libellé « Production / Sandbox » dépend
+        de \code{VITE\_CHORUS\_ENV} \emph{figé au build} du frontend (lu dans le
+        \code{.env} racine), indépendamment du backend.
+  \item \textbf{Encodage des fichiers d'environnement} : les \code{.env} doivent
+        être en \textbf{UTF-8} (un octet non-UTF-8 fait échouer le chargement
+        \code{load\_dotenv} au démarrage).
+  \item \textbf{Fichiers non versionnés} : \code{.env}, \code{.env.local} et
+        \code{config/auth-users.json} doivent être fournis manuellement après un
+        clone.
+  \item \textbf{Appel LLM côté navigateur} : nécessite l'accessibilité réseau du
+        serveur vLLM depuis le poste client (et la cohérence http/https pour
+        éviter le \emph{mixed content}).
+\end{itemize}
+
+% ===========================================================================
+\section{Annexes}
+
+\subsection{Arborescence (extrait)}
+\begin{lstlisting}
+chorus-path-finder/
+|- src/                      # Frontend React
+|  |- pages/                 # Pages (InvoiceList, EmissionRejections, ...)
+|  |- components/            # Composants (chorus/, layout/, ui/)
+|  |- lib/
+|  |  |- featureFlags.ts     # FLUX_ENABLED
+|  |  |- llm/                # config.ts, client.ts, ollama.ts
+|  |  |- chorus/             # extraction.ts, rejectionAnalysis.ts, ...
+|- chorus_python/            # Backend (client Chorus, db, config)
+|  |- db/                    # entities.py, sync.py, scheduler.py, api.py
+|- scripts/chorus_submit_server.py  # Application FastAPI
+|- alembic/versions/         # Migrations
+|- docker-compose.yml / .prod.yml
+|- Dockerfile.backend / Dockerfile.frontend
+\end{lstlisting}
+
+\subsection{Principaux points d'entrée API}
+\begin{longtable}{p{6.5cm} p{8cm}}
+\toprule
+\textbf{Endpoint} & \textbf{Rôle} \\
+\midrule
+\endhead
+\code{/api/db/sync/suppliers}, \code{/sync/invoices} & Synchronisation Chorus\,$\rightarrow$\,DB \\
+\code{/api/db/invoices}, \code{/suppliers}, \dots & Lecture des données \\
+\code{/api/chorus/submit}, \code{/recycle} & Soumission / recyclage \\
+\code{/api/reception/consult}, \code{/process}, \code{/complete} & Réception \\
+\code{/api/extract-pdf-text} & Extraction PDF \\
+\code{/api/chorus/oauth-token} & Jeton OAuth PISTE \\
+\bottomrule
+\end{longtable}
+
+\end{document}

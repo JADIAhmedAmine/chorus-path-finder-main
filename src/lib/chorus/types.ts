@@ -94,6 +94,7 @@ export interface InvoiceDraftNormalizationContext {
   supplier?: Pick<SupplierOrganization, 'id' | 'legalName' | 'siret'>;
   publicCustomer?: Pick<PublicCustomer, 'id' | 'legalName' | 'siret' | 'codeDestinataire'>;
   publicService?: Pick<PublicService, 'id' | 'publicCustomerId' | 'codeServiceExecutant' | 'label'>;
+  availableServices?: Pick<PublicService, 'id' | 'publicCustomerId' | 'codeServiceExecutant' | 'label'>[];
   extraction?: LocalInvoiceExtractionResult | null;
 }
 
@@ -147,7 +148,6 @@ export interface ChorusSubmissionDestinataire {
 export interface ChorusSubmissionFournisseur {
   codeCoordonneesBancairesFournisseur?: number;
   idFournisseur?: number;
-  idServiceFournisseur?: number;
 }
 
 export interface ChorusSubmissionLineItem {

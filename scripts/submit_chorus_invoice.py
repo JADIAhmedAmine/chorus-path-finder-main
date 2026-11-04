@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--invoice-number", required=True, help="Numéro de facture à envoyer dans numeroFactureSaisi.")
     parser.add_argument("--recipient-code", help="codeDestinataire Chorus.")
     parser.add_argument("--service-code", help="codeServiceExecutant Chorus.")
-    parser.add_argument("--supplier-id", type=int, help="idFournisseur Chorus (ignore: valeur fixee a 26359578).")
+    parser.add_argument("--supplier-id", type=int, help="idFournisseur Chorus. Par défaut: CHORUS_SUPPLIER_ID ou VITE_CHORUS_SUBMISSION_SUPPLIER_ID.")
     parser.add_argument("--bank-account-code", type=int, help="codeCoordonneesBancairesFournisseur.")
     parser.add_argument("--invoice-date", help="Date facture au format ISO (YYYY-MM-DD).")
     parser.add_argument("--comment", help="Commentaire libre ajouté au payload.")

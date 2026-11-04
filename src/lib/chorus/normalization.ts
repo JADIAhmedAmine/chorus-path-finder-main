@@ -37,6 +37,69 @@ function normalizeText(value: string | undefined): string | undefined {
   return trimmed || undefined;
 }
 
+function normalizeSiret(value: string | undefined): string | undefined {
+  const digits = value?.replace(/\D/g, '') ?? '';
+  return digits.length === 14 ? digits : undefined;
+}
+
+function normalizeLookup(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+function isPlaceholderServiceCode(value: string | undefined): boolean {
+  const normalized = value?.trim();
+  return normalized === '0' || normalized === '00' || normalized === '01';
+}
+
+function normalizeServiceCode(value: string | undefined): string | undefined {
+  const normalized = normalizeText(value);
+  if (!normalized || isPlaceholderServiceCode(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function resolvePublicCustomerCode(fields: LocalInvoiceExtractionResult['fields']): string | undefined {
+  const destinationCode = normalizeText(fields.publicCustomerCode);
+  if (destinationCode && /^\d+$/.test(destinationCode)) {
+    return destinationCode;
+  }
+
+  return normalizeSiret(fields.publicCustomerSiret);
+}
+
+function resolvePublicServiceCode(
+  formData: InvoiceDraftFormData,
+  context: InvoiceDraftNormalizationContext,
+  fields: LocalInvoiceExtractionResult['fields'] | undefined,
+): string | undefined {
+  const manualCode = normalizeServiceCode(formData.publicServiceCode);
+  if (manualCode) {
+    return manualCode;
+  }
+
+  if (context.publicService?.codeServiceExecutant) {
+    return context.publicService.codeServiceExecutant;
+  }
+
+  const detectedCode = normalizeServiceCode(fields?.publicServiceCode);
+  const detectedLabel = normalizeLookup(fields?.publicServiceLabel);
+  if (!detectedCode && !detectedLabel) {
+    return undefined;
+  }
+
+  const matchedService = (context.availableServices ?? []).find((service) => {
+    const serviceCode = normalizeLookup(service.codeServiceExecutant);
+    const serviceLabel = normalizeLookup(service.label);
+    return Boolean(
+      (detectedCode && serviceCode === normalizeLookup(detectedCode))
+        || (detectedLabel && serviceLabel === detectedLabel),
+    );
+  });
+
+  return matchedService?.codeServiceExecutant;
+}
+
 export function parseInvoiceAmount(value: string | undefined): number | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
@@ -61,16 +124,16 @@ export function mergeExtractionIntoDraft(
   return {
     ...currentDraft,
     supplierOrganizationId: fields.supplierOrganizationId ?? currentDraft.supplierOrganizationId,
-    supplierSiret: fields.supplierSiret ?? currentDraft.supplierSiret,
+    supplierSiret: normalizeSiret(fields.supplierSiret) ?? currentDraft.supplierSiret,
     supplierName: fields.supplierName ?? currentDraft.supplierName,
     supplierVatNumber: fields.supplierVatNumber ?? currentDraft.supplierVatNumber,
     supplierInvoiceNumber: fields.supplierInvoiceNumber ?? currentDraft.supplierInvoiceNumber,
     publicCustomerId: fields.publicCustomerId ?? currentDraft.publicCustomerId,
-    publicCustomerCode: fields.publicCustomerCode ?? currentDraft.publicCustomerCode,
+    publicCustomerCode: resolvePublicCustomerCode(fields) ?? currentDraft.publicCustomerCode,
     publicCustomerName: fields.publicCustomerName ?? currentDraft.publicCustomerName,
     publicServiceId: fields.publicServiceId ?? currentDraft.publicServiceId,
-    publicServiceCode: fields.publicServiceCode ?? currentDraft.publicServiceCode,
-    publicServiceLabel: fields.publicServiceLabel ?? currentDraft.publicServiceLabel,
+    publicServiceCode: normalizeServiceCode(fields.publicServiceCode) ?? normalizeServiceCode(currentDraft.publicServiceCode),
+    publicServiceLabel: normalizeServiceCode(fields.publicServiceLabel) ?? normalizeServiceCode(currentDraft.publicServiceLabel),
     engagementNumber: fields.engagementNumber ?? currentDraft.engagementNumber,
     marketNumber: fields.marketNumber ?? currentDraft.marketNumber,
     purchaseOrderNumber: fields.purchaseOrderNumber ?? currentDraft.purchaseOrderNumber,
@@ -113,13 +176,17 @@ export function normalizeInvoiceDraft(
     totalAmountHt: parseInvoiceAmount(formData.totalAmountHt) ?? extractedFields?.totalAmountHt,
     totalVat: formData.totalVat ?? extractedFields?.totalVat,
     totalAmountTtc: parseInvoiceAmount(formData.totalAmountTtc) ?? extractedFields?.totalAmountTtc,
-    supplierSiret: normalizeText(formData.supplierSiret)?.replace(/\D/g, '') || context.supplier?.siret || extractedFields?.supplierSiret,
+    supplierSiret: normalizeSiret(formData.supplierSiret) || context.supplier?.siret || normalizeSiret(extractedFields?.supplierSiret),
     supplierVatNumber: normalizeText(formData.supplierVatNumber) || extractedFields?.supplierVatNumber,
-    publicCustomerSiret: context.publicCustomer?.siret || extractedFields?.publicCustomerSiret,
+    publicCustomerSiret: context.publicCustomer?.siret || normalizeSiret(extractedFields?.publicCustomerSiret),
     publicCustomerName: normalizeText(formData.publicCustomerName) || context.publicCustomer?.legalName || extractedFields?.publicCustomerName,
-    publicCustomerCode: normalizeText(formData.publicCustomerCode) || context.publicCustomer?.codeDestinataire || extractedFields?.publicCustomerCode,
-    publicServiceCode: normalizeText(formData.publicServiceCode) || context.publicService?.codeServiceExecutant || extractedFields?.publicServiceCode,
-    publicServiceLabel: normalizeText(formData.publicServiceLabel) || context.publicService?.label || extractedFields?.publicServiceLabel,
+    publicCustomerCode: normalizeText(formData.publicCustomerCode)
+      || context.publicCustomer?.codeDestinataire
+      || (extractedFields ? resolvePublicCustomerCode(extractedFields) : undefined),
+    publicServiceCode: resolvePublicServiceCode(formData, context, extractedFields),
+    publicServiceLabel: normalizeServiceCode(formData.publicServiceLabel)
+      || context.publicService?.label
+      || normalizeServiceCode(extractedFields?.publicServiceLabel),
     customerReference: normalizeText(formData.customerReference) || extractedFields?.customerReference,
     lineItems: formData.lineItems ?? extractedFields?.lineItems,
     vatLines: formData.vatLines ?? extractedFields?.vatLines,

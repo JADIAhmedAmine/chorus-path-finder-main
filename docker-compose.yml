@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chorus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chorus}
+      POSTGRES_DB: ${POSTGRES_DB:-chorus}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - chorus_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chorus} -d ${POSTGRES_DB:-chorus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  chorus-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    env_file:
+      - .env.local
+    environment:
+      CHORUS_HOST: 0.0.0.0
+      CHORUS_PORT: 8008
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-chorus}:${POSTGRES_PASSWORD:-chorus}@postgres:5432/${POSTGRES_DB:-chorus}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${CHORUS_API_HOST_PORT:-8008}:8008"
+    volumes:
+      - ./.env.local:/app/.env.local:ro
+      - ./config:/app/config
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_CHORUS_MODE: ${VITE_CHORUS_MODE:-direct}
+        VITE_CHORUS_ENABLED: ${VITE_CHORUS_ENABLED:-true}
+        VITE_SHOW_DEV_TOOLS: ${VITE_SHOW_DEV_TOOLS:-false}
+        VITE_CHORUS_ENV: ${VITE_CHORUS_ENV:-qualif}
+        VITE_DATA_API_BASE_URL: ${VITE_DATA_API_BASE_URL:-/api/db}
+        VITE_REFERENCE_API_BASE_URL: ${VITE_REFERENCE_API_BASE_URL:-/api/db}
+        VITE_CHORUS_SUBMISSION_BRIDGE_URL: ${VITE_CHORUS_SUBMISSION_BRIDGE_URL:-/api/chorus/submit}
+        GEN_PROVIDER: ${GEN_PROVIDER:-}
+        GEN_BASE_URL: ${GEN_BASE_URL:-}
+        GEN_MODEL: ${GEN_MODEL:-}
+        GEN_MAX_NEW_TOKENS: ${GEN_MAX_NEW_TOKENS:-1024}
+        GEN_TEMPERATURE: ${GEN_TEMPERATURE:-0.2}
+        GEN_TOP_P: ${GEN_TOP_P:-0.9}
+    depends_on:
+      chorus-api:
+        condition: service_healthy
+    ports:
+      - "${APP_HTTP_PORT:-8081}:80"
+    volumes:
+      - chorus_annuaire_data:/usr/share/nginx/html/annuaire:ro
+
+volumes:
+  chorus_pg_data:
+  chorus_annuaire_data:

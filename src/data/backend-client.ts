@@ -14,7 +14,7 @@ import type {
   Tenant,
   User,
 } from '@/types';
-import { loadAuthSession } from '@/lib/auth/session';
+import { authHeaders, clearAuthSession, loadAuthSession } from '@/lib/auth/session';
 
 export interface BackendDataApiConfig {
   baseUrl: string;
@@ -86,7 +86,7 @@ const REMOTE_BACKEND_CONFIG: BackendDataApiConfig = {
 
 function envValue(key: string, fallback: string): string {
   const raw = import.meta.env[key];
-  return typeof raw === 'string' ? raw : fallback;
+  return typeof raw === 'string' && raw.trim().length > 0 ? raw : fallback;
 }
 
 function hasConfiguredDataBackend(): boolean {
@@ -257,6 +257,52 @@ function asTimestamp(value: unknown): string {
   return text || new Date(0).toISOString();
 }
 
+function firstRecordString(record: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = asString(record[key]);
+    if (value) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+function inferChorusInvoiceStatus(value: unknown): Invoice['statusInternal'] | undefined {
+  const text = asString(value).toUpperCase();
+  if (!text) {
+    return undefined;
+  }
+
+  if (text.includes('PAY') || text.includes('MISE_EN_PAIEMENT')) {
+    return 'PAID';
+  }
+  if (text.includes('TECHNIQUE')) {
+    return 'REJECTED_TECHNICAL';
+  }
+  if (
+    text.includes('REJET')
+    || text.includes('REFUS')
+    || text.includes('NON_CONFORME')
+    || text.includes('ERREUR')
+    || text.includes('ABANDON')
+    || text.includes('SUPPRIM')
+  ) {
+    return 'REJECTED_BUSINESS';
+  }
+  if (text.includes('ACCEPT') || text.includes('VALID')) {
+    return 'ACCEPTED_BY_CHORUS';
+  }
+  if (text.includes('ARCHIV')) {
+    return 'ARCHIVED';
+  }
+  if (text.includes('DEPOSE') || text.includes('MISE_A_DISPOSITION') || text.includes('TRANSMISE')) {
+    return 'SUBMITTED_TO_CHORUS';
+  }
+
+  return undefined;
+}
+
 function normalizeInvoiceStatus(value: unknown): Invoice['statusInternal'] {
   const text = asString(value);
   const allowed: Invoice['statusInternal'][] = [
@@ -419,6 +465,21 @@ function normalizePublicService(record: Record<string, unknown>, index: number):
 }
 
 function normalizeInvoice(record: Record<string, unknown>, index: number): Invoice {
+  const statusChorus = firstRecordString(record, [
+    'statusChorus',
+    'libelleStatutCourant',
+    'statutCourant',
+    'statutFacture',
+    'statut',
+    'etatCourant',
+    'codeStatutCourant',
+    'libelleEtatCourant',
+  ]);
+  const normalizedStatus = normalizeInvoiceStatus(record.statusInternal);
+  const inferredStatus = normalizedStatus === 'DRAFT_UPLOADED'
+    ? inferChorusInvoiceStatus(statusChorus || record.statusInternal)
+    : undefined;
+
   return {
     id: asString(record.id) || `invoice-${index + 1}`,
     tenantId: asString(record.tenantId) || 'external',
@@ -440,18 +501,42 @@ function normalizeInvoice(record: Record<string, unknown>, index: number): Invoi
     purchaseOrderNumber: asString(record.purchaseOrderNumber) || undefined,
     marketNumber: asString(record.marketNumber) || undefined,
     depositMode: asString(record.depositMode) || 'API',
-    statusInternal: normalizeInvoiceStatus(record.statusInternal),
-    statusChorus: asString(record.statusChorus) || undefined,
-    statusReasonCode: asString(record.statusReasonCode) || undefined,
-    statusReasonLabel: asString(record.statusReasonLabel) || undefined,
+    statusInternal: inferredStatus || normalizedStatus,
+    statusChorus: statusChorus || undefined,
+    statusReasonCode: firstRecordString(record, ['statusReasonCode', 'codeMotifRejet', 'codeRejet', 'motifRejetCode', 'codeEtatCourant']) || undefined,
+    statusReasonLabel: firstRecordString(record, [
+      'statusReasonLabel',
+      'commentaireEtatCourant',
+      'commentaireStatutCourant',
+      'commentaireEtat',
+      'motifRejet',
+      'motifRefus',
+      'libelleMotifRejet',
+      'messageRejet',
+    ]) || undefined,
     extractionConfidence: record.extractionConfidence == null ? undefined : asNumber(record.extractionConfidence),
     requiresHumanReview: asBoolean(record.requiresHumanReview, false),
     currentRevision: asNumber(record.currentRevision, 1),
     submittedAt: asString(record.submittedAt) || undefined,
     lastStatusSyncAt: asString(record.lastStatusSyncAt) || undefined,
+    statusChangedAt: asString(record.statusChangedAt) || undefined,
     archivedAt: asString(record.archivedAt) || undefined,
+    chorusInvoiceType: asString(record.chorusInvoiceType) || undefined,
+    recipientChorusId: asString(record.recipientChorusId) || undefined,
+    recipientChorusCode: asString(record.recipientChorusCode) || undefined,
+    recipientChorusName: asString(record.recipientChorusName) || undefined,
+    serviceChorusId: asString(record.serviceChorusId) || undefined,
+    serviceChorusCode: asString(record.serviceChorusCode) || undefined,
+    serviceChorusName: asString(record.serviceChorusName) || undefined,
+    supplierChorusCode: asString(record.supplierChorusCode) || undefined,
+    supplierChorusName: asString(record.supplierChorusName) || undefined,
+    amountToPay: record.amountToPay == null ? undefined : asNumber(record.amountToPay),
+    createdByName: asString(record.createdByName) || undefined,
+    rejectionProcessed: record.rejectionProcessed == null ? undefined : asBoolean(record.rejectionProcessed),
+    attachmentCount: record.attachmentCount == null ? undefined : asNumber(record.attachmentCount),
     createdBy: asString(record.createdBy) || 'system',
     updatedBy: asString(record.updatedBy) || 'system',
+    rawPayload: asObject(record.rawPayload) ?? asObject(record.raw_payload) ?? null,
     createdAt: asTimestamp(record.createdAt),
     updatedAt: asTimestamp(record.updatedAt),
   };
@@ -585,6 +670,17 @@ export class BackendDataClient {
     private readonly fetchImpl: typeof fetch = getDefaultFetchImpl(),
   ) {}
 
+  private handleUnauthorized(response: Response): void {
+    if (response.status !== 401) {
+      return;
+    }
+
+    clearAuthSession();
+    if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+      window.location.assign('/login');
+    }
+  }
+
   private async fetchCollection<T>(
     path: string,
     label: string,
@@ -603,11 +699,13 @@ export class BackendDataClient {
       joinUrl(this.config.baseUrl.trim(), addQueryParams(relativePath, query)),
       {
         method: 'GET',
-        headers: {
+        headers: authHeaders({
           Accept: 'application/json',
-        },
+        }),
       },
     );
+
+    this.handleUnauthorized(response);
 
     if (response.status === 404) {
       console.warn(`[data backend] ${label} introuvable (404). TODO: brancher cet endpoint côté backend.`);
@@ -638,10 +736,12 @@ export class BackendDataClient {
 
     const response = await this.fetchImpl(joinUrl(this.config.baseUrl.trim(), relativePath), {
       method: 'GET',
-      headers: {
+      headers: authHeaders({
         Accept: 'application/json',
-      },
+      }),
     });
+
+    this.handleUnauthorized(response);
 
     if (response.status === 404) {
       console.warn(`[data backend] ${label} introuvable (404). TODO: brancher cet endpoint côté backend.`);

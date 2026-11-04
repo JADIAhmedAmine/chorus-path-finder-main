@@ -1,0 +1,28 @@
+{
+  "users": [
+    {
+      "id": "admin-demo",
+      "tenantId": "tenant-gigalis-default",
+      "email": "admin@example.local",
+      "firstName": "Admin",
+      "lastName": "Demo",
+      "roleCode": "ADMINISTRATEUR",
+      "active": true,
+      "passwordHash": "REPLACE_WITH_BCRYPT_HASH",
+      "createdAt": "1970-01-01T00:00:00Z",
+      "updatedAt": "1970-01-01T00:00:00Z"
+    },
+    {
+      "id": "auditeur-demo",
+      "tenantId": "tenant-gigalis-default",
+      "email": "auditeur@example.local",
+      "firstName": "Auditeur",
+      "lastName": "Demo",
+      "roleCode": "AUDITEUR",
+      "active": true,
+      "passwordHash": "REPLACE_WITH_BCRYPT_HASH",
+      "createdAt": "1970-01-01T00:00:00Z",
+      "updatedAt": "1970-01-01T00:00:00Z"
+    }
+  ]
+}
