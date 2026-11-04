@@ -64,6 +64,24 @@ describe('chorus submission payload', () => {
     });
   });
 
+  it('forces TVA_SUR_DEBIT when the Chorus context still contains TVA_SUR_ENCAISSEMENT', () => {
+    const payload = buildInvoiceSubmissionPayload({
+      ...createEmptyInvoiceDraft(),
+      supplierInvoiceNumber: 'FAC-TVA-2026-01',
+      publicCustomerCode: '23440003400026',
+      invoiceDate: '17/04/2026',
+      currencyCode: 'EUR',
+      totalAmountHt: '100,00',
+      totalAmountTtc: '120,00',
+    }, {
+      chorus: {
+        typeTva: 'TVA_SUR_ENCAISSEMENT',
+      },
+    });
+
+    expect(payload.references.typeTva).toBe('TVA_SUR_DEBIT');
+  });
+
   it('builds a Chorus payload from extracted invoice data with a single fallback line', () => {
     const payload = buildInvoiceSubmissionPayload(createEmptyInvoiceDraft(), {
       extraction: gigalisExtractionResult,
@@ -99,7 +117,6 @@ describe('chorus submission payload', () => {
       numeroFactureSaisi: '2026-003-00565',
       destinataire: {
         codeDestinataire: '23440003400026',
-        codeServiceExecutant: 'SE-PDL',
       },
       fournisseur: {
         idFournisseur: 160,
@@ -113,8 +130,9 @@ describe('chorus submission payload', () => {
       },
       references: {
         deviseFacture: 'EUR',
+        numeroFactureOrigine: '2026-003-00565',
         typeFacture: 'FACTURE',
-        typeTva: 'TVA_SUR_ENCAISSEMENT',
+        typeTva: 'TVA_SUR_DEBIT',
       },
     });
     expect(payload.lignePoste).toHaveLength(1);
@@ -272,6 +290,7 @@ describe('chorus submission payload', () => {
         fields: {
           ...gigalisExtractionResult.fields,
           publicCustomerCode: undefined,
+          publicCustomerSiret: undefined,
         },
       },
     });

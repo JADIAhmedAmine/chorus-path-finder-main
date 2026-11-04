@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import tempfile
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,10 @@ DOCLING_TIMEOUT = int(os.getenv("DOCLING_TIMEOUT", "1800"))
 DOCLING_ENABLE_PICTURE_DESCRIPTION = os.getenv(
     "DOCLING_ENABLE_PICTURE_DESCRIPTION", "false"
 ).lower()
+PDF_EXTRACTION_ENGINE = os.getenv("PDF_EXTRACTION_ENGINE", "local").strip().lower()
+
+MONEY_QUANTIZER = Decimal("0.01")
+AMOUNT_PATTERN = r"([0-9][0-9\s.'’,]*(?:[,.][0-9]{2})?)"
 
 
 def _rewrite_pdf_for_docling(input_path: Path) -> Path:
@@ -126,25 +132,223 @@ def extract_pdf_text_from_base64_docling(pdf_base64: str) -> str:
         tmp_path = Path(tmp.name)
 
     try:
-        return extract_pdf_text_docling(tmp_path)
+        return extract_pdf_text(tmp_path)
     finally:
         if tmp_path.exists():
             tmp_path.unlink(missing_ok=True)
 
 
+def _normalize_extracted_text(text: str) -> str:
+    lines = [" ".join(line.split()) for line in text.replace("\r", "\n").splitlines()]
+    return "\n".join(line for line in lines if line).strip()
+
+
+def _merge_text_sources(*sources: str) -> str:
+    merged_lines: list[str] = []
+    seen: set[str] = set()
+
+    for source in sources:
+        for line in _normalize_extracted_text(source).splitlines():
+            key = line.casefold()
+            if key in seen:
+                continue
+
+            seen.add(key)
+            merged_lines.append(line)
+
+    return "\n".join(merged_lines).strip()
+
+
+def _parse_decimal_amount(value: str | None) -> Decimal | None:
+    if not value:
+        return None
+
+    cleaned = (
+        value.strip()
+        .replace("\u00a0", " ")
+        .replace("'", "")
+        .replace("’", "")
+    )
+    cleaned = re.sub(r"[^\d,.\-]", "", cleaned)
+    if not cleaned or not re.search(r"\d", cleaned):
+        return None
+
+    last_comma = cleaned.rfind(",")
+    last_dot = cleaned.rfind(".")
+    normalized = cleaned
+    if last_comma > last_dot:
+        normalized = cleaned.replace(".", "").replace(",", ".")
+    elif last_dot > last_comma and last_comma >= 0:
+        normalized = cleaned.replace(",", "")
+    elif last_comma >= 0:
+        normalized = cleaned.replace(",", ".")
+
+    try:
+        return Decimal(normalized).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None
+
+
+def _format_decimal_amount(value: Decimal) -> str:
+    return f"{value:,.2f}".replace(",", " ").replace(".", ",")
+
+
+def _first_amount(text: str, patterns: list[str]) -> Decimal | None:
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        amount = _parse_decimal_amount(match.group(1) if match else None)
+        if amount is not None:
+            return amount
+
+    return None
+
+
+def _extract_vat_rate(text: str) -> str | None:
+    match = re.search(r"\btva\s*([0-9]{1,2}(?:[,.][0-9]+)?)\s*%", text, re.IGNORECASE)
+    if not match:
+        return None
+
+    rate = match.group(1).replace(",", ".")
+    return rate.rstrip("0").rstrip(".") if "." in rate else rate
+
+
+def _prepend_reconciled_invoice_totals(text: str) -> str:
+    normalized_text = _normalize_extracted_text(text)
+    amount = AMOUNT_PATTERN
+    total_ttc = _first_amount(normalized_text, [
+        rf"\btotal\s*ttc\s*[:#-]?\s*{amount}",
+        rf"\bmontant\s*ttc\s*[:#-]?\s*{amount}",
+        rf"\b(?:net\s+a\s+payer|net\s+à\s+payer)\b[^0-9]{{0,35}}{amount}",
+    ])
+    total_vat = _first_amount(normalized_text, [
+        rf"\b(?:montant\s+tva|total\s+tva)\s*[:#-]?\s*{amount}",
+        rf"\btva\s*[0-9]{{1,2}}(?:[,.][0-9]+)?\s*%\s*[:#-]?\s*{amount}",
+    ])
+
+    if total_ttc is None or total_vat is None:
+        return normalized_text
+
+    computed_ht = (total_ttc - total_vat).quantize(MONEY_QUANTIZER, rounding=ROUND_HALF_UP)
+    if computed_ht <= 0:
+        return normalized_text
+
+    extracted_ht = _first_amount(normalized_text, [
+        rf"\btotal\s*ht\s*[:#-]?\s*{amount}",
+        rf"\bhors\s*taxes\s*[:#-]?\s*{amount}",
+        rf"\bmontant\s*ht\s*[:#-]?\s*{amount}",
+    ])
+    vat_rate = _extract_vat_rate(normalized_text)
+    vat_label = f"TVA {vat_rate}%" if vat_rate else "Montant TVA"
+    control_status = "OK"
+    if extracted_ht is None:
+        control_status = "HT extrait absent"
+    elif abs(extracted_ht - computed_ht) > Decimal("0.02"):
+        control_status = f"HT extrait {_format_decimal_amount(extracted_ht)} corrigé"
+
+    reconciled_block = "\n".join([
+        f"Total HT : {_format_decimal_amount(computed_ht)}",
+        f"{vat_label} : {_format_decimal_amount(total_vat)}",
+        f"Total TTC : {_format_decimal_amount(total_ttc)}",
+        f"Controle montant HT TTC moins TVA : {control_status}",
+    ])
+
+    return _merge_text_sources(reconciled_block, normalized_text)
+
+
+def extract_pdf_text_pdfplumber(pdf_path: Path | str) -> str:
+    if pdfplumber is None:
+        raise ImportError("pdfplumber is not installed.")
+
+    page_texts: list[str] = []
+    with pdfplumber.open(str(pdf_path)) as pdf:
+        for page in pdf.pages:
+            layout_text = page.extract_text(
+                x_tolerance=1,
+                y_tolerance=3,
+                layout=True,
+            ) or ""
+            simple_text = page.extract_text(
+                x_tolerance=1,
+                y_tolerance=3,
+                layout=False,
+            ) or ""
+            page_texts.append(_merge_text_sources(layout_text, simple_text))
+
+    return _merge_text_sources(*page_texts)
+
+
+def extract_pdf_text_pymupdf(pdf_path: Path | str) -> str:
+    page_texts: list[str] = []
+
+    with fitz.open(str(pdf_path)) as document:
+        for page in document:
+            text = page.get_text("text", sort=True) or ""
+            blocks = [
+                str(block[4]).strip()
+                for block in page.get_text("blocks", sort=True)
+                if len(block) >= 5 and str(block[4]).strip()
+            ]
+            page_texts.append(_merge_text_sources(text, "\n".join(blocks)))
+
+    return _merge_text_sources(*page_texts)
+
+
+def _use_docling_extraction(prefer_docling: bool) -> bool:
+    if not prefer_docling:
+        return False
+    if PDF_EXTRACTION_ENGINE in {"local", "pymupdf", "pdfplumber"}:
+        return False
+    if PDF_EXTRACTION_ENGINE in {"docling", "remote"}:
+        return True
+    return bool(DOCLING_SERVER_URL)
+
+
 def extract_pdf_text(pdf_path: Path | str, prefer_docling: bool = True) -> str:
     """
     Extraction principale :
-    - Docling d'abord
-    - fallback pdfplumber si besoin
+    - locale PyMuPDF + pdfplumber par défaut
+    - Docling seulement si PDF_EXTRACTION_ENGINE=docling/remote/auto
+    - fusion avec pdfplumber layout pour conserver les zones de totaux parfois
+      omises par le markdown Docling
+    - fallback local si Docling est indisponible
     """
-    if prefer_docling:
+    pymupdf_text = ""
+    pymupdf_error: Exception | None = None
+    try:
+        pymupdf_text = extract_pdf_text_pymupdf(pdf_path)
+    except Exception as e:
+        pymupdf_error = e
+
+    pdfplumber_text = ""
+    pdfplumber_error: Exception | None = None
+    try:
+        pdfplumber_text = extract_pdf_text_pdfplumber(pdf_path)
+    except Exception as e:
+        pdfplumber_error = e
+
+    local_text = _merge_text_sources(pymupdf_text, pdfplumber_text)
+
+    if _use_docling_extraction(prefer_docling):
         try:
-            return extract_pdf_text_docling(pdf_path)
+            return _prepend_reconciled_invoice_totals(
+                _merge_text_sources(extract_pdf_text_docling(pdf_path), local_text)
+            )
         except Exception as e:
-            print(f"Warning: Docling failed, fallback to pdfplumber: {e}")
+            print(f"Warning: Docling failed, fallback to local PDF extraction: {e}")
 
-    if pdfplumber is None:
-        raise ImportError("pdfplumber not installed and Docling failed.")
+    if local_text:
+        return _prepend_reconciled_invoice_totals(local_text)
 
-    return extract_pdf_text_pdfplumber(pdf_path)
+    if pymupdf_error is not None and pdfplumber_error is not None:
+        raise RuntimeError(
+            "Extraction locale impossible: "
+            f"PyMuPDF: {pymupdf_error} | pdfplumber: {pdfplumber_error}"
+        ) from pdfplumber_error
+
+    if pymupdf_error is not None:
+        raise RuntimeError(f"Extraction PyMuPDF impossible: {pymupdf_error}") from pymupdf_error
+
+    if pdfplumber_error is not None:
+        raise RuntimeError(f"Extraction pdfplumber impossible: {pdfplumber_error}") from pdfplumber_error
+
+    raise RuntimeError("Extraction PDF impossible: aucun texte exploitable.")

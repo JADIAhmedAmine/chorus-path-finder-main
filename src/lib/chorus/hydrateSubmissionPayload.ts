@@ -136,9 +136,9 @@ function resolveDestinataireCode(
   const customerSiret = normalizeSiret(normalized.publicCustomerSiret);
   if (customerSiret) {
     const matchedRecipient = recipients.find((recipient) => recipient.siret === customerSiret);
-    if (matchedRecipient?.codeDestinataire) {
+    if (matchedRecipient) {
       return {
-        value: matchedRecipient.codeDestinataire,
+        value: matchedRecipient.codeDestinataire ?? customerSiret,
         reason: 'Destinataire rapproché automatiquement sur le SIRET détecté dans la facture.',
       };
     }
@@ -197,19 +197,8 @@ function resolveServiceExecutantCode(
     }
   }
 
-  const extractedServiceLabel = normalizeLookup(normalized.publicServiceLabel);
-  if (extractedServiceLabel) {
-    const byLabel = services.find((service) => normalizeLookup(service.nomServiceExecutant) === extractedServiceLabel);
-    if (byLabel?.codeServiceExecutant) {
-      return {
-        value: byLabel.codeServiceExecutant,
-        reason: 'Service exécutant rapproché automatiquement sur le libellé détecté dans la facture.',
-      };
-    }
-  }
-
   // Le service exécutant est optionnel dans le dépôt minimal Chorus.
-  // On le rapproche seulement si un code/libellé existe déjà dans la facture.
+  // On le rapproche seulement si un code est explicitement présent dans le formulaire.
   return { value: currentCode };
 }
 

@@ -1,0 +1,126 @@
+{
+  "scrape_run": {
+    "date": "2026-06-07",
+    "skill": "site-scraper",
+    "method": "Public WebFetch/WebSearch + curl HEAD for connectivity/robots only. Static-content extraction. No JavaScript rendering of auth-gated catalogs. No login/captcha/anti-bot bypass.",
+    "ethics": {
+      "robots_checked": true,
+      "login_bypassed": false,
+      "captcha_bypassed": false,
+      "private_data_collected": false,
+      "request_volume": "low (single fetch per page)"
+    }
+  },
+  "pages_visited": [
+    {
+      "url": "https://communaute.chorus-pro.gouv.fr/robots.txt",
+      "status": 200,
+      "type": "robots",
+      "result": "Allowed docs; only /wp-admin/ disallowed"
+    },
+    {
+      "url": "https://piste.gouv.fr/robots.txt",
+      "status": 200,
+      "type": "robots",
+      "result": "/api/ and admin paths disallowed; /en/api-catalog allowed"
+    },
+    {
+      "url": "https://piste.gouv.fr/en/api-catalog",
+      "status": 200,
+      "type": "catalog",
+      "result": "JS-rendered; API list NOT in static HTML",
+      "extracted": false
+    },
+    {
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/api/",
+      "status": 200,
+      "type": "documentation",
+      "result": "Navigation/landing for API domains (DUME, Données essentielles, etc.)",
+      "extracted": true
+    },
+    {
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/fiche-pratique-reussir-son-raccordement-chorus-pro-en-mode-api-oauth2/",
+      "status": 200,
+      "type": "documentation",
+      "result": "Confirms PISTE/OAuth2 since 01/2020; detailed params inside linked PDF",
+      "extracted": "partial"
+    },
+    {
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/rechercher-une-ou-plusieurs-factures/",
+      "status": 200,
+      "type": "documentation",
+      "result": "Search criteria + invoice statuses + exports",
+      "extracted": true
+    },
+    {
+      "url": "https://communaute.chorus-pro.gouv.fr/documentation/monitoring-flows/?lang=en",
+      "status": 200,
+      "type": "documentation",
+      "result": "consulterCR + 9 flow states + flux/invoice relationship",
+      "extracted": true
+    }
+  ],
+  "pages_skipped": [
+    {
+      "url": "https://developer.aife.economie.gouv.fr/",
+      "reason": "DNS does not resolve (legacy host decommissioned / consolidated into piste.gouv.fr)"
+    },
+    {
+      "url": "https://piste.gouv.fr/en/api-catalog",
+      "reason": "Catalog list is JavaScript-rendered and full detail is behind authentication — not extracted to respect 'no login bypass' and 'public only'."
+    },
+    {
+      "url": "https://communaute.chorus-pro.gouv.fr/wp-content/uploads/2019/12/Specifications_Externes_Annexe_Services_API_V4.14-bis.pdf",
+      "reason": "Large authoritative PDF; not parsed in this pass (recommended deep source)."
+    }
+  ],
+  "extracted_records": {
+    "flux_lifecycle_states": [
+      { "state": "Received", "desc": "The flow has been received by Chorus Pro", "source": "S6" },
+      { "state": "Processed SE CPP", "desc": "File arrived in the Chorus Pro exchange system", "source": "S6" },
+      { "state": "Waiting for processing", "desc": "Flow queued", "source": "S6" },
+      { "state": "In progress", "desc": "Active processing", "source": "S6" },
+      { "state": "Warning", "desc": "Flow not processed by the exchange system", "source": "S6" },
+      { "state": "Rejected", "desc": "Anomalies (technical or business) prevent acceptance", "source": "S6" },
+      { "state": "Waiting for reprocessing", "desc": "Blocked, awaiting manual processing", "source": "S6" },
+      { "state": "Integrated", "desc": "Processed and fully integrated", "source": "S6" },
+      { "state": "Partially integrated", "desc": "Only error-free invoices accepted (API/portal modes)", "source": "S6" }
+    ],
+    "invoice_portal_statuses": [
+      { "label": "Brouillon", "desc": "Draft, not yet sent", "source": "S5" },
+      { "label": "Rejetée", "desc": "Returned by recipient", "source": "S5" },
+      { "label": "À recycler", "desc": "Requires resubmission", "source": "S5" },
+      { "label": "Suspendue", "desc": "Processing halted (complement expected)", "source": "S5" }
+    ],
+    "invoice_status_machine_codes_source": {
+      "note": "Full 60+ machine status codes + success/warning/error/info mapping are in the repository.",
+      "file": "src/lib/status-utils.ts",
+      "examples": ["DEPOSEE", "MISE_A_DISPOSITION", "SUSPENDUE", "REJETEE", "A_RECYCLER", "MANDATEE", "MISE_EN_PAIEMENT", "COMPTABILISEE", "SERVICE_FAIT", "A_COMPLETER"],
+      "source": "R5"
+    },
+    "api_methods_public": [
+      { "method": "deposerFluxFacture", "desc": "Deposit XML or PDF/A3 invoice flow, file <= 10 Mo / 30 Mo compressé", "source": "S8" },
+      { "method": "deposerPDFFacture", "desc": "Deposit PDF, OCR -> status INTERPRETEE_OCR, then soumettreFacture", "source": "WebSearch/S9" },
+      { "method": "soumettreFacture", "desc": "Submit an interpreted/structured invoice", "source": "WebSearch/S9" },
+      { "method": "consulterCR", "desc": "Consult flow integration report (compte rendu)", "source": "S6" },
+      { "method": "rechercher factures", "desc": "Search issued invoices by SIRET, VAT, framework, number, amount, status", "source": "S5" }
+    ],
+    "search_parameters": ["SIRET", "intra-community VAT number", "billing framework id", "invoice number", "invoice amount", "rejected filter", "no-criteria (returns last 2 years)"],
+    "formats_accepted": {
+      "values": ["UBL", "CII (UN/CEFACT)", "Factur-X / PDF-A3", "PDF (OCR route)"],
+      "note": "Exact accepted format/syntax list is environment-dependent; the app reads it live via /v1/recuperer/formatflux and /v1/recuperer/syntaxeflux.",
+      "source": "R2 + S8"
+    },
+    "auth_facts": {
+      "gateway": "PISTE (replaced Chorus Pro API platform 01/2020)",
+      "model": "OAuth2 bearer (PISTE) + Chorus Pro cpro-account header (base64 login:password)",
+      "sandbox_token_url": "https://sandbox-oauth.piste.gouv.fr/api/oauth/token",
+      "prod_token_url": "https://oauth.piste.gouv.fr/api/oauth/token",
+      "sandbox_api_base": "https://sandbox-api.piste.gouv.fr/cpro/factures",
+      "prod_api_base": "https://api.piste.gouv.fr/cpro/factures",
+      "default_scope": "openid",
+      "grant_type": "client_credentials [à vérifier — confirm in S4 PDF]",
+      "source": "R1 + S4"
+    }
+  }
+}

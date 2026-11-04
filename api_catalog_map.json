@@ -1,0 +1,116 @@
+{
+  "generated_at": "2026-06-07",
+  "skill": "api-doc-mapper",
+  "integrity_note": "Endpoints come from (a) this repository's source code [R*] and (b) public Communauté Chorus Pro docs [S*]. The PISTE catalog itself is JS-rendered/auth-gated, so scopes and some parameter/error tables are 'not visible publicly' and marked accordingly. No endpoints were invented.",
+  "gateway": {
+    "name": "PISTE",
+    "provider": "AIFE / DGFiP (État)",
+    "role": "OAuth2 API gateway in front of Chorus Pro (since 2020-01)",
+    "source": ["S1", "S4"]
+  },
+  "environments": {
+    "qualification_sandbox": {
+      "oauth_token_url": "https://sandbox-oauth.piste.gouv.fr/api/oauth/token",
+      "api_base_url": "https://sandbox-api.piste.gouv.fr/cpro/factures",
+      "user_account_path": "https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte",
+      "source": "R1"
+    },
+    "production": {
+      "oauth_token_url": "https://oauth.piste.gouv.fr/api/oauth/token",
+      "api_base_url": "https://api.piste.gouv.fr/cpro/factures",
+      "user_account_path": "https://chorus-pro.gouv.fr:5443/service/utilisateurs/consulter/compte",
+      "source": "R1"
+    }
+  },
+  "authentication": {
+    "level_1_piste": {
+      "type": "OAuth2",
+      "grant_type": "client_credentials [à vérifier in S4 PDF]",
+      "token_header": "Authorization: Bearer <access_token>",
+      "default_scope": "openid",
+      "credentials": "client_id + client_secret (PISTE application)",
+      "source": ["R1", "S4"]
+    },
+    "level_2_chorus_account": {
+      "type": "Chorus Pro technical account",
+      "header": "cpro-account (base64 of 'login:password')",
+      "purpose": "Identify the Chorus Pro user/raccordement behind the operator call",
+      "source": ["R1", "R2"]
+    }
+  },
+  "api_domains": [
+    {
+      "domain": "Factures émises (issued invoices) — flux & deposit",
+      "base": "/cpro/factures",
+      "auth_required": true,
+      "approval": "Chorus Pro account + PISTE app subscription required",
+      "endpoints": [
+        { "path": "/v1/deposer/flux", "method": "POST", "use_case": "Deposit a structured invoice flux (XML/Factur-X) — deposerFluxFacture", "constraints": "file <= 10 Mo / 30 Mo compressé [S8]", "source": ["R2", "R6", "S8"] },
+        { "path": "/v1/deposer/pdf", "method": "POST", "use_case": "Deposit a PDF invoice, triggers OCR -> INTERPRETEE_OCR — deposerPDFFacture", "source": ["R2", "S9"] },
+        { "path": "/v1/soumettre", "method": "POST", "use_case": "Submit an interpreted/structured invoice — soumettreFacture", "source": ["R2", "S9"] },
+        { "path": "/v1/consulterCR", "method": "POST", "use_case": "Consult the flux integration report (compte rendu) — consulterCR", "source": ["R6", "S6"] },
+        { "path": "/v1/recuperer/formatflux", "method": "POST", "use_case": "List accepted flux formats", "source": ["R2", "R6"] },
+        { "path": "/v1/recuperer/syntaxeflux", "method": "POST", "use_case": "List accepted XML syntaxes for a format", "source": ["R2", "R6"] },
+        { "path": "/v1/recuperer/modedepot", "method": "POST", "use_case": "List deposit modes", "source": "R2" },
+        { "path": "/v1/recuperer/cadrefacturation", "method": "POST", "use_case": "List billing frameworks (typologies)", "source": "R2" },
+        { "path": "/v1/recuperer/tauxtva", "method": "POST", "use_case": "List valid VAT rates", "source": "R2" },
+        { "path": "/v1/recuperer/devises", "method": "POST", "use_case": "List currencies", "source": "R2" },
+        { "path": "/v1/recuperer/modereglements", "method": "POST", "use_case": "List payment modes", "source": "R2" },
+        { "path": "/v1/recuperer/coordbanc/valides", "method": "POST", "use_case": "List valid bank details", "source": "R2" },
+        { "path": "/v1/recuperer/structures/actives/fournisseur", "method": "POST", "use_case": "List active supplier structures", "source": "R2" },
+        { "path": "/v1/rechercher/destinataire", "method": "POST", "use_case": "Search public recipient (annuaire)", "source": "R2" },
+        { "path": "/v1/rechercher/serviceexecutant", "method": "POST", "use_case": "Search recipient service exécutant (annuaire)", "source": "R2" },
+        { "path": "/v1/health-check", "method": "GET", "use_case": "Service health probe", "source": "R2" }
+      ]
+    },
+    {
+      "domain": "Transverses (cross-cutting)",
+      "base": "/cpro/transverses",
+      "auth_required": true,
+      "endpoints": [
+        { "path": "(transverses services)", "method": "POST", "use_case": "Reference/transverse services (e.g. structures, parametrage)", "source": "R2", "note": "Specific paths not fully enumerated in repo; see S7 PDF" }
+      ]
+    },
+    {
+      "domain": "Utilisateurs (account / connections)",
+      "base": "/cpro/utilisateurs",
+      "auth_required": true,
+      "endpoints": [
+        { "path": "/v1/consulter/compte", "method": "POST", "use_case": "Consult the connected Chorus Pro account", "source": "R2" },
+        { "path": "/v1/monCompte/recuperer/rattachements", "method": "POST", "use_case": "List account attachments/structures", "source": "R2" }
+      ]
+    }
+  ],
+  "operator_bridge_internal": {
+    "description": "Chorus Pilot's OWN backend bridge that proxies to PISTE/Chorus Pro and the G2B operator interface. These are NOT Chorus Pro public endpoints — they are this app's server adapter.",
+    "g2b_code_interfaces": ["FSO3110A", "FSO3117A", "FSO3300A", "FSO6000A"],
+    "source": ["R2", "R3"],
+    "endpoints": [
+      { "path": "/api/chorus/oauth-token", "use_case": "Obtain PISTE OAuth2 token server-side" },
+      { "path": "/api/chorus/submit", "use_case": "Submit invoice to Chorus Pro" },
+      { "path": "/api/chorus/flux/detect", "use_case": "Detect flux format" },
+      { "path": "/api/chorus/flux/business-validate", "use_case": "Business validation before deposit" },
+      { "path": "/api/chorus/flux/deposer", "use_case": "Deposit flux" },
+      { "path": "/api/chorus/flux/formats", "use_case": "Get accepted formats" },
+      { "path": "/api/chorus/flux/syntaxes", "use_case": "Get accepted syntaxes" },
+      { "path": "/api/chorus/pdf-to-flux/extract", "use_case": "Extract invoice data from PDF" },
+      { "path": "/api/chorus/pdf-to-flux/generate-xml", "use_case": "Generate UBL XML from reviewed data" },
+      { "path": "/api/chorus/invoices/supplier/search", "use_case": "Search issued invoices" },
+      { "path": "/api/chorus/invoices/history", "use_case": "Invoice status history" },
+      { "path": "/api/chorus/invoices/download", "use_case": "Download invoice PDF/XML" },
+      { "path": "/api/chorus/siret/info", "use_case": "SIRET information lookup" },
+      { "path": "/api/chorus/structures/active-destinataire", "use_case": "Active recipient structure" },
+      { "path": "/api/chorus/annuaire/sync", "use_case": "Sync annuaire" },
+      { "path": "/api/chorus/recycle", "use_case": "Recycle a rejected invoice" },
+      { "path": "/api/g2b/flux/detect", "use_case": "G2B detect" },
+      { "path": "/api/g2b/flux/business-validate", "use_case": "G2B business validation" },
+      { "path": "/api/g2b/flux/deposit", "use_case": "G2B deposit (code_interface, force, checksum)" },
+      { "path": "/api/g2b/annuaire/validate-recipient", "use_case": "G2B recipient validation + obligations" }
+    ]
+  },
+  "not_visible_publicly": [
+    "PISTE per-API OAuth scopes (catalog auth-gated)",
+    "Exact request/response/error schemas for each endpoint (see S7 PDF)",
+    "Production rate limits / quotas"
+  ]
+}

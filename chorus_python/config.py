@@ -7,9 +7,66 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .credentials_store import stored_credentials_env_overlay
 
-DEFAULT_ENV_FILES = (".env.example", ".env.local")
+
+DEFAULT_ENV_FILES = (".env.local",)
 FIXED_SUPPLIER_ID = 26359578
+
+CHORUS_ENV_QUALIF = "qualif"
+CHORUS_ENV_PROD = "prod"
+
+CHORUS_ENV_PRESETS: dict[str, dict[str, str]] = {
+    CHORUS_ENV_QUALIF: {
+        "base_url": "https://sandbox-api.piste.gouv.fr/cpro",
+        "token_url": "https://sandbox-oauth.piste.gouv.fr/api/oauth/token",
+        "api_base_url": "https://sandbox-api.piste.gouv.fr/cpro/factures",
+        "user_account_path": "https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte",
+        "user_connections_path": "https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements",
+    },
+    CHORUS_ENV_PROD: {
+        "base_url": "https://api.piste.gouv.fr/cpro",
+        "token_url": "https://oauth.piste.gouv.fr/api/oauth/token",
+        "api_base_url": "https://api.piste.gouv.fr/cpro/factures",
+        "user_account_path": "https://chorus-pro.gouv.fr:5443/service/utilisateurs/consulter/compte",
+        "user_connections_path": "https://chorus-pro.gouv.fr:5443/service/utilisateurs/monCompte/recuperer/rattachements",
+    },
+}
+
+
+def resolve_chorus_environment(env: dict[str, str]) -> str:
+    raw = (env.get("CHORUS_ENV") or env.get("VITE_CHORUS_ENV") or CHORUS_ENV_QUALIF).strip().lower()
+    if raw in {CHORUS_ENV_PROD, "production"}:
+        return CHORUS_ENV_PROD
+    return CHORUS_ENV_QUALIF
+
+
+def chorus_env_preset(env: dict[str, str]) -> dict[str, str]:
+    return CHORUS_ENV_PRESETS[resolve_chorus_environment(env)]
+
+
+def env_credential(
+    env: dict[str, str],
+    environment: str,
+    suffix: str,
+    *,
+    default: str = "",
+    include_vite_fallback: bool = True,
+) -> str:
+    """Read an env-scoped credential with fallback to the unsuffixed variable."""
+    upper_env = environment.upper()
+    candidates = [f"CHORUS_{upper_env}_{suffix}"]
+    if include_vite_fallback:
+        candidates.append(f"VITE_CHORUS_{upper_env}_{suffix}")
+    candidates.append(f"CHORUS_{suffix}")
+    if include_vite_fallback:
+        candidates.append(f"VITE_CHORUS_{suffix}")
+
+    for key in candidates:
+        value = (env.get(key) or "").strip()
+        if value:
+            return value
+    return default
 
 
 def parse_env_file(path: Path) -> dict[str, str]:
@@ -72,7 +129,7 @@ class ChorusFixedValues:
     devise_facture: str = "EUR"
     mode_paiement: str = "VIREMENT"
     type_facture: str = "FACTURE"
-    type_tva: str = "TVA_SUR_ENCAISSEMENT"
+    type_tva: str = "TVA_SUR_DEBIT"
 
 
 @dataclass(slots=True)
@@ -86,7 +143,7 @@ class ChorusSettings:
     scope: str = "openid"
     timeout_seconds: float = 30.0
     fixed: ChorusFixedValues = field(default_factory=ChorusFixedValues)
-    default_supplier_id: int = FIXED_SUPPLIER_ID
+    default_supplier_id: int | None = None
     default_code_destinataire: str | None = None
     default_code_service_executant: str | None = None
     default_bank_account_code: int | None = None
@@ -125,34 +182,65 @@ def load_env_values(env_files: Iterable[Path] | None = None) -> dict[str, str]:
     return merged
 
 
-def load_chorus_settings(env_files: Iterable[Path] | None = None) -> ChorusSettings:
+def load_chorus_settings(
+    env_files: Iterable[Path] | None = None,
+    *,
+    environment_override: str | None = None,
+) -> ChorusSettings:
     env = load_env_values(env_files)
+    # Les identifiants saisis dans l'interface (stockés côté serveur) priment
+    # sur les variables d'environnement.
+    env.update(stored_credentials_env_overlay())
+    if environment_override is not None:
+        forced = environment_override.strip().lower()
+        if forced == "production":
+            forced = CHORUS_ENV_PROD
+        elif forced == "sandbox":
+            forced = CHORUS_ENV_QUALIF
+        if forced in CHORUS_ENV_PRESETS:
+            env["CHORUS_ENV"] = forced
+    environment = resolve_chorus_environment(env)
+    preset = CHORUS_ENV_PRESETS[environment]
 
-    vite_base_url = env.get("VITE_CHORUS_API_BASE_URL", "")
-    technical_login = env.get("VITE_CHORUS_TECHNICAL_LOGIN", "").strip()
-    technical_password = env.get("VITE_CHORUS_TECHNICAL_PASSWORD", "").strip()
+    technical_login = env_credential(env, environment, "TECHNICAL_LOGIN")
+    technical_password = env_credential(env, environment, "TECHNICAL_PASSWORD")
 
-    cpro_account = env.get("CHORUS_CPRO_ACCOUNT", "").strip()
+    cpro_account = env_credential(env, environment, "CPRO_ACCOUNT", include_vite_fallback=False)
     if not cpro_account and technical_login and technical_password:
         cpro_account = build_cpro_account(technical_login, technical_password)
 
-    base_url = normalize_base_url(env.get("CHORUS_BASE_URL", "").strip())
+    raw_base_url = env_credential(env, environment, "BASE_URL", include_vite_fallback=False)
+    base_url = normalize_base_url(raw_base_url)
     if not base_url:
-        base_url = normalize_base_url(vite_base_url)
+        base_url = normalize_base_url(env_credential(env, environment, "API_BASE_URL")) or preset["base_url"]
+
+    token_url = env_credential(env, environment, "TOKEN_URL") or preset["token_url"]
 
     timeout_seconds = float(env.get("CHORUS_TIMEOUT_SECONDS", "30") or "30")
 
+    upper_env = environment.upper()
+    supplier_id = (
+        read_optional_int(env.get(f"CHORUS_{upper_env}_SUPPLIER_ID"))
+        or read_optional_int(env.get(f"VITE_CHORUS_{upper_env}_SUBMISSION_SUPPLIER_ID"))
+        or read_optional_int(env.get("CHORUS_SUPPLIER_ID"))
+    )
+
+    bank_account_code = (
+        read_optional_int(env_credential(env, environment, "BANK_ACCOUNT_CODE", include_vite_fallback=False))
+        or read_optional_int(env_credential(env, environment, "SUBMISSION_BANK_ACCOUNT_CODE"))
+    )
+
     return ChorusSettings(
         base_url=base_url,
-        api_key=env.get("CHORUS_API_KEY", "").strip(),
+        api_key=env_credential(env, environment, "API_KEY", include_vite_fallback=False),
         cpro_account=cpro_account,
-        token_url=env.get("CHORUS_TOKEN_URL", "").strip() or env.get("VITE_CHORUS_TOKEN_URL", "").strip(),
-        client_id=env.get("CHORUS_CLIENT_ID", "").strip() or env.get("VITE_CHORUS_CLIENT_ID", "").strip(),
-        client_secret=env.get("CHORUS_CLIENT_SECRET", "").strip() or env.get("VITE_CHORUS_CLIENT_SECRET", "").strip(),
-        scope=env.get("CHORUS_SCOPE", "").strip() or env.get("VITE_CHORUS_SCOPE", "").strip() or "openid",
+        token_url=token_url,
+        client_id=env_credential(env, environment, "CLIENT_ID"),
+        client_secret=env_credential(env, environment, "CLIENT_SECRET"),
+        scope=env_credential(env, environment, "SCOPE", default="openid"),
         timeout_seconds=timeout_seconds,
-        default_supplier_id=FIXED_SUPPLIER_ID,
-        default_code_destinataire=(env.get("CHORUS_DESTINATAIRE_CODE", "").strip() or None),
-        default_code_service_executant=(env.get("CHORUS_SERVICE_EXECUTANT_CODE", "").strip() or None),
-        default_bank_account_code=read_optional_int(env.get("CHORUS_BANK_ACCOUNT_CODE")) or read_optional_int(env.get("VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE")),
+        default_supplier_id=supplier_id,
+        default_code_destinataire=(env_credential(env, environment, "DESTINATAIRE_CODE", include_vite_fallback=False) or None),
+        default_code_service_executant=(env_credential(env, environment, "SERVICE_EXECUTANT_CODE", include_vite_fallback=False) or None),
+        default_bank_account_code=bank_account_code,
     )

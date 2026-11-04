@@ -153,6 +153,62 @@ describe('chorus normalization', () => {
     expect(normalized.sourceFormat).toBe('PDF');
   });
 
+  it('keeps the service executant code empty when the detected service is unknown', () => {
+    const normalized = normalizeInvoiceDraft({
+      ...createEmptyInvoiceDraft(),
+      publicServiceId: '',
+      publicServiceCode: '',
+    }, {
+      availableServices: [{
+        id: 'ps1',
+        publicCustomerId: 'pc1',
+        codeServiceExecutant: 'SE001',
+        label: 'Service financier',
+      }],
+      extraction: {
+        sourceFormat: 'PDF',
+        confidence: 0.88,
+        requiresReview: false,
+        warnings: [],
+        rawText: 'Service CATEC',
+        rawTextPreview: 'Service CATEC',
+        fields: {
+          publicServiceCode: 'CATEC',
+        },
+      },
+    });
+
+    expect(normalized.publicServiceCode).toBeUndefined();
+  });
+
+  it('uses the detected service executant code when it exists in available services', () => {
+    const normalized = normalizeInvoiceDraft({
+      ...createEmptyInvoiceDraft(),
+      publicServiceId: '',
+      publicServiceCode: '',
+    }, {
+      availableServices: [{
+        id: 'ps1',
+        publicCustomerId: 'pc1',
+        codeServiceExecutant: 'SE001',
+        label: 'Service financier',
+      }],
+      extraction: {
+        sourceFormat: 'PDF',
+        confidence: 0.88,
+        requiresReview: false,
+        warnings: [],
+        rawText: 'Service SE001',
+        rawTextPreview: 'Service SE001',
+        fields: {
+          publicServiceCode: 'SE001',
+        },
+      },
+    });
+
+    expect(normalized.publicServiceCode).toBe('SE001');
+  });
+
   it('keeps extracted invoice data once it has been merged into the draft', () => {
     const merged = mergeExtractionIntoDraft(createEmptyInvoiceDraft(), {
       sourceFormat: 'PDF',
@@ -208,6 +264,79 @@ describe('chorus normalization', () => {
     expect(normalized.totalAmountTtc).toBe(1200);
     expect(normalized.lineItems).toHaveLength(1);
     expect(normalized.vatLines).toHaveLength(1);
+  });
+
+  it('injects the detected recipient SIRET as customer code when no destination code is extracted', () => {
+    const merged = mergeExtractionIntoDraft(createEmptyInvoiceDraft(), {
+      sourceFormat: 'PDF',
+      confidence: 0.9,
+      requiresReview: false,
+      warnings: [],
+      rawText: 'SIRET destinataire : 26490003600015',
+      rawTextPreview: 'SIRET destinataire : 26490003600015',
+      fields: {
+        publicCustomerSiret: '26490003600015',
+      },
+    });
+
+    expect(merged.publicCustomerCode).toBe('26490003600015');
+  });
+
+  it('ignores extracted SIRET values that are not exactly 14 digits', () => {
+    const merged = mergeExtractionIntoDraft(createEmptyInvoiceDraft(), {
+      sourceFormat: 'PDF',
+      confidence: 0.9,
+      requiresReview: false,
+      warnings: [],
+      rawText: 'SIRET destinataire : TEST',
+      rawTextPreview: 'SIRET destinataire : TEST',
+      fields: {
+        publicCustomerCode: 'TEST',
+        publicCustomerSiret: 'TEST',
+        supplierSiret: 'ABC123',
+      },
+    });
+
+    const normalized = normalizeInvoiceDraft(merged, {
+      extraction: {
+        sourceFormat: 'PDF',
+        confidence: 0.9,
+        requiresReview: false,
+        warnings: [],
+        rawText: 'SIRET destinataire : TEST',
+        rawTextPreview: 'SIRET destinataire : TEST',
+        fields: {
+          publicCustomerCode: 'TEST',
+          publicCustomerSiret: 'TEST',
+          supplierSiret: 'ABC123',
+        },
+      },
+    });
+
+    expect(merged.publicCustomerCode).toBe('');
+    expect(merged.supplierSiret).toBe('');
+    expect(normalized.publicCustomerCode).toBeUndefined();
+    expect(normalized.publicCustomerSiret).toBeUndefined();
+    expect(normalized.supplierSiret).toBeUndefined();
+  });
+
+  it('normalizes the extracted recipient SIRET as the Chorus destination code fallback', () => {
+    const normalized = normalizeInvoiceDraft(createEmptyInvoiceDraft(), {
+      extraction: {
+        sourceFormat: 'PDF',
+        confidence: 0.9,
+        requiresReview: false,
+        warnings: [],
+        rawText: 'SIRET destinataire : 26490003600015',
+        rawTextPreview: 'SIRET destinataire : 26490003600015',
+        fields: {
+          publicCustomerSiret: '26490003600015',
+        },
+      },
+    });
+
+    expect(normalized.publicCustomerCode).toBe('26490003600015');
+    expect(normalized.publicCustomerSiret).toBe('26490003600015');
   });
 
   it('parses decimal amounts from French-style inputs', () => {

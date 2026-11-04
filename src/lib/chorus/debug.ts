@@ -1,4 +1,5 @@
 import { attachMainFileToChorusSubmissionPayload } from '@/lib/chorus/buildSubmissionPayload';
+import { CHORUS_OAUTH_TOKEN_PATH, resolveChorusBridgeUrl } from '@/lib/chorus/backendAutomation';
 import { PisteChorusRoutes } from '@/lib/chorus/pisteRoutes';
 import type { ChorusConfig } from '@/types/chorus';
 import type { ChorusSubmissionPayload, ChorusSubmissionValidationResult } from '@/lib/chorus/types';
@@ -8,7 +9,7 @@ function compactJson(value: unknown): string {
 }
 
 function escapeSingleQuotedShell(value: string): string {
-  return value.replace(/'/g, `'\"'\"'`);
+  return value.replace(/'/g, "'\"'\"'");
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -23,14 +24,6 @@ async function fileToBase64(file: File): Promise<string> {
   }
 
   return globalThis.btoa(binary);
-}
-
-function buildCproAccountHeader(config: ChorusConfig): string | undefined {
-  if (!config.technicalLogin || !config.technicalPassword) {
-    return undefined;
-  }
-
-  return globalThis.btoa(`${config.technicalLogin}:${config.technicalPassword}`);
 }
 
 function buildSubmitDebugPayload(
@@ -88,7 +81,6 @@ export async function buildChorusDebugFile(input: {
   connectionTestMethod?: 'GET' | 'POST';
 }): Promise<string> {
   const routes = new PisteChorusRoutes(input.config);
-  const cproAccount = buildCproAccountHeader(input.config);
   const lines: string[] = [];
 
   lines.push('# debug_chorus');
@@ -98,15 +90,11 @@ export async function buildChorusDebugFile(input: {
   lines.push(compactJson(input.validation));
   lines.push('');
 
-  lines.push('## 1. OAuth2 token');
-  lines.push(buildCurlCommand(routes.tokenUrl, {
-    'Content-Type': 'application/x-www-form-urlencoded',
-  }, [
-    `grant_type=client_credentials`,
-    `client_id=${encodeURIComponent(input.config.clientId)}`,
-    `client_secret=${encodeURIComponent(input.config.clientSecret)}`,
-    `scope=${encodeURIComponent(input.config.scope || 'openid')}`,
-  ].join('&')));
+  lines.push('## 1. OAuth2 token via API serveur');
+  lines.push(buildCurlCommand(resolveChorusBridgeUrl(input.config, CHORUS_OAUTH_TOKEN_PATH), {
+    'Content-Type': 'application/json; charset=UTF-8',
+    Accept: 'application/json',
+  }, compactJson({ environment: input.config.environment })));
   lines.push('');
 
   if (input.connectionTestMethod === 'POST' && routes.connectionTestPath) {
@@ -114,7 +102,6 @@ export async function buildChorusDebugFile(input: {
     lines.push(buildCurlCommand(routes.connectionTestUrl(), {
       Authorization: 'Bearer <ACCESS_TOKEN_FROM_OAUTH2>',
       'Content-Type': 'application/json',
-      'cpro-account': cproAccount,
       Accept: 'application/json',
     }, compactJson({})));
     lines.push('');
@@ -134,7 +121,6 @@ export async function buildChorusDebugFile(input: {
       lines.push(buildCurlCommand(routes.uploadFileUrl(), {
         Authorization: 'Bearer <ACCESS_TOKEN_FROM_OAUTH2>',
         'Content-Type': 'application/json; charset=UTF-8',
-        'cpro-account': cproAccount,
         Accept: 'application/json',
       }, compactJson(uploadPayload)));
     } else {
@@ -142,7 +128,6 @@ export async function buildChorusDebugFile(input: {
         'curl --request POST \\',
         `  --url '${escapeSingleQuotedShell(routes.uploadFileUrl())}' \\`,
         `  --header 'Authorization: Bearer <ACCESS_TOKEN_FROM_OAUTH2>' \\`,
-        cproAccount ? `  --header 'cpro-account: ${escapeSingleQuotedShell(cproAccount)}' \\` : '',
         `  --form 'file=@${escapeSingleQuotedShell(input.mainFile.name)}'`,
       ].filter(Boolean).join('\n'));
     }
@@ -154,7 +139,6 @@ export async function buildChorusDebugFile(input: {
   lines.push(buildCurlCommand(routes.submitInvoiceUrl(), {
     Authorization: 'Bearer <ACCESS_TOKEN_FROM_OAUTH2>',
     'Content-Type': 'application/json; charset=UTF-8',
-    'cpro-account': cproAccount,
     Accept: 'application/json',
   }, compactJson(buildSubmitDebugPayload(input.payload, routes, input.mainFile?.name))));
   lines.push('');

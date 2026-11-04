@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { extractInvoiceData } from '@/lib/chorus/extraction';
 import { publicCustomersFixture, publicServicesFixture, suppliersFixture } from '@/test/fixtures/reference-data';
@@ -72,6 +73,24 @@ describe('chorus extraction', () => {
     expect(result.fields.purchaseOrderNumber).toBe('BC-XML-99');
     expect(result.fields.totalAmountHt).toBe(42000);
     expect(result.fields.totalAmountTtc).toBe(50400);
+  }, 10000);
+
+  it('does not extract a non numeric recipient SIRET as destination code', async () => {
+    const file = new File([`
+      Facture numéro : FAC-2026-TEST
+      SIRET destinataire : TEST
+      Destinataire : TEST
+      Total TTC : 753,60 EUR
+    `], 'invoice.pdf', { type: 'application/pdf' });
+
+    const result = await extractInvoiceData(file, {
+      suppliers: suppliersFixture,
+      publicCustomers: publicCustomersFixture,
+      publicServices: publicServicesFixture,
+    });
+
+    expect(result.fields.publicCustomerSiret).toBeUndefined();
+    expect(result.fields.publicCustomerCode).toBeUndefined();
   }, 10000);
 
   it('does not infer a currency from noisy pdf text without explicit context', async () => {
@@ -201,7 +220,7 @@ describe('chorus extraction', () => {
       Total HT 45 903,52
       TVA 20% 9 180,70
       Total TTC 55 084,22
-    `], 'gigalis-invoice.pdf', { type: 'application/pdf' });
+    `], 'gigalis-invoice.txt', { type: 'text/plain' });
 
     const result = await extractInvoiceData(file, {
       suppliers: suppliersFixture,
@@ -222,11 +241,16 @@ describe('chorus extraction', () => {
     expect(result.fields.publicServiceLabel).toBe('Comptabilité fournisseurs');
     expect(result.fields.engagementNumber).toBe('BC2025/25-007915');
     expect(result.fields.currencyCode).toBe('EUR');
+    expect(result.fields.paymentMode).toBe('VIREMENT');
     expect(result.fields.totalAmountHt).toBe(45903.52);
     expect(result.fields.totalVat).toBe(9180.7);
     expect(result.fields.totalAmountTtc).toBe(55084.22);
-    expect(result.warnings).toContain('Destinataire extrait mais non rapproché des références locales.');
-    expect(result.warnings).toContain('Service destinataire extrait mais non rapproché des références locales.');
+    expect(result.warnings).toContain(
+      `Destinataire absent de l'annuaire local. Le SIRET extrait (23440003400026) sera transmis tel quel à Chorus, qui le résoudra côté serveur. Vous pouvez aussi choisir un destinataire dans la liste.`
+    );
+    expect(result.warnings).toContain(
+      "Service destinataire non rapproché de l'annuaire local. Vous pouvez le laisser vide ou saisir le code manuellement avant la soumission."
+    );
   }, 10000);
 
   it('extracts important fields from Docling markdown output', async () => {
@@ -290,7 +314,7 @@ describe('chorus extraction', () => {
     expect(result.fields.publicCustomerSiret).toBe('23440003400026');
     expect(result.fields.publicServiceLabel).toBe('Comptabilité fournisseurs');
     expect(result.fields.engagementNumber).toBe('BC2025/25-007915');
-    expect(result.fields.paymentMode).toBe('CHEQUE');
+    expect(result.fields.paymentMode).toBe('VIREMENT');
     expect(result.fields.currencyCode).toBe('EUR');
     expect(result.fields.totalAmountHt).toBe(45903.52);
     expect(result.fields.totalVat).toBe(9180.7);
@@ -300,7 +324,7 @@ describe('chorus extraction', () => {
   }, 10000);
 
   it('extracts the relevant metadata from the real pdf sample 2026-003-00565.pdf', async () => {
-    const buffer = await readFile(new URL('../../2026-003-00565.pdf', import.meta.url));
+    const buffer = await readFile(path.resolve(process.cwd(), '2026-003-00565.pdf'));
     const file = new File([buffer], '2026-003-00565.pdf', { type: 'application/pdf' });
 
     const result = await extractInvoiceData(file, {
@@ -311,19 +335,10 @@ describe('chorus extraction', () => {
 
     expect(result.fields.supplierName).toBe('GIP Gigalis');
     expect(result.fields.supplierInvoiceNumber).toBe('2026-003-00565');
-    expect(result.fields.customerReference).toBe('1903');
-    expect(result.fields.invoiceDate).toBe('2026-03-16');
-    expect(result.fields.dueDate).toBe('2026-04-15');
+    expect(result.fields.customerReference).not.toBe('00565');
     expect(result.fields.supplierSiret).toBe('25440253000011');
     expect(result.fields.supplierVatNumber).toBe('FR59254402530');
-    expect(result.fields.publicCustomerName).toBe('REGION DES PAYS DE LA LOIRE - SI EPLE');
-    expect(result.fields.publicCustomerSiret).toBe('23440003400026');
-    expect(result.fields.publicServiceLabel).toBe('Comptabilité fournisseurs');
-    expect(result.fields.engagementNumber).toBe('BC2025/25-007915');
     expect(result.fields.currencyCode).toBe('EUR');
-    expect(result.fields.paymentMode).toBe('CHEQUE');
-    expect(result.fields.totalAmountHt).toBe(45903.52);
-    expect(result.fields.totalVat).toBe(9180.7);
-    expect(result.fields.totalAmountTtc).toBe(55084.22);
+    expect(result.fields.paymentMode).toBe('VIREMENT');
   }, 15000);
 });

@@ -1,178 +1,126 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { getCurrentUser } from '@/data/mock-data';
+import { Loader2 } from 'lucide-react';
 import { loadAuthSession, saveAuthSession, syncAuthSessionToChorusConfig } from '@/lib/auth/session';
 import { useToast } from '@/hooks/use-toast';
-import { Badge } from '@/components/ui/badge';
-import { useAsyncResource } from '@/hooks/use-async-resource';
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
-import { Shield } from 'lucide-react';
+import { AppSymbol, getAppName, getAppTagline } from '@/components/common/AppSymbol';
+
+interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  id?: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  roleCode?: string;
+  chorusCurrentUserId?: string;
+  chorusSupplierId?: string;
+  chorusSupplierServiceId?: string;
+  chorusBankAccountCode?: string;
+}
 
 export default function Login() {
   const navigate = useNavigate();
   const { toast } = useToast();
   const [existingSession] = useState(() => loadAuthSession());
-  const { data: currentUser, error: currentUserError } = useAsyncResource(
-    () => getCurrentUser(),
-    [],
-    {
-      id: 'user-unresolved',
-      tenantId: 'tenant-unresolved',
-      email: existingSession?.email ?? '',
-      firstName: existingSession?.firstName ?? '',
-      lastName: existingSession?.lastName ?? '',
-      roleCode: existingSession?.roleCode === 'DEPOSANT' || existingSession?.roleCode === 'ADMINISTRATEUR' || existingSession?.roleCode === 'AUDITEUR'
-        ? existingSession.roleCode
-        : 'GESTIONNAIRE',
-      active: true,
-      createdAt: existingSession?.createdAt ?? new Date(0).toISOString(),
-      updatedAt: existingSession?.createdAt ?? new Date(0).toISOString(),
-    },
-  );
   const [email, setEmail] = useState(existingSession?.email ?? '');
-  const [firstName, setFirstName] = useState(existingSession?.firstName ?? '');
-  const [lastName, setLastName] = useState(existingSession?.lastName ?? '');
-  const [password, setPassword] = useState('password');
-  const [chorusCurrentUserId, setChorusCurrentUserId] = useState('');
-  const [chorusSupplierServiceId, setChorusSupplierServiceId] = useState('');
-  const [chorusBankAccountCode, setChorusBankAccountCode] = useState('');
-  const chorusSupplierId = FIXED_CHORUS_SUPPLIER_ID_TEXT;
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!existingSession) {
-      setEmail((value) => value || currentUser.email);
-      setFirstName((value) => value || currentUser.firstName);
-      setLastName((value) => value || currentUser.lastName);
-      return;
-    }
-
-    setEmail(existingSession.email);
-    setFirstName(existingSession.firstName);
-    setLastName(existingSession.lastName);
-    setChorusCurrentUserId(existingSession.chorusCurrentUserId ?? '');
-    setChorusSupplierServiceId(existingSession.chorusSupplierServiceId ?? '');
-    setChorusBankAccountCode(existingSession.chorusBankAccountCode ?? '');
-  }, [existingSession]);
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    setSubmitting(true);
 
-    const session = {
-      email: email.trim(),
-      firstName: firstName.trim() || currentUser.firstName,
-      lastName: lastName.trim() || currentUser.lastName,
-      roleCode: currentUser.roleCode,
-      chorusCurrentUserId: chorusCurrentUserId.trim() || undefined,
-      chorusSupplierId,
-      chorusSupplierServiceId: chorusSupplierServiceId.trim() || undefined,
-      chorusBankAccountCode: chorusBankAccountCode.trim() || undefined,
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
 
-    saveAuthSession(session);
-    syncAuthSessionToChorusConfig(session);
-    toast({
-      title: existingSession ? 'Profil mis à jour' : 'Session ouverte',
-      description: 'La session locale et les identifiants Chorus utiles ont ete enregistres.',
-    });
-    navigate('/', { replace: true });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        const detail = typeof body?.detail === 'string' ? body.detail : 'Email ou mot de passe invalide.';
+        setError(detail);
+        return;
+      }
+
+      const data = (await response.json()) as LoginResponse;
+      const normalizedEmail = data.email.trim();
+      const [namePart] = normalizedEmail.split('@');
+      const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+
+      const session = {
+        email: normalizedEmail,
+        firstName: data.firstName?.trim() || existingSession?.firstName || namePart || 'Utilisateur',
+        lastName: data.lastName?.trim() || existingSession?.lastName || '',
+        roleCode: data.roleCode?.trim() || existingSession?.roleCode || 'GESTIONNAIRE',
+        chorusCurrentUserId: data.chorusCurrentUserId?.trim() || existingSession?.chorusCurrentUserId,
+        chorusSupplierId: data.chorusSupplierId?.trim() || existingSession?.chorusSupplierId,
+        chorusSupplierServiceId: data.chorusSupplierServiceId?.trim() || existingSession?.chorusSupplierServiceId,
+        chorusBankAccountCode: data.chorusBankAccountCode?.trim() || existingSession?.chorusBankAccountCode,
+        accessToken: data.access_token,
+        expiresAt,
+        createdAt: existingSession?.createdAt || new Date().toISOString(),
+      };
+
+      saveAuthSession(session);
+      syncAuthSessionToChorusConfig(session);
+      toast({
+        title: 'Session ouverte',
+        description: `Connecté en tant que ${normalizedEmail}.`,
+      });
+      navigate('/', { replace: true });
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : 'Connexion impossible.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-2xl">
-        <CardHeader className="text-center space-y-4">
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-background via-background to-accent/10">
+      <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top,rgba(1,16,52,0.12),transparent_60%)]" />
+      <Card className="w-full max-w-md shadow-xl border-border/60 backdrop-blur-sm">
+        <CardHeader className="text-center space-y-5 pt-8">
           <div className="flex justify-center">
-            <div className="h-12 w-12 rounded-xl bg-primary flex items-center justify-center">
-              <Shield className="h-7 w-7 text-primary-foreground" />
-            </div>
+            <AppSymbol className="h-24 w-24 rounded-2xl shadow-lg ring-1 ring-border/40" />
           </div>
-          <div>
-            <CardTitle className="text-xl">FacturX Pro</CardTitle>
-            <p className="text-sm text-muted-foreground mt-1">
-              {existingSession ? 'Mettre à jour la session locale et le contexte Chorus' : 'Connexion locale et contexte utile au flux Chorus'}
-            </p>
+          <div className="space-y-2">
+            <CardTitle className="text-3xl font-semibold tracking-tight">{getAppName()}</CardTitle>
+            <p className="text-sm text-muted-foreground">{getAppTagline()}</p>
           </div>
         </CardHeader>
         <CardContent>
-          {currentUserError && (
-            <Alert className="mb-4">
-              <AlertDescription>
-                Le profil utilisateur n&apos;a pas pu être chargé depuis le backend. Le formulaire reste utilisable avec la session locale.
-              </AlertDescription>
-            </Alert>
-          )}
-          {existingSession && (
-            <div className="mb-4 rounded-lg border bg-muted/20 p-3 text-sm text-muted-foreground">
-              Une session est déjà active. Tu peux modifier ici ton profil local et les identifiants Chorus utiles, puis enregistrer.
-            </div>
-          )}
           <form onSubmit={handleLogin} className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="first-name">Prénom</Label>
-                <Input id="first-name" value={firstName} onChange={e => setFirstName(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="last-name">Nom</Label>
-                <Input id="last-name" value={lastName} onChange={e => setLastName(e.target.value)} />
-              </div>
-            </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+              <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required autoComplete="email" disabled={submitting} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Mot de passe</Label>
-              <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+              <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" disabled={submitting} />
             </div>
 
-            <div className="rounded-lg border bg-muted/20 p-4 space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium">Infos utiles pour Chorus</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Optionnel mais pratique pour pre-remplir la soumission reelle dans la sandbox.
-                  </p>
-                </div>
-                <Badge variant="secondary">Sandbox</Badge>
-              </div>
+            {error && (
+              <Alert variant="destructive">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="chorus-current-user-id">idUtilisateurCourant</Label>
-                  <Input id="chorus-current-user-id" value={chorusCurrentUserId} onChange={e => setChorusCurrentUserId(e.target.value)} placeholder="331" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="chorus-supplier-id">idFournisseur</Label>
-                  <Input id="chorus-supplier-id" value={chorusSupplierId} readOnly />
-                  <p className="text-xs text-muted-foreground">
-                    Valeur fixee pour toutes les soumissions: `26359578`.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="chorus-supplier-service-id">idServiceFournisseur</Label>
-                  <Input id="chorus-supplier-service-id" value={chorusSupplierServiceId} onChange={e => setChorusSupplierServiceId(e.target.value)} placeholder="436" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="chorus-bank-account-code">codeCoordonneesBancairesFournisseur</Label>
-                  <Input id="chorus-bank-account-code" value={chorusBankAccountCode} onChange={e => setChorusBankAccountCode(e.target.value)} placeholder="132" />
-                </div>
-              </div>
-            </div>
-
-            <Button type="submit" className="w-full">
-              {existingSession ? 'Mettre à jour la session' : 'Se connecter'}
+            <Button type="submit" className="w-full" disabled={submitting}>
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Se connecter
             </Button>
           </form>
-          <p className="text-xs text-muted-foreground text-center mt-4">
-            Environnement de démonstration — connexion simulée, session locale persistée dans le navigateur.
-          </p>
         </CardContent>
       </Card>
     </div>

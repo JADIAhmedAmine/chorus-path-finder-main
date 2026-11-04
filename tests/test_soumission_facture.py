@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sys
 import unittest
 from pathlib import Path
@@ -13,17 +14,37 @@ from chorus_python.client import ChorusUploadAttachmentResult
 
 
 class FakeChorusClient:
-    def __init__(self) -> None:
+    def __init__(self, active_recipient_structure_id: int = 26359578) -> None:
+        self.active_recipient_structure_id = active_recipient_structure_id
+        self.active_recipient_calls: list[dict[str, object]] = []
         self.api_calls: list[dict[str, object]] = []
         self.uploaded_paths: list[Path] = []
         self.uploaded_content: list[dict[str, str]] = []
+        self.resolved_attachment_types: list[dict[str, str]] = []
         self.submitted_payload: dict[str, object] | None = None
+        self.recycled_payload: dict[str, object] | None = None
+        self.corrected_validator_payload: dict[str, object] | None = None
+        self.invoice_history_payload: dict[str, object] | None = None
 
     def reset_api_calls(self) -> None:
         self.api_calls = []
 
     def resolve_supplier_id(self, supplier_id: int | None) -> int:
         return supplier_id or 26359578
+
+    def resolve_active_recipient_structure_id(
+        self,
+        preferred_id: int | None = None,
+        *,
+        additional_preferred_ids: tuple[int, ...] = (),
+    ) -> int:
+        self.active_recipient_calls.append(
+            {
+                "preferred_id": preferred_id,
+                "additional_preferred_ids": additional_preferred_ids,
+            }
+        )
+        return self.active_recipient_structure_id
 
     def upload_attachment(self, pdf_path: Path) -> ChorusUploadAttachmentResult:
         self.uploaded_paths.append(pdf_path)
@@ -35,12 +56,20 @@ class FakeChorusClient:
             },
         )
 
-    def upload_attachment_content(self, *, file_name: str, file_base64: str, mime_type: str) -> ChorusUploadAttachmentResult:
+    def upload_attachment_content(
+        self,
+        *,
+        file_name: str,
+        file_base64: str,
+        mime_type: str,
+        operation_label: str = "Upload de la pièce jointe",
+    ) -> ChorusUploadAttachmentResult:
         self.uploaded_content.append(
             {
                 "file_name": file_name,
                 "file_base64": file_base64,
                 "mime_type": mime_type,
+                "operation_label": operation_label,
             }
         )
         return ChorusUploadAttachmentResult(
@@ -51,10 +80,83 @@ class FakeChorusClient:
             },
         )
 
+    def resolve_attachment_type_code(
+        self,
+        attachment_type: str,
+        *,
+        type_objet: str = "FACTURE",
+        code_langue: str = "fr",
+    ) -> str:
+        self.resolved_attachment_types.append(
+            {
+                "attachment_type": attachment_type,
+                "type_objet": type_objet,
+                "code_langue": code_langue,
+            }
+        )
+        return attachment_type
+
     def submit_invoice(self, payload: dict[str, object]) -> dict[str, str]:
         self.submitted_payload = payload
         return {
             "invoiceId": "CHORUS-TEST-001",
+        }
+
+    def recycle_invoice(self, payload: dict[str, object]) -> dict[str, object]:
+        self.recycled_payload = payload
+        return {
+            "codeRetour": 0,
+            "identifiantFactureCPP": payload["identifiantFactureCPP"],
+            "statutFacture": "BROUILLON",
+        }
+
+    def correct_invoice_validator(self, payload: dict[str, object]) -> dict[str, object]:
+        self.corrected_validator_payload = payload
+        return {
+            "codeRetour": 0,
+            "idFacture": payload["idFacture"],
+            "libelle": "TRA_MSG_00.000",
+        }
+
+    def consult_invoice_history(self, payload: dict[str, object]) -> dict[str, object]:
+        self.invoice_history_payload = payload
+        return {
+            "codeRetour": 0,
+            "libelle": "GCU_MSG_01_000",
+            "idFacture": payload["idFacture"],
+            "numeroFacture": "20260000000000000064",
+            "modeDepot": "SAISIE_API",
+            "statutCourantCode": "REJETEE",
+            "historiquesDesStatuts": {
+                "histoStatut": [
+                    {
+                        "histoStatutId": 19990676,
+                        "histoStatutCode": "REJETEE",
+                        "histoStatutDatePassage": "2026-04-28 14:51",
+                    }
+                ],
+                "pageCouranteHistoStatut": 1,
+                "pagesHistoStatut": 1,
+                "nbResultatsParPageHistoStatut": 10,
+                "totalHistoStatut": 1,
+            },
+            "historiquesDesActionsUtilisateurs": {
+                "histoAction": [
+                    {
+                        "histoActionId": 100085487,
+                        "histoActionCode": "ACQUITTEMENT_REJET",
+                        "histoActionDateHeure": "2026-04-29 16:08",
+                    }
+                ],
+                "pageCouranteHistoAction": 1,
+                "pagesHistoAction": 1,
+                "nbResultatsParPageHistoAction": 10,
+                "totalHistoAction": 1,
+            },
+            "derniereAction": {
+                "derniereActionId": 100085487,
+                "derniereActionCode": "ACQUITTEMENT_REJET",
+            },
         }
 
 
@@ -185,7 +287,7 @@ class SoumissionFactureTest(unittest.TestCase):
                 "deviseFacture": "EUR",
                 "modePaiement": "ESPECE",
                 "typeFacture": "FACTURE",
-                "typeTva": "TVA_SUR_ENCAISSEMENT",
+                "typeTva": "TVA_SUR_DEBIT",
             },
         }
 
@@ -204,6 +306,7 @@ class SoumissionFactureTest(unittest.TestCase):
                 "file_name": "2026-003-00565 (3).pdf",
                 "file_base64": "JVBERi0xLjQK",
                 "mime_type": "application/pdf",
+                "operation_label": "Upload de la pièce jointe principale",
             }
         ])
         self.assertEqual(result["payload"]["modeDepot"], "DEPOT_PDF_API")
@@ -215,6 +318,409 @@ class SoumissionFactureTest(unittest.TestCase):
             }
         ])
         self.assertNotIn("pieceJointeComplementaire", result["payload"])
+
+    def test_submit_prepared_payload_uses_signed_pdf_mode_when_signature_markers_are_present(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+        signed_pdf_base64 = base64.b64encode(
+            b"%PDF-1.7\n1 0 obj\n<< /Type /Sig /ByteRange [0 10 20 30] >>\nendobj\n%%EOF"
+        ).decode("ascii")
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "SIGNED-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "ESPECE",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            main_file={
+                "name": "signed.pdf",
+                "mimeType": "application/pdf",
+                "base64": signed_pdf_base64,
+            },
+            attachments=[],
+        )
+
+        self.assertEqual(result["payload"]["modeDepot"], "DEPOT_PDF_SIGNE_API")
+
+    def test_submit_prepared_payload_normalizes_validation_tracking_slip_attachment_type(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "ATTACHMENT-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "VIREMENT",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            attachments=[
+                {
+                    "name": "bordereau-validation.pdf",
+                    "mimeType": "application/pdf",
+                    "base64": "JVBERi0xLjQK",
+                    "type": "Bordereau de suivi de validation",
+                }
+            ],
+        )
+
+        self.assertEqual(
+            result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
+            "BORDEREAU_SUIVI_VALIDATION",
+        )
+        self.assertEqual(
+            fake_client.resolved_attachment_types[0],
+            {
+                "attachment_type": "BORDEREAU_SUIVI_VALIDATION",
+                "type_objet": "FACTURE",
+                "code_langue": "fr",
+            },
+        )
+        self.assertEqual(
+            fake_client.uploaded_content[0]["operation_label"],
+            "Upload de la pièce jointe complémentaire (bordereau-validation.pdf)",
+        )
+
+    def test_submit_prepared_payload_maps_delivery_note_attachment_type_to_code(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "ATTACHMENT-002",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "VIREMENT",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            attachments=[
+                {
+                    "name": "bon-livraison.pdf",
+                    "mimeType": "application/pdf",
+                    "base64": "JVBERi0xLjQK",
+                    "type": "Bon de livraison",
+                }
+            ],
+        )
+
+        self.assertEqual(
+            result["payload"]["pieceJointeComplementaire"][0]["pieceJointeComplementaireType"],
+            "BL",
+        )
+
+    def test_submit_prepared_payload_forces_vat_type_to_debit(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "TVA-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "VIREMENT",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_ENCAISSEMENT",
+                },
+            },
+            attachments=[],
+        )
+
+        self.assertEqual(result["payload"]["references"]["typeTva"], "TVA_SUR_DEBIT")
+
+    def test_submit_prepared_payload_resolves_real_supplier_id_from_active_recipient_structures(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+            default_supplier_id=26359578,
+            default_code_destinataire="00000000113495",
+        )
+        fake_client = FakeChorusClient(active_recipient_structure_id=987654321)
+        service = ChorusSubmissionService(settings, fake_client)
+
+        result = service.submit_prepared_payload(
+            {
+                "numeroFactureSaisi": "REAL-SUPPLIER-001",
+                "dateFacture": "2026-03-16",
+                "cadreDeFacturation": {
+                    "codeCadreFacturation": "A1_FACTURE_FOURNISSEUR",
+                },
+                "destinataire": {
+                    "codeDestinataire": "00000000380342",
+                },
+                "fournisseur": {
+                    "idFournisseur": 32242033407300,
+                },
+                "lignePoste": [],
+                "ligneTva": [],
+                "modeDepot": "SAISIE_API",
+                "montantTotal": {
+                    "montantAPayer": 0,
+                    "montantHtTotal": 0,
+                    "montantRemiseGlobaleTTC": 0,
+                    "montantTVA": 0,
+                    "montantTtcTotal": 0,
+                },
+                "pieceJointePrincipale": [],
+                "references": {
+                    "deviseFacture": "EUR",
+                    "modePaiement": "ESPECE",
+                    "typeFacture": "FACTURE",
+                    "typeTva": "TVA_SUR_DEBIT",
+                },
+            },
+            attachments=[],
+        )
+
+        self.assertEqual(result["payload"]["fournisseur"]["idFournisseur"], 987654321)
+        self.assertEqual(fake_client.active_recipient_calls, [
+            {
+                "preferred_id": 26359578,
+                "additional_preferred_ids": (32242033407300,),
+            }
+        ])
+
+    def test_recycle_invoice_posts_recycler_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "commentaire": "Correction acheminement",
+            "destinataire": {
+                "codeDestinataire": "32242033407300",
+                "codeServiceExecutant": "SERVICE-FACTURES",
+            },
+            "identifiantFactureCPP": 8426157,
+            "reference": {
+                "numeroBonCommande": "EJ-2026-0042",
+            },
+        }
+
+        result = service.recycle_invoice(payload)
+
+        self.assertEqual(result["response"], {
+            "codeRetour": 0,
+            "identifiantFactureCPP": 8426157,
+            "statutFacture": "BROUILLON",
+        })
+        self.assertEqual(
+            result["payload"]["reference"],
+            {"numeroBonCommande": "EJ-2026-0042"},
+        )
+        self.assertNotIn("idUtilisateurCourant", result["payload"])
+        self.assertEqual(fake_client.recycled_payload, result["payload"])
+
+    def test_recycle_invoice_rejects_accounting_changes_before_chorus_call(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        with self.assertRaises(ValueError):
+            service.recycle_invoice({
+                "destinataire": {
+                    "codeDestinataire": "32242033407300",
+                },
+                "identifiantFactureCPP": 8426157,
+                "montantTotal": {
+                    "montantTtcTotal": 1200,
+                },
+            })
+
+        self.assertIsNone(fake_client.recycled_payload)
+
+    def test_consult_invoice_history_posts_consulter_historique_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "idFacture": 8424327,
+            "nbResultatsMaximum": 10,
+            "paramRechercheHistoActionsUtilisateurs": {
+                "nbResultatsParPageListeHistoAction": 10,
+                "pageResultatDemandeeListeHistoAction": 1,
+                "triColonneListeHistoAction": "HistoActionDateHeure",
+                "triSensListeHistoAction": "Descendant",
+            },
+            "paramRechercheHistoEvenementsComplementaires": {
+                "nbResultatsParPageListeHistoEvenement": 10,
+                "pageResultatDemandeeListeHistoEvenement": 1,
+                "triColonneListeHistoEvenement": "EvenementLibelle",
+                "triSensListeHistoEvenement": "Descendant",
+            },
+            "paramRechercheHistoStatuts": {
+                "nbResultatsParPageListeHistoStatut": 10,
+                "pageResultatDemandeeListeHistoStatut": 1,
+                "triColonneListeHistoStatut": "HistoStatutDatePassage",
+                "triSensListeHistoStatut": "Descendant",
+            },
+        }
+
+        result = service.consult_invoice_history(payload)
+
+        self.assertEqual(result["response"]["idFacture"], 8424327)
+        self.assertEqual(result["response"]["statutCourantCode"], "REJETEE")
+        self.assertEqual(result["payload"], payload)
+        self.assertEqual(fake_client.invoice_history_payload, payload)
+
+    def test_correct_invoice_validator_posts_corriger_valideur_payload(self) -> None:
+        settings = ChorusSettings(
+            base_url="https://sandbox-api.piste.gouv.fr/cpro/factures",
+            api_key="test-token",
+            cpro_account="dGVzdDp0ZXN0",
+        )
+        fake_client = FakeChorusClient()
+        service = ChorusSubmissionService(settings, fake_client)
+
+        payload = {
+            "idFacture": 8424327,
+            "idStructure": 123456,
+            "identifiantStructure": "32242033407300",
+            "typeIdentifiantStructure": "SIRET",
+        }
+
+        result = service.correct_invoice_validator(payload)
+
+        self.assertEqual(result["response"], {
+            "codeRetour": 0,
+            "idFacture": 8424327,
+            "libelle": "TRA_MSG_00.000",
+        })
+        self.assertEqual(result["payload"], payload)
+        self.assertEqual(fake_client.corrected_validator_payload, payload)
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@
       "deviseFacture": "EUR",
       "modePaiement": "VIREMENT",
       "typeFacture": "FACTURE",
-      "typeTva": "TVA_SUR_ENCAISSEMENT"
+      "typeTva": "TVA_SUR_DEBIT"
     }
   },
   "keyDifferencesFromPdfSignedMode": [

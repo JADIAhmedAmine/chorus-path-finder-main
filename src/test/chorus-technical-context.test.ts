@@ -8,6 +8,22 @@ describe('chorus technical context', () => {
     window.localStorage.clear();
   });
 
+  it('defaults the VAT type to TVA_SUR_DEBIT in the Chorus config', () => {
+    const config = getDefaultChorusConfig();
+
+    expect(config.submissionVatType).toBe('TVA_SUR_DEBIT');
+    expect(buildChorusTechnicalContext(config).typeTva).toBe('TVA_SUR_DEBIT');
+  });
+
+  it('normalizes TVA_SUR_ENCAISSEMENT to TVA_SUR_DEBIT in the technical context', () => {
+    const context = buildChorusTechnicalContext({
+      ...getDefaultChorusConfig(),
+      submissionVatType: 'TVA_SUR_ENCAISSEMENT',
+    });
+
+    expect(context.typeTva).toBe('TVA_SUR_DEBIT');
+  });
+
   it('maps persisted config strings to a typed Chorus submission context', () => {
     const context = buildChorusTechnicalContext({
       ...getDefaultChorusConfig(),
@@ -28,7 +44,7 @@ describe('chorus technical context', () => {
 
     expect(context).toEqual({
       idUtilisateurCourant: 331,
-      idFournisseur: 26359578,
+      idFournisseur: 160,
       idServiceFournisseur: 436,
       codeCoordonneesBancairesFournisseur: 132,
       codeCadreFacturation: 'A1_FACTURE_FOURNISSEUR',
@@ -76,7 +92,7 @@ describe('chorus technical context', () => {
     });
 
     expect(context.idUtilisateurCourant).toBe(331);
-    expect(context.idFournisseur).toBe(26359578);
+    expect(context.idFournisseur).toBe(160);
     expect(context.idServiceFournisseur).toBe(436);
     expect(context.codeCoordonneesBancairesFournisseur).toBe(132);
   });

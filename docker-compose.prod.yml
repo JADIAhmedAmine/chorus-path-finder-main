@@ -1,0 +1,139 @@
+version: "2.4"
+
+x-backend-env: &backend-env
+  env_file:
+    - .env.local
+  environment:
+    CHORUS_HOST: 0.0.0.0
+    CHORUS_PORT: 8008
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-chorus}:${POSTGRES_PASSWORD:-chorus}@postgres:5432/${POSTGRES_DB:-chorus}
+    PDF_EXTRACTION_ENGINE: ${PDF_EXTRACTION_ENGINE:-local}
+    CHORUS_QUALIF_CLIENT_ID: ${CHORUS_QUALIF_CLIENT_ID:-}
+    CHORUS_QUALIF_CLIENT_SECRET: ${CHORUS_QUALIF_CLIENT_SECRET:-}
+    CHORUS_QUALIF_TECHNICAL_LOGIN: ${CHORUS_QUALIF_TECHNICAL_LOGIN:-}
+    CHORUS_QUALIF_TECHNICAL_PASSWORD: ${CHORUS_QUALIF_TECHNICAL_PASSWORD:-}
+    CHORUS_QUALIF_CPRO_ACCOUNT: ${CHORUS_QUALIF_CPRO_ACCOUNT:-}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-chorus}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chorus}
+      POSTGRES_DB: ${POSTGRES_DB:-chorus}
+    volumes:
+      - chorus_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chorus} -d ${POSTGRES_DB:-chorus}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    <<: *backend-env
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  annuaire-permissions:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    user: root
+    command: ["sh", "-c", "mkdir -p /app/public/annuaire && chown -R appuser:appuser /app/public/annuaire"]
+    volumes:
+      - chorus_annuaire_data:/app/public/annuaire
+    restart: "no"
+
+  chorus-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    <<: *backend-env
+    environment:
+      CHORUS_HOST: 0.0.0.0
+      CHORUS_PORT: 8008
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-chorus}:${POSTGRES_PASSWORD:-chorus}@postgres:5432/${POSTGRES_DB:-chorus}
+      PDF_EXTRACTION_ENGINE: ${PDF_EXTRACTION_ENGINE:-local}
+      SYNC_CRON_ENABLED: ${SYNC_CRON_ENABLED:-false}
+      CHORUS_QUALIF_CLIENT_ID: ${CHORUS_QUALIF_CLIENT_ID:-}
+      CHORUS_QUALIF_CLIENT_SECRET: ${CHORUS_QUALIF_CLIENT_SECRET:-}
+      CHORUS_QUALIF_TECHNICAL_LOGIN: ${CHORUS_QUALIF_TECHNICAL_LOGIN:-}
+      CHORUS_QUALIF_TECHNICAL_PASSWORD: ${CHORUS_QUALIF_TECHNICAL_PASSWORD:-}
+      CHORUS_QUALIF_CPRO_ACCOUNT: ${CHORUS_QUALIF_CPRO_ACCOUNT:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      annuaire-permissions:
+        condition: service_completed_successfully
+    expose:
+      - "8008"
+    volumes:
+      - ./config:/app/config
+      - chorus_annuaire_data:/app/public/annuaire
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_CHORUS_MODE: ${VITE_CHORUS_MODE:-direct}
+        VITE_CHORUS_ENABLED: ${VITE_CHORUS_ENABLED:-true}
+        VITE_SHOW_DEV_TOOLS: ${VITE_SHOW_DEV_TOOLS:-false}
+        VITE_CHORUS_ENV: ${VITE_CHORUS_ENV:-qualif}
+        VITE_DATA_API_BASE_URL: ${VITE_DATA_API_BASE_URL:-/api/db}
+        VITE_DATA_SUPPLIERS_PATH: ${VITE_DATA_SUPPLIERS_PATH:-/suppliers}
+        VITE_DATA_PUBLIC_CUSTOMERS_PATH: ${VITE_DATA_PUBLIC_CUSTOMERS_PATH:-/public-customers}
+        VITE_DATA_PUBLIC_SERVICES_PATH: ${VITE_DATA_PUBLIC_SERVICES_PATH:-/public-services}
+        VITE_DATA_INVOICES_PATH: ${VITE_DATA_INVOICES_PATH:-/invoices}
+        VITE_DATA_INVOICE_LINES_PATH: ${VITE_DATA_INVOICE_LINES_PATH:-/invoice-lines}
+        VITE_REFERENCE_API_BASE_URL: ${VITE_REFERENCE_API_BASE_URL:-/api/db}
+        VITE_REFERENCE_SUPPLIERS_PATH: ${VITE_REFERENCE_SUPPLIERS_PATH:-/suppliers}
+        VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH: ${VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH:-/public-customers}
+        VITE_REFERENCE_PUBLIC_SERVICES_PATH: ${VITE_REFERENCE_PUBLIC_SERVICES_PATH:-/public-services}
+        VITE_REFERENCE_ANNUAIRE_JSON_URL: ${VITE_REFERENCE_ANNUAIRE_JSON_URL:-/annuaire/annuaire.normalized.json}
+        VITE_REFERENCE_ANNUAIRE_XML_URL: ${VITE_REFERENCE_ANNUAIRE_XML_URL:-}
+        VITE_CHORUS_CONNECTION_TEST_PATH: ${VITE_CHORUS_CONNECTION_TEST_PATH:-/v1/rechercher/fournisseur}
+        VITE_CHORUS_CONNECTION_TEST_METHOD: ${VITE_CHORUS_CONNECTION_TEST_METHOD:-POST}
+        VITE_CHORUS_UPLOAD_FILE_PATH: ${VITE_CHORUS_UPLOAD_FILE_PATH:-/v1/ajouter/fichier}
+        VITE_CHORUS_SUBMIT_INVOICE_PATH: ${VITE_CHORUS_SUBMIT_INVOICE_PATH:-/v1/soumettre}
+        VITE_CHORUS_SUBMISSION_BRIDGE_URL: ${VITE_CHORUS_SUBMISSION_BRIDGE_URL:-/api/chorus/submit}
+        VITE_CHORUS_SUBMISSION_CURRENT_USER_ID: ${VITE_CHORUS_SUBMISSION_CURRENT_USER_ID:-}
+        VITE_CHORUS_SUBMISSION_SUPPLIER_ID: ${VITE_CHORUS_SUBMISSION_SUPPLIER_ID:-}
+        VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID: ${VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID:-}
+        VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE: ${VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE:-}
+        VITE_CHORUS_PROD_SUBMISSION_CURRENT_USER_ID: ${VITE_CHORUS_PROD_SUBMISSION_CURRENT_USER_ID:-}
+        VITE_CHORUS_PROD_SUBMISSION_SUPPLIER_ID: ${VITE_CHORUS_PROD_SUBMISSION_SUPPLIER_ID:-}
+        VITE_CHORUS_PROD_SUBMISSION_SUPPLIER_SERVICE_ID: ${VITE_CHORUS_PROD_SUBMISSION_SUPPLIER_SERVICE_ID:-}
+        VITE_CHORUS_PROD_SUBMISSION_BANK_ACCOUNT_CODE: ${VITE_CHORUS_PROD_SUBMISSION_BANK_ACCOUNT_CODE:-}
+        VITE_CHORUS_QUALIF_SUBMISSION_CURRENT_USER_ID: ${VITE_CHORUS_QUALIF_SUBMISSION_CURRENT_USER_ID:-}
+        VITE_CHORUS_QUALIF_SUBMISSION_SUPPLIER_ID: ${VITE_CHORUS_QUALIF_SUBMISSION_SUPPLIER_ID:-}
+        VITE_CHORUS_QUALIF_SUBMISSION_SUPPLIER_SERVICE_ID: ${VITE_CHORUS_QUALIF_SUBMISSION_SUPPLIER_SERVICE_ID:-}
+        VITE_CHORUS_QUALIF_SUBMISSION_BANK_ACCOUNT_CODE: ${VITE_CHORUS_QUALIF_SUBMISSION_BANK_ACCOUNT_CODE:-}
+        VITE_CHORUS_SUBMISSION_CADRE_CODE: ${VITE_CHORUS_SUBMISSION_CADRE_CODE:-A1_FACTURE_FOURNISSEUR}
+        VITE_CHORUS_SUBMISSION_VALIDATOR_SERVICE_CODE: ${VITE_CHORUS_SUBMISSION_VALIDATOR_SERVICE_CODE:-}
+        VITE_CHORUS_SUBMISSION_VALIDATOR_STRUCTURE_CODE: ${VITE_CHORUS_SUBMISSION_VALIDATOR_STRUCTURE_CODE:-}
+        VITE_CHORUS_SUBMISSION_PAYMENT_MODE: ${VITE_CHORUS_SUBMISSION_PAYMENT_MODE:-VIREMENT}
+        VITE_CHORUS_SUBMISSION_INVOICE_TYPE: ${VITE_CHORUS_SUBMISSION_INVOICE_TYPE:-FACTURE}
+        VITE_CHORUS_SUBMISSION_VAT_TYPE: ${VITE_CHORUS_SUBMISSION_VAT_TYPE:-TVA_SUR_ENCAISSEMENT}
+    restart: unless-stopped
+    depends_on:
+      chorus-api:
+        condition: service_healthy
+    ports:
+      - "${APP_HTTP_PORT:-8081}:80"
+    volumes:
+      - chorus_annuaire_data:/usr/share/nginx/html/annuaire:ro
+
+volumes:
+  chorus_pg_data:
+  chorus_annuaire_data:

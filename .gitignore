@@ -7,10 +7,23 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# Dependencies and build outputs
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.vite/
+.cache/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
 *.local
+
+# Local AI assistant workspaces
+.codex/
+.claude/
 
 # Editor directories and files
 .vscode/*
@@ -22,11 +35,41 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-.venv
-annuaire_out
-src/data/annuaire_out
+
+# Python caches and virtualenvs
+.venv/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated or temporary project artifacts
+annuaire_out/
+src/data/annuaire_out/
+config/auth-users.json
+config/audit-log*.jsonl
+config/chorus-credentials.json
+config/branding.json
+config/branding-logo.*
 vite.config.ts.timestamp-*.mjs
 output_base64.txt
 response.json
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Generated Chorus annuaire data - too large for Git
+public/annuaire/*
+!public/annuaire/.gitkeep
+
+# InvoicePilot work-in-progress (not ready to be tracked)
+alembic/versions/20260522_0001_invoicepilot_core.py
+chorus_python/invoicepilot/
+chorus_python/providers/
+docs/architecture.md
+docs/invoicepilot-roadmap.md
+src/pages/Connectors.tsx
+tests/test_invoicepilot_core.py

@@ -1,4 +1,3 @@
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
 import { loadChorusConfig, saveChorusConfig } from '@/lib/chorus/storage';
 
 export interface LocalAuthSession {
@@ -10,10 +9,49 @@ export interface LocalAuthSession {
   chorusSupplierId?: string;
   chorusSupplierServiceId?: string;
   chorusBankAccountCode?: string;
+  accessToken?: string;
+  expiresAt?: string;
   createdAt: string;
 }
 
 export const AUTH_SESSION_STORAGE_KEY = 'app.auth.session';
+
+export function getAuthToken(): string | null {
+  const session = loadAuthSession();
+  if (!session?.accessToken) {
+    return null;
+  }
+  if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) {
+    clearAuthSession();
+    return null;
+  }
+  return session.accessToken;
+}
+
+export function hasValidAuthSession(): boolean {
+  return getAuthToken() !== null;
+}
+
+export function canSubmitInvoices(session: LocalAuthSession | null = loadAuthSession()): boolean {
+  const roleCode = session?.roleCode?.trim().toUpperCase();
+  return roleCode === 'ADMINISTRATEUR' || roleCode === 'GESTIONNAIRE' || roleCode === 'DEPOSANT';
+}
+
+export function authHeaders(extra?: HeadersInit): Record<string, string> {
+  const headers = new Headers(extra);
+  const token = getAuthToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return Object.fromEntries(headers.entries());
+}
+
+export function authenticatedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, {
+    ...init,
+    headers: authHeaders(init?.headers),
+  });
+}
 
 function trimText(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -59,7 +97,7 @@ export function syncAuthSessionToChorusConfig(session: LocalAuthSession): void {
   const nextConfig = {
     ...currentConfig,
     submissionCurrentUserId: trimText(session.chorusCurrentUserId) ?? currentConfig.submissionCurrentUserId,
-    submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
+    submissionSupplierId: trimText(session.chorusSupplierId) ?? currentConfig.submissionSupplierId,
     submissionSupplierServiceId: trimText(session.chorusSupplierServiceId) ?? currentConfig.submissionSupplierServiceId,
     submissionBankAccountCode: trimText(session.chorusBankAccountCode) ?? currentConfig.submissionBankAccountCode,
   };

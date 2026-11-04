@@ -115,9 +115,24 @@ export interface Invoice {
   currentRevision: number;
   submittedAt?: string;
   lastStatusSyncAt?: string;
+  statusChangedAt?: string;
   archivedAt?: string;
+  chorusInvoiceType?: string;
+  recipientChorusId?: string;
+  recipientChorusCode?: string;
+  recipientChorusName?: string;
+  serviceChorusId?: string;
+  serviceChorusCode?: string;
+  serviceChorusName?: string;
+  supplierChorusCode?: string;
+  supplierChorusName?: string;
+  amountToPay?: number;
+  createdByName?: string;
+  rejectionProcessed?: boolean;
+  attachmentCount?: number;
   createdBy: string;
   updatedBy: string;
+  rawPayload?: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
 }

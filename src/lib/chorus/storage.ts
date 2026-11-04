@@ -1,20 +1,57 @@
-import { FIXED_CHORUS_SUPPLIER_ID_TEXT } from '@/lib/chorus/constants';
-import type { ChorusConfig, ChorusConnectionTestMethod, ChorusConnectorMode } from '@/types/chorus';
+import type {
+  ChorusConfig,
+  ChorusConnectionTestMethod,
+  ChorusConnectorMode,
+  ChorusEnvironment,
+} from '@/types/chorus';
 
 export const CHORUS_CONFIG_STORAGE_KEY = 'chorus.connector.config';
 const DEV_PROXY_SANDBOX_OAUTH_PREFIX = '/__chorus-proxy/sandbox-oauth';
 const DEV_PROXY_SANDBOX_API_PREFIX = '/__chorus-proxy/sandbox-api';
+const DEV_PROXY_PROD_OAUTH_PREFIX = '/__chorus-proxy/prod-oauth';
+const DEV_PROXY_PROD_API_PREFIX = '/__chorus-proxy/prod-api';
 const DEV_PROXY_CHORUS_QUALIF_PREFIX = '/__chorus-proxy/chorus-qualif';
-const DEFAULT_USER_ACCOUNT_PATH = 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte';
-const DEFAULT_USER_CONNECTIONS_PATH = 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements';
+const DEV_PROXY_CHORUS_PROD_PREFIX = '/__chorus-proxy/chorus-prod';
+
+interface ChorusEnvPreset {
+  tokenUrl: string;
+  apiBaseUrl: string;
+  userAccountPath: string;
+  userConnectionsPath: string;
+}
+
+export const CHORUS_ENV_PRESETS: Record<ChorusEnvironment, ChorusEnvPreset> = {
+  qualif: {
+    tokenUrl: 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token',
+    apiBaseUrl: 'https://sandbox-api.piste.gouv.fr/cpro/factures',
+    userAccountPath: 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/consulter/compte',
+    userConnectionsPath: 'https://chorus-pro.gouv.fr:5443/service-qualif/utilisateurs/monCompte/recuperer/rattachements',
+  },
+  prod: {
+    tokenUrl: 'https://oauth.piste.gouv.fr/api/oauth/token',
+    apiBaseUrl: 'https://api.piste.gouv.fr/cpro/factures',
+    userAccountPath: 'https://chorus-pro.gouv.fr:5443/service/utilisateurs/consulter/compte',
+    userConnectionsPath: 'https://chorus-pro.gouv.fr:5443/service/utilisateurs/monCompte/recuperer/rattachements',
+  },
+};
+
+const DEFAULT_USER_ACCOUNT_PATH = CHORUS_ENV_PRESETS.qualif.userAccountPath;
+const DEFAULT_USER_CONNECTIONS_PATH = CHORUS_ENV_PRESETS.qualif.userConnectionsPath;
 const DEFAULT_DEV_ANNUAIRE_JSON_URL = '/annuaire/annuaire.normalized.json';
-const DEFAULT_DEV_ANNUAIRE_XML_URL = '/annuaire/FAR0037A_SEC001_CPP0010037000000000007495';
+const DEFAULT_DEV_ANNUAIRE_XML_URL = '';
 const LEGACY_DEV_ANNUAIRE_JSON_URL = '/src/data/annuaire_out/annuaire.normalized.json';
 const LEGACY_DEV_ANNUAIRE_XML_URL = '/src/data/annuaire_out/FAR0037A_SEC001_CPP0010037000000000007495';
+const EXTENSIONLESS_DEV_ANNUAIRE_XML_URL = '/annuaire/FAR0037A_SEC001_CPP0010037000000000007495';
+const DEFAULT_BACKEND_BRIDGE_URL = '/api/chorus/submit';
 
 function envValue(key: string, fallback = ''): string {
   const value = import.meta.env[key as keyof ImportMetaEnv];
-  return typeof value === 'string' ? value : fallback;
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : fallback;
 }
 
 function envBool(key: string, fallback: boolean): boolean {
@@ -24,6 +61,79 @@ function envBool(key: string, fallback: boolean): boolean {
 
 function pickEnumValue<T extends string>(value: string, allowed: readonly T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
+}
+
+export function resolveChorusEnvironment(): ChorusEnvironment {
+  const raw = envValue('VITE_CHORUS_ENV', 'qualif').trim().toLowerCase();
+  return raw === 'prod' ? 'prod' : 'qualif';
+}
+
+export function getChorusEnvPreset(env: ChorusEnvironment = resolveChorusEnvironment()): ChorusEnvPreset {
+  return CHORUS_ENV_PRESETS[env];
+}
+
+function envCredential(env: ChorusEnvironment, suffix: string, fallback = ''): string {
+  const envSpecific = envValue(`VITE_CHORUS_${env.toUpperCase()}_${suffix}`, '');
+  if (envSpecific) {
+    return envSpecific;
+  }
+  return envValue(`VITE_CHORUS_${suffix}`, fallback);
+}
+
+interface EnvScopedCredentials {
+  submissionSupplierId: string;
+  submissionCurrentUserId: string;
+  submissionSupplierServiceId: string;
+  submissionBankAccountCode: string;
+}
+
+interface EnvReferenceConfig {
+  referenceApiBaseUrl: string;
+  referenceSuppliersPath: string;
+  referencePublicCustomersPath: string;
+  referencePublicServicesPath: string;
+  referenceAnnuaireJsonUrl: string;
+  referenceAnnuaireXmlUrl: string;
+}
+
+function readEnvScopedCredentials(env: ChorusEnvironment): EnvScopedCredentials {
+  return {
+    submissionSupplierId: envCredential(env, 'SUBMISSION_SUPPLIER_ID'),
+    submissionCurrentUserId: envCredential(env, 'SUBMISSION_CURRENT_USER_ID'),
+    submissionSupplierServiceId: envCredential(env, 'SUBMISSION_SUPPLIER_SERVICE_ID'),
+    submissionBankAccountCode: envCredential(env, 'SUBMISSION_BANK_ACCOUNT_CODE'),
+  };
+}
+
+function readEnvReferenceConfig(): EnvReferenceConfig {
+  return {
+    referenceApiBaseUrl: envValue('VITE_REFERENCE_API_BASE_URL', envValue('VITE_DATA_API_BASE_URL', '')),
+    referenceSuppliersPath: envValue('VITE_REFERENCE_SUPPLIERS_PATH', envValue('VITE_DATA_SUPPLIERS_PATH', '')),
+    referencePublicCustomersPath: envValue('VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH', envValue('VITE_DATA_PUBLIC_CUSTOMERS_PATH', '')),
+    referencePublicServicesPath: envValue('VITE_REFERENCE_PUBLIC_SERVICES_PATH', envValue('VITE_DATA_PUBLIC_SERVICES_PATH', '')),
+    referenceAnnuaireJsonUrl: envValue(
+      'VITE_REFERENCE_ANNUAIRE_JSON_URL',
+      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_JSON_URL : '',
+    ),
+    referenceAnnuaireXmlUrl: envValue(
+      'VITE_REFERENCE_ANNUAIRE_XML_URL',
+      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_XML_URL : '',
+    ),
+  };
+}
+
+export function applyEnvironmentPreset(config: ChorusConfig, env: ChorusEnvironment): ChorusConfig {
+  const preset = CHORUS_ENV_PRESETS[env];
+  const credentials = readEnvScopedCredentials(env);
+  return {
+    ...config,
+    environment: env,
+    tokenUrl: preset.tokenUrl,
+    apiBaseUrl: preset.apiBaseUrl,
+    userAccountPath: preset.userAccountPath,
+    userConnectionsPath: preset.userConnectionsPath,
+    ...credentials,
+  };
 }
 
 function mergeConfigWithFallback(
@@ -48,7 +158,7 @@ function mergeConfigWithFallback(
     }
   });
 
-  return normalizeFixedSubmissionFields(normalizeLegacyChorusUserServiceConfig(merged));
+  return normalizeLegacyChorusUserServiceConfig(merged);
 }
 
 function normalizeLegacyChorusUserServiceUrl(
@@ -81,56 +191,74 @@ function normalizeLegacyChorusUserServiceConfig(config: ChorusConfig): ChorusCon
       : config.referenceAnnuaireJsonUrl,
     referenceAnnuaireXmlUrl: config.referenceAnnuaireXmlUrl === LEGACY_DEV_ANNUAIRE_XML_URL
       ? DEFAULT_DEV_ANNUAIRE_XML_URL
+      : config.referenceAnnuaireXmlUrl === EXTENSIONLESS_DEV_ANNUAIRE_XML_URL
+        ? DEFAULT_DEV_ANNUAIRE_XML_URL
       : config.referenceAnnuaireXmlUrl,
+    submissionBridgeUrl: normalizeBackendBridgeUrl(config.submissionBridgeUrl),
   };
 }
 
-function normalizeFixedSubmissionFields(config: ChorusConfig): ChorusConfig {
+function normalizeBackendBridgeUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if ((parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') && parsed.port === '8008') {
+      return parsed.pathname === '/api/chorus/submit' ? DEFAULT_BACKEND_BRIDGE_URL : parsed.pathname;
+    }
+  } catch {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
+function normalizeChorusConfig(config: ChorusConfig): ChorusConfig {
   return {
-    ...config,
-    submissionSupplierId: FIXED_CHORUS_SUPPLIER_ID_TEXT,
+    ...normalizeLegacyChorusUserServiceConfig(config),
+    clientId: '',
+    clientSecret: '',
+    technicalLogin: '',
+    technicalPassword: '',
   };
 }
 
 export function getDefaultChorusConfig(): ChorusConfig {
-  const mode = (envValue('VITE_CHORUS_MODE', 'mock') as ChorusConnectorMode) === 'direct' ? 'direct' : 'mock';
+  const mode = (envValue('VITE_CHORUS_MODE', 'direct') as ChorusConnectorMode) === 'mock' ? 'mock' : 'direct';
   const connectionTestMethod = (envValue('VITE_CHORUS_CONNECTION_TEST_METHOD', 'GET').toUpperCase() as ChorusConnectionTestMethod) === 'POST'
     ? 'POST'
     : 'GET';
+  const environment = resolveChorusEnvironment();
+  const preset = getChorusEnvPreset(environment);
+  const credentials = readEnvScopedCredentials(environment);
+  const references = readEnvReferenceConfig();
 
-  return normalizeFixedSubmissionFields({
+  return normalizeChorusConfig({
     enabled: envBool('VITE_CHORUS_ENABLED', mode === 'direct'),
     mode,
-    tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', 'https://sandbox-oauth.piste.gouv.fr/api/oauth/token'),
-    apiBaseUrl: envValue('VITE_CHORUS_API_BASE_URL', ''),
-    referenceApiBaseUrl: envValue('VITE_REFERENCE_API_BASE_URL', ''),
-    referenceSuppliersPath: envValue('VITE_REFERENCE_SUPPLIERS_PATH', ''),
-    referencePublicCustomersPath: envValue('VITE_REFERENCE_PUBLIC_CUSTOMERS_PATH', ''),
-    referencePublicServicesPath: envValue('VITE_REFERENCE_PUBLIC_SERVICES_PATH', ''),
-    referenceAnnuaireJsonUrl: envValue(
-      'VITE_REFERENCE_ANNUAIRE_JSON_URL',
-      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_JSON_URL : '',
-    ),
-    referenceAnnuaireXmlUrl: envValue(
-      'VITE_REFERENCE_ANNUAIRE_XML_URL',
-      import.meta.env.DEV ? DEFAULT_DEV_ANNUAIRE_XML_URL : '',
-    ),
-    clientId: envValue('VITE_CHORUS_CLIENT_ID', ''),
-    clientSecret: envValue('VITE_CHORUS_CLIENT_SECRET', ''),
+    environment,
+    tokenUrl: envValue('VITE_CHORUS_TOKEN_URL', preset.tokenUrl),
+    apiBaseUrl: envValue('VITE_CHORUS_API_BASE_URL', preset.apiBaseUrl),
+    ...references,
+    clientId: '',
+    clientSecret: '',
     scope: envValue('VITE_CHORUS_SCOPE', 'openid'),
-    technicalLogin: envValue('VITE_CHORUS_TECHNICAL_LOGIN', ''),
-    technicalPassword: envValue('VITE_CHORUS_TECHNICAL_PASSWORD', ''),
+    technicalLogin: '',
+    technicalPassword: '',
     connectionTestPath: envValue('VITE_CHORUS_CONNECTION_TEST_PATH', ''),
     connectionTestMethod,
     uploadFilePath: envValue('VITE_CHORUS_UPLOAD_FILE_PATH', '/v1/deposer/pdf'),
     submitInvoicePath: envValue('VITE_CHORUS_SUBMIT_INVOICE_PATH', '/v1/soumettre'),
-    userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', DEFAULT_USER_ACCOUNT_PATH),
-    userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', DEFAULT_USER_CONNECTIONS_PATH),
-    submissionBridgeUrl: envValue('VITE_CHORUS_SUBMISSION_BRIDGE_URL', ''),
-    submissionCurrentUserId: envValue('VITE_CHORUS_SUBMISSION_CURRENT_USER_ID', ''),
-    submissionSupplierId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_ID', FIXED_CHORUS_SUPPLIER_ID_TEXT),
-    submissionSupplierServiceId: envValue('VITE_CHORUS_SUBMISSION_SUPPLIER_SERVICE_ID', ''),
-    submissionBankAccountCode: envValue('VITE_CHORUS_SUBMISSION_BANK_ACCOUNT_CODE', ''),
+    userAccountPath: envValue('VITE_CHORUS_USER_ACCOUNT_PATH', preset.userAccountPath),
+    userConnectionsPath: envValue('VITE_CHORUS_USER_CONNECTIONS_PATH', preset.userConnectionsPath),
+    submissionBridgeUrl: envValue('VITE_CHORUS_SUBMISSION_BRIDGE_URL', DEFAULT_BACKEND_BRIDGE_URL),
+    submissionCurrentUserId: credentials.submissionCurrentUserId,
+    submissionSupplierId: credentials.submissionSupplierId,
+    submissionSupplierServiceId: credentials.submissionSupplierServiceId,
+    submissionBankAccountCode: credentials.submissionBankAccountCode,
     submissionCadreCode: envValue('VITE_CHORUS_SUBMISSION_CADRE_CODE', 'A1_FACTURE_FOURNISSEUR'),
     submissionValidatorServiceCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_SERVICE_CODE', ''),
     submissionValidatorStructureCode: envValue('VITE_CHORUS_SUBMISSION_VALIDATOR_STRUCTURE_CODE', ''),
@@ -145,9 +273,9 @@ export function getDefaultChorusConfig(): ChorusConfig {
       'FACTURE',
     ),
     submissionVatType: pickEnumValue(
-      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'TVA_SUR_ENCAISSEMENT').toUpperCase(),
+      envValue('VITE_CHORUS_SUBMISSION_VAT_TYPE', 'TVA_SUR_DEBIT').toUpperCase(),
       ['AUTO', 'TVA_SUR_DEBIT', 'TVA_SUR_ENCAISSEMENT', 'EXONERATION', 'SANS_TVA'],
-      'TVA_SUR_ENCAISSEMENT',
+      'TVA_SUR_DEBIT',
     ),
     submissionVatExonerationReason: envValue('VITE_CHORUS_SUBMISSION_VAT_EXONERATION_REASON', ''),
     submissionOriginalInvoiceNumber: envValue('VITE_CHORUS_SUBMISSION_ORIGINAL_INVOICE_NUMBER', ''),
@@ -169,7 +297,26 @@ export function loadChorusConfig(): ChorusConfig {
 
   try {
     const parsed = JSON.parse(raw) as Partial<ChorusConfig>;
-    return mergeConfigWithFallback(fallback, parsed);
+    // Force env from .env.local to win over any stored value.
+    // Drop the stored environment + env-scoped fields so the preset is reapplied cleanly.
+    const sanitized: Partial<ChorusConfig> = { ...parsed };
+    delete (sanitized as { environment?: unknown }).environment;
+    delete (sanitized as { tokenUrl?: unknown }).tokenUrl;
+    delete (sanitized as { apiBaseUrl?: unknown }).apiBaseUrl;
+    delete (sanitized as { userAccountPath?: unknown }).userAccountPath;
+    delete (sanitized as { userConnectionsPath?: unknown }).userConnectionsPath;
+    delete (sanitized as { submissionSupplierId?: unknown }).submissionSupplierId;
+    delete (sanitized as { submissionCurrentUserId?: unknown }).submissionCurrentUserId;
+    delete (sanitized as { submissionSupplierServiceId?: unknown }).submissionSupplierServiceId;
+    delete (sanitized as { submissionBankAccountCode?: unknown }).submissionBankAccountCode;
+
+    const merged = mergeConfigWithFallback(fallback, sanitized);
+    const environmentAligned = applyEnvironmentPreset(merged, fallback.environment);
+
+    return normalizeChorusConfig({
+      ...environmentAligned,
+      ...readEnvReferenceConfig(),
+    });
   } catch {
     return fallback;
   }
@@ -191,8 +338,18 @@ function rewriteUrlToDevProxy(url: string): string {
       return `${DEV_PROXY_SANDBOX_API_PREFIX}${parsed.pathname}${parsed.search}`;
     }
 
+    if (parsed.origin === 'https://oauth.piste.gouv.fr') {
+      return `${DEV_PROXY_PROD_OAUTH_PREFIX}${parsed.pathname}${parsed.search}`;
+    }
+
+    if (parsed.origin === 'https://api.piste.gouv.fr') {
+      return `${DEV_PROXY_PROD_API_PREFIX}${parsed.pathname}${parsed.search}`;
+    }
+
     if (parsed.origin === 'https://chorus-pro.gouv.fr:5443') {
-      return `${DEV_PROXY_CHORUS_QUALIF_PREFIX}${parsed.pathname}${parsed.search}`;
+      const isProdPath = parsed.pathname.startsWith('/service/');
+      const prefix = isProdPath ? DEV_PROXY_CHORUS_PROD_PREFIX : DEV_PROXY_CHORUS_QUALIF_PREFIX;
+      return `${prefix}${parsed.pathname}${parsed.search}`;
     }
   } catch {
     return url;
@@ -203,10 +360,10 @@ function rewriteUrlToDevProxy(url: string): string {
 
 export function resolveChorusRuntimeConfig(config: ChorusConfig, devMode = import.meta.env.DEV): ChorusConfig {
   if (!devMode) {
-    return normalizeFixedSubmissionFields(config);
+    return normalizeChorusConfig(config);
   }
 
-  return normalizeFixedSubmissionFields({
+  return normalizeChorusConfig({
     ...config,
     tokenUrl: rewriteUrlToDevProxy(config.tokenUrl),
     apiBaseUrl: rewriteUrlToDevProxy(config.apiBaseUrl),
@@ -222,7 +379,7 @@ export function saveChorusConfig(config: ChorusConfig): void {
 
   window.localStorage.setItem(
     CHORUS_CONFIG_STORAGE_KEY,
-    JSON.stringify(normalizeFixedSubmissionFields(config)),
+    JSON.stringify(normalizeChorusConfig(config)),
   );
 }
 
