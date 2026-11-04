@@ -1,5 +1,5 @@
 fastapi>=0.110,!=0.136.3,<1
-uvicorn[standard]>=0.29,<1
+uvicorn[standard]>=0.54.0,<1
 python-multipart>=0.0.9,<1
 requests>=2.32,<3
 httpx2>=2.3,<3
