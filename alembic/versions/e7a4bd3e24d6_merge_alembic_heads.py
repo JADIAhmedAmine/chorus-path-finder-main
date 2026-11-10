@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Sequence, Union
 
 revision: str = 'e7a4bd3e24d6'
-down_revision: Union[str, Sequence[str], None] = ('20260522_0001', '20260530_0004')
+down_revision: Union[str, Sequence[str], None] = '20260530_0004'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
