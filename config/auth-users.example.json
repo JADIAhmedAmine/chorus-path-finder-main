@@ -2,7 +2,7 @@
   "users": [
     {
       "id": "admin-demo",
-      "tenantId": "tenant-gigalis-default",
+      "tenantId": "tenant-default",
       "email": "admin@example.local",
       "firstName": "Admin",
       "lastName": "Demo",
@@ -14,7 +14,7 @@
     },
     {
       "id": "auditeur-demo",
-      "tenantId": "tenant-gigalis-default",
+      "tenantId": "tenant-default",
       "email": "auditeur@example.local",
       "firstName": "Auditeur",
       "lastName": "Demo",
